@@ -511,8 +511,10 @@ scans.
 The one behavior worth adding: **leaving a space as its last member destroys
 it**, and that should warn rather than happen silently.
 
-## Open questions
+## Design questions
 
+None outstanding. Everything below was worked through and closed; the
+remaining unknowns are implementation detail rather than architecture.
 
 ### Resolved
 
