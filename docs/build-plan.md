@@ -7,6 +7,27 @@ architecture.
 
 ---
 
+## Available hardware
+
+| Device | Platform | Role in phase 1 |
+|---|---|---|
+| Linux laptop | linux | Primary dev and test target |
+| Android phone | android | Primary mobile target; the only cellular endpoint |
+| M4 Mac | macos (arm64) | Opportunistic smoke tests. **Required for iOS builds later.** |
+| Windows PC | windows | Opportunistic smoke tests |
+
+Four of five platforms are physically available, so macOS and Windows are not
+purely theoretical — they get **CI build verification plus an occasional
+manual smoke test**, which is nearly free and catches gross breakage without
+committing to full test coverage.
+
+**iOS is the only platform with no hardware.** It stays build-only until a
+device exists; the Mac means that path is open whenever one does.
+
+**One carrier only.** There is a single phone, so cellular results generalize
+to one network's NAT behavior rather than to carriers broadly. See M0 for what
+that does and does not tell us.
+
 ## The rule that keeps later targets cheap
 
 > **If it doesn't compile for all five targets, it doesn't merge.**
@@ -64,6 +85,10 @@ thin-client design.
 | macos | macos, ios | build only |
 | windows | windows | build only |
 
+macOS and Windows additionally get **manual smoke tests** on the hardware
+above whenever a milestone lands — cheap, and enough to catch gross breakage
+long before those platforms get real attention.
+
 Three runners cover five targets. macOS/Windows/iOS turn red the moment
 someone writes non-portable code, which is the entire point.
 
@@ -71,24 +96,44 @@ someone writes non-portable code, which is the entire point.
 
 ## Milestones
 
-### M0 — Spike: does iroh actually work on carriers?
+### M0 — Spike: how well does iroh behave on cellular?
 
-**The riskiest assumption in the design, tested before anything is built on
-it.** Pair-once, phones reachable off-wifi, and "no server you run" all rest
-on iroh's hole-punching and pkarr discovery behaving as advertised on real
-mobile networks — which are almost universally CGNAT.
+Pair-once, off-wifi reachability, and "no server you run" all rest on iroh's
+hole-punching and pkarr discovery working on real mobile networks, which are
+almost universally CGNAT.
+
+**But the bar is lower than it first appears.** Relay fallback does not depend
+on NAT traversal at all, so "cannot connect" is largely ruled out by
+construction. The real question is **how often a direct path is achieved versus
+relayed, and whether relayed latency is acceptable** — which a single carrier
+answers perfectly well.
 
 Throwaway code. **Do not build on it.**
 
-*Exit criteria:*
-- Linux box on home wifi connects to an Android phone on cellular
-- Repeated on **two different carriers**
-- Record: connection success rate, direct-vs-relayed ratio, time to first
-  byte, behavior when the phone switches wifi ↔ cellular mid-connection
+| # | Side A | Side B | What it tests |
+|---|---|---|---|
+| 1 | Linux, home wifi | Android, same wifi | mDNS + direct. Baseline. |
+| 2 | Linux, home wifi | Android, **cellular** | CGNAT traversal. The critical case. |
+| 3 | Linux, **public wifi** | Android, cellular | Both ends hostile. Worst realistic case. |
+| 4 | Linux, home wifi | Android, cellular, **relay forced** | Relay latency, deterministically. |
+| 5 | Linux, home wifi | Android switching wifi ↔ cellular | Re-resolution after a network change. |
 
-*What would change course:* if connections fail often, reconsider the
-transport. If they succeed but always relay, that's **acceptable** — note the
-added latency and move on. Relayed is the expected case on cellular.
+Row 4 matters more than it looks: forcing the relay path removes the need for
+a hostile network to measure relay latency. Row 5 is the one that validates
+pair-once — an address change must not require re-joining.
+
+*Measure:* connection success rate, direct-vs-relay ratio, time to first byte,
+reconnect time after a network switch.
+
+*What would change course:* connections failing **even over relay** would
+force a transport rethink. Frequent relaying is **an expected and acceptable
+result** on cellular — record the latency and continue. Slow or unreliable
+re-resolution after a network change is the finding most likely to require
+design work, since pair-once depends on it.
+
+*Optional, if more confidence is wanted:* a prepaid SIM or a free MVNO eSIM
+trial gives a second carrier for £10–20. Not required — the relay path is the
+mitigation for carrier variation, and it is being measured in row 4 regardless.
 
 ### M1 — Skeleton and CI
 
@@ -136,9 +181,11 @@ the same across networks, exercising the relay path from M0.
 Tauri v2 mobile shell, `TextToSpeech` engine, foreground service, QR scanning,
 join flow, receiver settings UI.
 
-**This is where carrier testing happens for real** — M0 proved the transport,
+**This is where cellular testing happens for real** — M0 proved the transport,
 this proves it inside a real app with a real lifecycle: doze mode, network
-changes, process death, app backgrounding.
+changes, process death, app backgrounding. Android's lifecycle is a different
+and harder question than NAT traversal, which is why the two are separate
+milestones.
 
 *Exit:* the four-device walkthrough in `setup.md` works for Linux + Android;
 the phone receives on cellular after being idle for hours.
@@ -175,8 +222,9 @@ is exactly why M0 comes first.
 
 ## Deferred past phase 1
 
-macOS, Windows, and iOS runtime testing · `iroh-blobs` voice sync between
-devices · cloud/API voices · smart speakers.
+Full macOS and Windows test coverage (they get smoke tests only) · **all** iOS
+runtime testing, pending hardware · `iroh-blobs` voice sync between devices ·
+cloud/API voices · smart speakers.
 
 All of these are additive. None require revisiting a phase 1 decision — which
 was the goal of the compile-for-five rule.
