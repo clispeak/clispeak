@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 thiserror.workspace = true
+unicode-segmentation = "1.13.3"
 
 [lints]
 workspace = true
