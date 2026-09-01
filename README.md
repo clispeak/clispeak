@@ -14,8 +14,12 @@ and no account to create.
 
 ## Status
 
-**Design complete, implementation not started.** Every architectural question
-has been worked through and recorded; what remains is implementation detail.
+**Design complete. Transport validated. Implementation not started.**
+
+Every architectural question has been worked through and recorded. The riskiest
+assumption — that peer-to-peer connections survive carrier-grade NAT and
+network changes — has been [measured on real hardware](docs/m0-results.md)
+rather than assumed. It holds.
 
 ## How it works
 
@@ -38,6 +42,7 @@ device speaks in whatever voice it is configured with.
 | [protocol.md](docs/protocol.md) | Wire format and stream model |
 | [text.md](docs/text.md) | Validation and chunking rules |
 | [build-plan.md](docs/build-plan.md) | Milestones, repo layout, CI |
+| [m0-results.md](docs/m0-results.md) | Measured transport results on real devices |
 | [decisions.md](docs/decisions.md) | Every decision, with its rationale and cost |
 
 Start with `decisions.md` if you want to know *why* rather than *what*.

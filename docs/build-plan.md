@@ -96,7 +96,12 @@ someone writes non-portable code, which is the entire point.
 
 ## Milestones
 
-### M0 — Spike: how well does iroh behave on cellular?
+### M0 — Spike: how well does iroh behave on cellular?  ✅ PASSED
+
+> **Done 2026-09-01. See [m0-results.md](m0-results.md).** CGNAT traversal
+> went direct (91%), and a wifi→cellular switch caused *zero* reconnects —
+> QUIC migration carried the connection across. Both better than assumed.
+> Cost is a ~16s stall on the in-flight message at the moment of the switch.
 
 Pair-once, off-wifi reachability, and "no server you run" all rest on iroh's
 hole-punching and pkarr discovery working on real mobile networks, which are
@@ -186,6 +191,8 @@ this proves it inside a real app with a real lifecycle: doze mode, network
 changes, process death, app backgrounding. Android's lifecycle is a different
 and harder question than NAT traversal, which is why the two are separate
 milestones.
+
+Must call `install_android_jni_context` — see M0 finding 5.
 
 *Exit:* the four-device walkthrough in `setup.md` works for Linux + Android;
 the phone receives on cellular after being idle for hours.
