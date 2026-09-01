@@ -33,3 +33,12 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 todo = "allow"
+
+# Full debuginfo is the single largest memory consumer when linking, and this
+# machine cannot afford it (see .cargo/config.toml). Line tables keep
+# backtraces useful at a fraction of the cost.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"

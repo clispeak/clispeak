@@ -1,0 +1,9 @@
+# This machine has 12 cores but 7GB of RAM. Cargo defaults to one rustc per
+# core, and on an iroh-sized dependency graph that drove memory and swap past
+# 90%, at which point systemd-oomd killed the entire terminal cgroup — shell,
+# editor and all — three times on 2026-09-01.
+#
+# Two jobs keeps peak usage inside available RAM. Raise it only on a machine
+# with more memory per core.
+[build]
+jobs = 2
