@@ -1,0 +1,11 @@
+[package]
+name = "m0-iroh"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+iroh = "1.1"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "io-util"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
