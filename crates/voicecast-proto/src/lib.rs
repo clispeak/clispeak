@@ -82,3 +82,53 @@ pub struct Chunk {
 /// Closes a message stream. No more chunks follow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpeakEnd;
+
+/// What the CLI asks the local node to do.
+///
+/// This is the IPC surface, not the wire protocol — it never leaves the
+/// machine. Kept deliberately small: the CLI's job is to hand over text and
+/// exit, not to hold opinions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Request {
+    /// Speak this text. Targets are resolved by the node.
+    Speak {
+        /// Text to speak. Already validated by the CLI.
+        text: String,
+        /// Sender's stated urgency.
+        priority: Priority,
+    },
+    /// Stop playback and clear the queue.
+    Stop,
+    /// Report node health.
+    Status,
+}
+
+/// What the node tells the CLI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Response {
+    /// Message accepted. The CLI exits successfully here by default —
+    /// confirmation of actual playback is opt-in via `--wait`.
+    Accepted {
+        /// Identifies the message, for `voicecast stop --id`.
+        msg_id: String,
+    },
+    /// Terminal state for a message, sent when the caller asked to wait.
+    Finished {
+        /// How it ended.
+        status: Status,
+    },
+    /// Node health.
+    Status {
+        /// Engine currently in use, e.g. "espeak-ng".
+        engine: String,
+        /// Whether that engine is the intended one or a stand-in.
+        fallback: bool,
+        /// Messages waiting to be spoken.
+        queued: usize,
+    },
+    /// The node could not do it.
+    Error {
+        /// Why.
+        message: String,
+    },
+}

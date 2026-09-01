@@ -140,14 +140,14 @@ design work, since pair-once depends on it.
 trial gives a second carrier for £10–20. Not required — the relay path is the
 mitigation for carrier variation, and it is being measured in row 4 regardless.
 
-### M1 — Skeleton and CI
+### M1 — Skeleton and CI  ✅ DONE
 
 Workspace, five-target CI matrix, `xtask`, licence, lint and format gates.
 Nothing functional.
 
 *Exit:* an empty workspace builds green for all five targets.
 
-### M2 — `voicecast-text`
+### M2 — `voicecast-text`  ✅ DONE
 
 Validation and chunking. Pure functions, no I/O, no async. Every ugly case in
 `text.md` becomes a test row.
@@ -159,7 +159,7 @@ it needs no decisions from anywhere else.
 protection-pass splitting handles `10.0.0.1`, `src/main.rs:42`, `Dr.`,
 `v1.2.3`; fallback cascade never splits mid-word.
 
-### M3 — Speak locally
+### M3 — Speak locally  ✅ DONE
 
 CLI → unix socket → node → `voicecast-engine` → sound. No network, no identity, no
 roster.

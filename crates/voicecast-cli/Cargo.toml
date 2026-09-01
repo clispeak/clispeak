@@ -14,6 +14,11 @@ path = "src/main.rs"
 voicecast-proto.workspace = true
 voicecast-text.workspace = true
 anyhow.workspace = true
+interprocess = { version = "2.4.3", features = ["tokio"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-util"] }
+ciborium = "0.2.2"
+clap = { version = "4.6.6", features = ["derive"] }
+serde.workspace = true
 
 [lints]
 workspace = true

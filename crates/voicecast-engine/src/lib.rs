@@ -5,6 +5,10 @@
 //! anything that cannot be expressed portably gets a trait here rather than a
 //! `#[cfg]` in the middle of business logic.
 
+mod espeak;
+
+pub use espeak::EspeakEngine;
+
 /// A voice offered by an engine.
 #[derive(Debug, Clone)]
 pub struct Voice {

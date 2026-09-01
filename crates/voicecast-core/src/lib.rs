@@ -6,7 +6,12 @@
 //!
 //! Built out from M3 onward.
 
-/// Placeholder so the crate compiles while the workspace is validated.
+pub mod ipc;
+mod node;
+
+pub use node::Node;
+
+/// This crate's version, reported by `voicecast status`.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
