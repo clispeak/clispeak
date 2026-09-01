@@ -232,3 +232,39 @@ silent — an acceptable trade, and arguably clearer.
 **Knock-on benefit.** With markdown rejected at the door, chunking is no
 longer a rewriting problem. It reduces to finding safe sentence boundaries,
 which is a much smaller and more testable job.
+
+## 15. Lazy roster sync, eager revoke, no gossip layer
+
+**Decision.** Roster digest in `Hello`; exchange and CRDT-merge on mismatch.
+Revocations are actively pushed to every known member. No `iroh-gossip`.
+
+**Why the asymmetry.** Additions are already handled by the signed join record
+— a device vouches for itself on arrival, so sync is an optimization, not a
+correctness requirement. Revocations are the opposite: a revoked device still
+holds a valid signature, so a member that never receives the tombstone keeps
+admitting it forever. The urgent path is deletion, not addition, which inverts
+what a naive design would prioritize.
+
+**Why no gossip layer.** At 2–10 devices, gossip is machinery without a job.
+Direct exchange over the already-open control stream has no topic membership to
+manage and fails comprehensibly. Revisit only if device counts grow well past
+full mesh.
+
+## 16. Space rotation instead of fast revocation
+
+**Decision.** Revocation stays eventually consistent. The remedy for an urgent
+case is `tts space rotate` — found a replacement space and re-invite the
+surviving devices.
+
+**Why.** Short-TTL join records with periodic re-vouching would bound the
+exposure window, but they cost a permanent re-vouching mechanism and make
+long-offline devices fail closed. That is an everyday tax to fix a rare
+problem.
+
+Rotation excludes the lost device *immediately* rather than eventually, since
+it was never a member of the new space. It works only because joining is
+cheap — a direct payoff from the N-1 join design.
+
+**Cost.** Requires physical access to each surviving device to re-scan. For
+three survivors that is two QR scans, which is an acceptable price for an
+emergency path.

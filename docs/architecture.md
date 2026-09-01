@@ -176,15 +176,63 @@ Android, the desktop already trusts the Android, so the iPhone is admitted.
 Trust chains back to the space founder, who is in every roster. No online
 authority is needed at any point.
 
-### Sync and revocation
+### Roster sync
 
-Roster changes gossip between members and merge as an add-only set with
-tombstones for revocation.
+**Additions and revocations have completely different urgency**, and the design
+follows that rather than treating them alike.
 
-**Revocation is eventually consistent**, and this should be stated plainly
-rather than glossed: a peer that has been offline since a revocation was
-issued may still accept the revoked device until it syncs. Acceptable for a
-personal device mesh. It would not be for a multi-tenant system.
+**Additions can be lazy.** The signed join record means a device vouches for
+itself on arrival: the iPhone presents an entry signed by the Pixel, the
+desktop trusts the Pixel, the iPhone is admitted — with no prior sync. Roster
+sync is an *optimization* for additions, not a correctness requirement.
+
+**Revocations must propagate.** This is the entire reason sync exists. A
+revoked device still holds a validly-signed join record, so a member that never
+receives the tombstone will keep admitting a sold phone indefinitely.
+
+The mechanism follows:
+
+- **Roster digest in `Hello`** — a hash and entry count. Members connect anyway
+  to send messages; matching digests cost nothing, mismatched ones trigger a
+  roster exchange and merge.
+- **Eager push on revoke** — actively dial every known member rather than
+  waiting. The revoked device is told too, so a well-behaved node self-removes.
+- **CRDT merge** — union of entries, union of tombstones, tombstones win.
+  Conflict-free by construction; arrival order is irrelevant.
+- **Re-adding** a revoked device works via a fresh join record signed later
+  than the tombstone. Unforgeable, since it requires a real member to
+  re-invite.
+
+**No dedicated gossip layer.** `iroh-gossip` exists and works, but at 2–10
+devices it is machinery without a job — no topic membership to manage, and
+direct exchange on an already-open control stream fails in ways you can reason
+about. Worth revisiting only if device counts grow past what full mesh handles.
+
+### Revocation is eventually consistent
+
+Stated plainly rather than glossed: a peer offline since a revocation was
+issued will keep accepting the revoked device until it next syncs with any
+member. Potentially days, if a tablet is switched off in a drawer.
+
+**The escape hatch is space rotation, not faster revocation.** For a genuinely
+urgent case — a stolen phone — create a new space and re-invite the surviving
+devices. The stolen device is excluded immediately rather than eventually,
+because it was never in the new space at all.
+
+This is why the alternative was rejected. Short-TTL join records requiring
+periodic re-vouching would bound the window, but they cost a persistent
+re-vouching mechanism and make long-offline devices fail closed — a permanent
+tax to fix a rare problem that rotation already solves in two QR scans.
+
+### Two edges
+
+**Name collisions.** Two devices both labelled `laptop` is a display problem,
+not a correctness one — names are local labels. Disambiguate in the UI with a
+NodeId prefix; `--to laptop` already errors on ambiguity.
+
+**Clock skew.** Tombstone-versus-rejoin ordering uses timestamps, so badly
+wrong clocks can misorder them. Not exploitable — the signature requirement
+still holds — only confusing.
 
 ### Multiple spaces
 
@@ -341,8 +389,6 @@ if that changes.
 
 ## Open questions
 
-- **OPEN** — Roster gossip mechanics. `iroh-gossip`, or direct exchange on
-  connect?
 - **OPEN** — What happens when a space has no members left online and a new
   device wants to join.
 - **OPEN** — Voice model distribution on Linux. Bundle a default with the
@@ -357,6 +403,8 @@ if that changes.
   `--json` with per-target status and exit codes. See `cli.md`.
 - ~~Quiet hours and mute~~ — receiver-side policy. The sender expresses
   intent and is told honestly what happened.
+- ~~Roster sync~~ — digest in `Hello`, eager push on revoke, no gossip
+  layer.
 - ~~Text handling and chunking~~ — strict validation, protection-pass
   splitting. See `text.md`.
 - ~~Wire protocol~~ — CBOR, stream-per-message. See `protocol.md`.

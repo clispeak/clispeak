@@ -210,10 +210,28 @@ $ tts space new home           # found a new space from this device
 $ tts space leave work         # drop the roster + gossip a self-revocation
 $ tts space default home       # which space bare target names resolve in
 $ tts space rename work team   # local label only
+$ tts space rotate             # new space, re-invite survivors (see below)
 ```
 
 Leaving works offline: the local roster is dropped immediately, and the signed
 tombstone reaches remaining members as they reconnect.
+
+### Rotation — the panic button
+
+Revocation is eventually consistent, so a device that has been offline since
+the revoke will still honor the revoked member until it syncs. When that
+window matters — a stolen phone rather than a sold laptop — rotate instead:
+
+```
+$ tts space rotate
+  Created a replacement for 'home'.
+  Re-invite surviving devices:  desk, laptop, ipad
+  [ QR ]
+```
+
+The excluded device is locked out *immediately* rather than eventually,
+because it was never in the new space. This is only practical because joining
+is cheap — three survivors is two scans.
 
 ### Targeting across spaces
 
