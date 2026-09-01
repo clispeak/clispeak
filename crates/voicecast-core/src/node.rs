@@ -12,6 +12,8 @@ use interprocess::local_socket::{
     GenericNamespaced, ListenerOptions, ToNsName, tokio::Stream, traits::tokio::Listener,
 };
 use voicecast_engine::SpeechEngine;
+
+use crate::Identity;
 use voicecast_proto::{Priority, Request, Response, Status};
 use voicecast_text::chunk;
 
@@ -28,6 +30,9 @@ struct Job {
 /// The running node.
 pub struct Node {
     engine: Arc<dyn SpeechEngine>,
+    /// This device's keypair. Reported by `status`, and handed to the
+    /// transport at M5.
+    identity: Identity,
     /// Jobs are handed to a dedicated blocking thread; speech is serial by
     /// nature, so a channel is the whole scheduler at this stage.
     tx: tokio::sync::mpsc::UnboundedSender<Job>,
@@ -35,8 +40,8 @@ pub struct Node {
 }
 
 impl Node {
-    /// Start a node with the given engine.
-    pub fn new(engine: Arc<dyn SpeechEngine>) -> Self {
+    /// Start a node with the given engine and identity.
+    pub fn new(engine: Arc<dyn SpeechEngine>, identity: Identity) -> Self {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Job>();
         let queued = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
@@ -56,7 +61,12 @@ impl Node {
             }
         });
 
-        Self { engine, tx, queued }
+        Self {
+            engine,
+            identity,
+            tx,
+            queued,
+        }
     }
 
     /// Listen for CLI connections until cancelled.
@@ -96,6 +106,8 @@ impl Node {
                 }
             }
             Request::Status => Response::Status {
+                device_id: self.identity.id().to_string(),
+                key_store: self.identity.location().to_string(),
                 engine: self
                     .engine
                     .voices()

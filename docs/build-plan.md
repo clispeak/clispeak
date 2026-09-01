@@ -52,6 +52,7 @@ voicecast/
 ├── Cargo.toml                  workspace
 ├── crates/
 │   ├── voicecast-proto/        CBOR wire types + IPC types. Pure data.
+│   ├── voicecast-daemon/       the node process. Desktop only.
 │   ├── voicecast-text/         validation, protection, chunking. Pure fns.
 │   ├── voicecast-engine/       SpeechEngine trait + per-platform impls.
 │   ├── voicecast-core/         iroh transport, roster, queue, playback.
@@ -170,7 +171,7 @@ dependency, not a build one.
 *Exit:* `voicecast "hello world"` speaks on the same Linux machine through
 espeak-ng. `echo x | voicecast` works. Exit codes correct. **First demoable thing.**
 
-### M4 — Identity and a space of one
+### M4 — Identity and a space of one  ✅ DONE
 
 Keypair generation, keyring storage, `voicecast init`, `voicecast status`.
 

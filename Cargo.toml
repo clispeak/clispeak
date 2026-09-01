@@ -6,6 +6,7 @@ members = [
     "crates/voicecast-engine",
     "crates/voicecast-core",
     "crates/voicecast-cli",
+    "crates/voicecast-daemon",
     "xtask",
 ]
 # The M0 spike is throwaway and deliberately not part of the workspace.
@@ -22,6 +23,7 @@ voicecast-proto = { path = "crates/voicecast-proto" }
 voicecast-text = { path = "crates/voicecast-text" }
 voicecast-engine = { path = "crates/voicecast-engine" }
 voicecast-core = { path = "crates/voicecast-core" }
+voicecast-daemon = { path = "crates/voicecast-daemon" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

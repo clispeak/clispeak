@@ -119,6 +119,17 @@ pub enum Response {
     },
     /// Node health.
     Status {
+        /// This device's public key — its address on the network.
+        ///
+        /// Defaulted so a newer peer can still read an older one's reply.
+        /// CBOR is self-describing, but a *missing required* field is still a
+        /// hard error — so every field added after v1 must be defaultable.
+        #[serde(default)]
+        device_id: String,
+        /// Where the private key is kept, so a silent fallback to a file is
+        /// visible rather than assumed.
+        #[serde(default)]
+        key_store: String,
         /// Engine currently in use, e.g. "espeak-ng".
         engine: String,
         /// Whether that engine is the intended one or a stand-in.

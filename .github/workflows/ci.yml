@@ -47,6 +47,7 @@ jobs:
             target: aarch64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-ios
+            mobile: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
@@ -67,8 +68,14 @@ jobs:
         if: matrix.android
         run: |
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
-          cargo ndk -t arm64-v8a build --workspace --exclude xtask
+          cargo ndk -t arm64-v8a build --workspace --exclude xtask --exclude voicecast-daemon
+
+      # voicecast-daemon is desktop-only: it links platform keyrings and is
+      # superseded by the Tauri app at M6.
+      - name: Build (mobile)
+        if: matrix.mobile
+        run: cargo build --workspace --exclude xtask --exclude voicecast-daemon --target ${{ matrix.target }}
 
       - name: Build
-        if: '!matrix.android'
+        if: '!matrix.android && !matrix.mobile'
         run: cargo build --workspace --exclude xtask --target ${{ matrix.target }}

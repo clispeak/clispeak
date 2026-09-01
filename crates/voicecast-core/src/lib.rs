@@ -6,9 +6,11 @@
 //!
 //! Built out from M3 onward.
 
+pub mod identity;
 pub mod ipc;
 mod node;
 
+pub use identity::{FileKeyStore, Identity, IdentityError, KeyStore};
 pub use node::Node;
 
 /// This crate's version, reported by `voicecast status`.

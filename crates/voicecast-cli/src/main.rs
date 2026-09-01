@@ -283,10 +283,14 @@ async fn send(request: Request) -> anyhow::Result<u8> {
             exit::OK
         }
         Response::Status {
+            device_id,
+            key_store,
             engine,
             fallback,
             queued,
         } => {
+            out(&format!("device:  {device_id}"));
+            out(&format!("keys:    {key_store}"));
             out(&format!(
                 "engine:  {engine}{}",
                 if fallback { "  (fallback)" } else { "" }
