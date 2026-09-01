@@ -1,6 +1,6 @@
 # CLI surface
 
-> Status: draft. The `tts` binary is a thin client to the local node — it
+> Status: draft. The `voicecast` binary is a thin client to the local node — it
 > writes to an IPC socket and exits. See `architecture.md`.
 
 ## Design principles
@@ -21,18 +21,18 @@ Whatever the receiver decided is reported back honestly.
 ## Speaking
 
 ```
-tts [OPTIONS] [TEXT...]
-tts say [OPTIONS] [TEXT...]
+voicecast [OPTIONS] [TEXT...]
+voicecast say [OPTIONS] [TEXT...]
 ```
 
 ```
-$ tts "build finished"
-$ tts --to pixel "needs your input"
-$ tts --to pixel,laptop "deploy is live"
-$ tts --to all "coffee"
-$ echo "hello" | tts
-$ cat CHANGELOG.md | tts --strip --to laptop
-$ tts -f notes.md --to desk
+$ voicecast "build finished"
+$ voicecast --to pixel "needs your input"
+$ voicecast --to pixel,laptop "deploy is live"
+$ voicecast --to all "coffee"
+$ echo "hello" | voicecast
+$ cat CHANGELOG.md | voicecast --strip --to laptop
+$ voicecast -f notes.md --to desk
 ```
 
 Text comes from arguments, or stdin when arguments are absent. Both are the
@@ -44,14 +44,14 @@ converts instead; `--raw` skips validation. See `text.md`.
 
 ### The subcommand collision
 
-`tts stop` is ambiguous: speak the word "stop", or stop playback? The rule:
+`voicecast stop` is ambiguous: speak the word "stop", or stop playback? The rule:
 
 **A first argument that exactly matches a subcommand name is treated as a
 subcommand.** To speak such a word, be explicit:
 
 ```
-$ tts say stop
-$ tts -- stop
+$ voicecast say stop
+$ voicecast -- stop
 ```
 
 Multi-word text never collides. This only affects single bare words that
@@ -71,9 +71,9 @@ happen to be reserved.
 Groups are purely local config — they never appear in the protocol:
 
 ```
-$ tts group set phones pixel,iphone
-$ tts group set loud desk,laptop
-$ tts groups
+$ voicecast group set phones pixel,iphone
+$ voicecast group set loud desk,laptop
+$ voicecast groups
 ```
 
 ## Options
@@ -115,32 +115,32 @@ is a per-device toggle, **off by default**, and set on the receiver. Otherwise
 ## Control
 
 ```
-$ tts stop                  # stop current message, clear queue, all targets
-$ tts stop --to pixel       # just that device
-$ tts stop --id m_8fk2p     # one specific message, wherever it is
-$ tts skip                  # abandon current, continue with the queue
-$ tts pause
-$ tts resume
-$ tts queue                 # what's pending, where
+$ voicecast stop                  # stop current message, clear queue, all targets
+$ voicecast stop --to pixel       # just that device
+$ voicecast stop --id m_8fk2p     # one specific message, wherever it is
+$ voicecast skip                  # abandon current, continue with the queue
+$ voicecast pause
+$ voicecast resume
+$ voicecast queue                 # what's pending, where
 ```
 
 Every send returns a message ID, which is what `--id` addresses.
 
 ## Feedback
 
-By default `tts` exits as soon as the local node accepts the message. This is
+By default `voicecast` exits as soon as the local node accepts the message. This is
 the fast path, and it tells you nothing about whether anything was actually
 spoken.
 
 ```
-$ tts --to pixel "done"
+$ voicecast --to pixel "done"
 m_8fk2p
 ```
 
 With `--wait`, it blocks for terminal state on every target:
 
 ```
-$ tts --to all --wait "deploy finished"
+$ voicecast --to all --wait "deploy finished"
   desk      spoken     3.2s
   laptop    spoken     3.4s
   pixel     spoken     3.1s
@@ -186,14 +186,14 @@ discarding the message.
 ## Devices and membership
 
 ```
-$ tts devices                    # names, platform, status, voice, last seen
-$ tts invite                     # QR + ticket to add a device
-$ tts invite --print-only        # ticket only, for pasting over SSH
-$ tts join <ticket>              # join a space from this device
-$ tts revoke <name>
-$ tts rename <old> <new>
-$ tts status                     # this node: identity, connections, queue
-$ tts init                       # first run: identity + new space
+$ voicecast devices                    # names, platform, status, voice, last seen
+$ voicecast invite                     # QR + ticket to add a device
+$ voicecast invite --print-only        # ticket only, for pasting over SSH
+$ voicecast join <ticket>              # join a space from this device
+$ voicecast revoke <name>
+$ voicecast rename <old> <new>
+$ voicecast status                     # this node: identity, connections, queue
+$ voicecast init                       # first run: identity + new space
 ```
 
 ## Spaces
@@ -201,17 +201,17 @@ $ tts init                       # first run: identity + new space
 A device can belong to several spaces at once, kept fully separate.
 
 ```
-$ tts space list
+$ voicecast space list
   NAME    DEVICES   ROLE      DEFAULT
   work    3         member    *
   home    4         founder
 
-$ tts space new home           # found a new space from this device
-$ tts space leave work         # drop the roster + gossip a self-revocation
+$ voicecast space new home           # found a new space from this device
+$ voicecast space leave work         # drop the roster + gossip a self-revocation
                                # warns if you are the last member
-$ tts space default home       # which space bare target names resolve in
-$ tts space rename work team   # local label only
-$ tts space rotate             # new space, re-invite survivors (see below)
+$ voicecast space default home       # which space bare target names resolve in
+$ voicecast space rename work team   # local label only
+$ voicecast space rotate             # new space, re-invite survivors (see below)
 ```
 
 Leaving works offline: the local roster is dropped immediately, and the signed
@@ -224,7 +224,7 @@ the revoke will still honor the revoked member until it syncs. When that
 window matters — a stolen phone rather than a sold laptop — rotate instead:
 
 ```
-$ tts space rotate
+$ voicecast space rotate
   Created a replacement for 'home'.
   Re-invite surviving devices:  desk, laptop, ipad
   [ QR ]
@@ -240,16 +240,16 @@ Bare names resolve in the **default space**. Qualify with `space/device` to
 reach anywhere else:
 
 ```
-$ tts --to pixel "..."            # default space
-$ tts --to work/laptop "..."      # explicit
-$ tts --to work/all "..."         # every device in one space
-$ tts --to work/all,home/all      # both, spelled out
+$ voicecast --to pixel "..."            # default space
+$ voicecast --to work/laptop "..."      # explicit
+$ voicecast --to work/all "..."         # every device in one space
+$ voicecast --to work/all,home/all      # both, spelled out
 ```
 
 Ambiguity is an error, never a guess:
 
 ```
-$ tts --to laptop "..."
+$ voicecast --to laptop "..."
   error: 'laptop' exists in 2 spaces (work, home)
          qualify it:  work/laptop  or  home/laptop
 ```
@@ -282,7 +282,7 @@ its own app UI:
 
 ## Config
 
-`~/.config/tts/` (XDG; platform equivalents elsewhere).
+`~/.config/voicecast/` (XDG; platform equivalents elsewhere).
 
 ```toml
 # config.toml
@@ -303,12 +303,12 @@ by the node, not hand-edited.
 The shape this is all built around:
 
 ```bash
-tts --to phones "Claude needs your input on the migration plan"
+voicecast --to phones "Claude needs your input on the migration plan"
 ```
 
 Fire-and-forget, a few milliseconds, no blocking. When the agent needs to know
 it landed:
 
 ```bash
-tts --to phones --wait --json "deploy finished" | jq -r '.targets[].status'
+voicecast --to phones --wait --json "deploy finished" | jq -r '.targets[].status'
 ```

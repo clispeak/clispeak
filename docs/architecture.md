@@ -8,9 +8,9 @@ A command-line tool that lets an agent speak text aloud on one or more of your
 devices:
 
 ```
-$ tts "build finished"                 # speak on default target(s)
-$ tts --to phone "needs your input"    # speak on a named device
-$ cat CHANGELOG.md | tts --to desk     # long-form, piped
+$ voicecast "build finished"                 # speak on default target(s)
+$ voicecast --to phone "needs your input"    # speak on a named device
+$ cat CHANGELOG.md | voicecast --to desk     # long-form, piped
 ```
 
 Devices reach each other peer-to-peer. There is no server to run.
@@ -40,7 +40,7 @@ entirely, and makes each device's voice a purely local concern.
 
 ## Components
 
-### `tts` — the CLI
+### `voicecast` — the CLI
 
 A small binary (~2MB), desktop only. It does not hold an identity, open
 sockets, or synthesize anything. It writes to a local IPC socket and exits.
@@ -49,7 +49,7 @@ as an agent's notification channel.
 
 If the node app isn't running, the CLI autostarts it.
 
-### `tts-node` — the Tauri v2 app
+### `voicecast-node` — the Tauri v2 app
 
 One codebase, five targets: Linux, macOS, Windows, Android, iOS. Long-running.
 Holds the device identity, the iroh endpoint and its warm connections, the
@@ -63,7 +63,7 @@ configuration, not operation.
 "broadcaster" build. The CLI is desktop-only because that's where agents run,
 not because phones can't send.
 
-### `tts-core` — the shared Rust library
+### `voicecast-core` — the shared Rust library
 
 Everything that isn't UI: transport, discovery, pairing, allowlist, chunking,
 queue, playback, engine abstraction. Compiles to all five targets. This is
@@ -127,7 +127,7 @@ blocks and phones have cameras, so this direction needs zero typing.
 ```
   INVITER (any member)                        NEW DEVICE
   --------------------                        ----------
-  $ tts invite
+  $ voicecast invite
     |
     |- mint one-time token (5 min TTL, single use)
     |- build ticket = NodeId + relay hint + token
@@ -152,7 +152,7 @@ blocks and phones have cameras, so this direction needs zero typing.
 
 - **QR code** — phones. The default path.
 - **Paste-able ticket** — desktop-to-desktop, headless boxes, over SSH.
-- **`tts://join/<ticket>` deep link** — tapping on the same device.
+- **`voicecast://join/<ticket>` deep link** — tapping on the same device.
 
 **The one-time token is not optional.** Without it, a QR photographed over your
 shoulder — or sitting in terminal scrollback, or in a screen recording — is
@@ -305,8 +305,8 @@ the other end.
 ## Message flow
 
 A message is a **stream of chunks with an ID**, not a single blob. This is what
-makes `cat file | tts` work — the receiver starts speaking sentence one while
-sentence forty is still arriving — and it's what gives `tts stop` something to
+makes `cat file | voicecast` work — the receiver starts speaking sentence one while
+sentence forty is still arriving — and it's what gives `voicecast stop` something to
 address. Priority and queue behavior are specified in `cli.md`.
 
 Chunking happens at sentence boundaries, which is required regardless: most TTS
@@ -365,7 +365,7 @@ text-only invariant. v1 ships `NativeEngine`; `ApiEngine` (ElevenLabs, OpenAI,
 Azure — key stored on the receiver) can be added later without touching the
 protocol.
 
-Worth prototyping against: the `tts` Rust crate (Darilek) wraps native
+Worth prototyping against: the `voicecast` Rust crate (Darilek) wraps native
 synthesis across all five platforms behind one interface. If it holds up it is
 most of `NativeEngine` for free.
 
@@ -438,7 +438,7 @@ who deliberately wants espeak should not be pestered forever.
 
 ### Visible from other devices too
 
-Engine state travels in `Presence`, so `tts devices` shows it without visiting
+Engine state travels in `Presence`, so `voicecast devices` shows it without visiting
 the machine:
 
 ```
@@ -482,7 +482,7 @@ the instinct is to build a recovery flow that turns out to preserve nothing.
 |---|---|---|
 | Identity keypair | System keyring | With its device. Meaningless elsewhere. |
 | Space roster | Every member device | Meaningless without living peers. |
-| Groups, defaults | `~/.config/tts/config.toml` | With your dotfiles. |
+| Groups, defaults | `~/.config/voicecast/config.toml` | With your dotfiles. |
 | Quiet hours, voice, volume | Each device, per space | With its device. |
 
 ### Why backing up a space is pointless
@@ -495,7 +495,7 @@ matter. There are two branches and neither wants a backup:
   yields nothing: those devices are gone, and new ones are not in it.
 
 The roster has value only *relative to living devices*, so preserving it
-independently preserves nothing. Recovery is `tts init` and a couple of QR
+independently preserves nothing. Recovery is `voicecast init` and a couple of QR
 scans.
 
 ### Edge cases that resolve themselves

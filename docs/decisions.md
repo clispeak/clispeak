@@ -54,7 +54,7 @@ that's where agents run — not because phones can't send.
 
 ## 5. CLI is a thin client to the local node
 
-**Decision.** `tts` writes to a local IPC socket and exits. The long-running
+**Decision.** `voicecast` writes to a local IPC socket and exits. The long-running
 Tauri app owns the identity and connections.
 
 **Why.** A short-lived process would pay full connection setup — endpoint
@@ -126,7 +126,7 @@ revoked device until it syncs. Fine for a personal mesh; not for multi-tenant.
 
 ## 10. Fire-and-forget by default, confirmation opt-in
 
-**Decision.** `tts` returns as soon as the local node accepts the message.
+**Decision.** `voicecast` returns as soon as the local node accepts the message.
 `--wait` blocks for per-target terminal status; `--json` emits it structured.
 
 **Why.** The caller is an agent that may fire many messages. Blocking on
@@ -225,7 +225,7 @@ sentence than anything a rewriter extracts from `Updated **3 files**`.
 handle it quietly when there is not. Markdown has an obvious plain-prose
 alternative. Emoji does not — an error on 🎉 would be a puzzle with no answer.
 
-**Cost.** Breaks `cat CHANGELOG.md | tts`, since a changelog is markdown. That
+**Cost.** Breaks `cat CHANGELOG.md | voicecast`, since a changelog is markdown. That
 now requires `--strip`, which makes the conversion explicit rather than
 silent — an acceptable trade, and arguably clearer.
 
@@ -253,7 +253,7 @@ full mesh.
 ## 16. Space rotation instead of fast revocation
 
 **Decision.** Revocation stays eventually consistent. The remedy for an urgent
-case is `tts space rotate` — found a replacement space and re-invite the
+case is `voicecast space rotate` — found a replacement space and re-invite the
 surviving devices.
 
 **Why.** Short-TTL join records with periodic re-vouching would bound the
@@ -299,3 +299,30 @@ deliberate espeak user is reported rather than nagged.
 
 **Cost.** `no_engine` becomes nearly unreachable on Linux, which is the point,
 but it means quality varies silently unless the UI does its job.
+
+## 18. Named `voicecast`
+
+**Decision.** The project and its CLI are `voicecast`. Crates are
+`voicecast-core`, `voicecast-cli`, `voicecast-proto`, `voicecast-text`,
+`voicecast-engine`.
+
+**Why "cast".** The distinguishing feature is not that it speaks — plenty of
+tools do — but that it **fans out to many devices at once**. `--to all` is
+literally casting. Broadcast semantics describe the product better than speech
+semantics do.
+
+**Why not `agentcast`.** Taken on crates.io by a dormant crate, and — the
+decisive part — taken on npm by an *actively developed* AI-agent tool. A
+near-identical name in the same niche would interleave in every search result.
+`agent-cast` was free but a hyphen is thin separation from an active neighbour.
+
+**Why not `agent-speak`.** Free on crates.io, but AgentSpeak(L) is an
+established agent-oriented programming language with decades of literature
+behind it. Bad for a name whose job is being findable.
+
+**Why no `agent-` prefix at all.** It names the caller rather than the
+function, and the tool is not agent-only — piping a file is in the design. The
+README's first line carries that framing better than the name would, and it
+will age better.
+
+**Free on both crates.io and npm**, no PATH collision, no trademark.

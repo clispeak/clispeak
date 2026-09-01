@@ -39,26 +39,26 @@ tries to build for iOS.
 
 Concretely:
 
-- `tts-proto`, `tts-text`, and `tts-core` contain **no** `#[cfg(target_os)]`.
-- All platform divergence lives in `tts-engine` and the Tauri shell.
-- Anything that can't be expressed portably gets a trait in `tts-core` and an
-  implementation in `tts-engine`, not a conditional compile in the middle of
+- `voicecast-proto`, `voicecast-text`, and `voicecast-core` contain **no** `#[cfg(target_os)]`.
+- All platform divergence lives in `voicecast-engine` and the Tauri shell.
+- Anything that can't be expressed portably gets a trait in `voicecast-core` and an
+  implementation in `voicecast-engine`, not a conditional compile in the middle of
   business logic.
 
 ## Repo layout
 
 ```
-tts/
+voicecast/
 ├── Cargo.toml                  workspace
 ├── crates/
-│   ├── tts-proto/              CBOR wire types + IPC types. Pure data.
-│   ├── tts-text/               validation, protection, chunking. Pure fns.
-│   ├── tts-engine/             SpeechEngine trait + per-platform impls.
-│   ├── tts-core/               iroh transport, roster, queue, playback.
-│   └── tts-cli/                the `tts` binary. Thin: proto + text only.
+│   ├── voicecast-proto/        CBOR wire types + IPC types. Pure data.
+│   ├── voicecast-text/         validation, protection, chunking. Pure fns.
+│   ├── voicecast-engine/       SpeechEngine trait + per-platform impls.
+│   ├── voicecast-core/         iroh transport, roster, queue, playback.
+│   └── voicecast-cli/          the `voicecast` binary. Thin: proto + text.
 ├── app/
 │   ├── src/                    Tauri frontend
-│   └── src-tauri/              Tauri shell, depends on tts-core
+│   └── src-tauri/              Tauri shell, depends on voicecast-core
 ├── xtask/                      build automation
 └── docs/
 ```
@@ -67,13 +67,13 @@ Each crate has an obvious test story, which is the reason for the split:
 
 | Crate | Testable how |
 |---|---|
-| `tts-proto` | Round-trip encode/decode, version-skew cases |
-| `tts-text` | Table-driven unit tests. Every ugly case in `text.md` is a row. |
-| `tts-engine` | Per-platform smoke tests; trait conformance |
-| `tts-core` | Two nodes in one process over an in-memory transport |
-| `tts-cli` | Golden-file tests on stdout/stderr and exit codes |
+| `voicecast-proto` | Round-trip encode/decode, version-skew cases |
+| `voicecast-text` | Table-driven unit tests. Every ugly case in `text.md` is a row. |
+| `voicecast-engine` | Per-platform smoke tests; trait conformance |
+| `voicecast-core` | Two nodes in one process over an in-memory transport |
+| `voicecast-cli` | Golden-file tests on stdout/stderr and exit codes |
 
-`tts-cli` depending only on `tts-proto` and `tts-text` is deliberate — it keeps
+`voicecast-cli` depending only on `voicecast-proto` and `voicecast-text` is deliberate — it keeps
 the binary small and its startup instant, which is the whole premise of the
 thin-client design.
 
@@ -142,7 +142,7 @@ Nothing functional.
 
 *Exit:* an empty workspace builds green for all five targets.
 
-### M2 — `tts-text`
+### M2 — `voicecast-text`
 
 Validation and chunking. Pure functions, no I/O, no async. Every ugly case in
 `text.md` becomes a test row.
@@ -156,15 +156,15 @@ protection-pass splitting handles `10.0.0.1`, `src/main.rs:42`, `Dr.`,
 
 ### M3 — Speak locally
 
-CLI → unix socket → node → `tts-engine` → sound. No network, no identity, no
+CLI → unix socket → node → `voicecast-engine` → sound. No network, no identity, no
 roster.
 
-*Exit:* `tts "hello world"` speaks on the same Linux machine through
-espeak-ng. `echo x | tts` works. Exit codes correct. **First demoable thing.**
+*Exit:* `voicecast "hello world"` speaks on the same Linux machine through
+espeak-ng. `echo x | voicecast` works. Exit codes correct. **First demoable thing.**
 
 ### M4 — Identity and a space of one
 
-Keypair generation, keyring storage, `tts init`, `tts status`.
+Keypair generation, keyring storage, `voicecast init`, `voicecast status`.
 
 *Exit:* identity survives a restart; the keyring is used, not a bare file.
 
@@ -209,10 +209,10 @@ hours, `--wait`/`--json`, rotation.
 
 ## Testing strategy
 
-**Unit** — heaviest in `tts-text` and `tts-proto`. Roster CRDT merge is a good
+**Unit** — heaviest in `voicecast-text` and `voicecast-proto`. Roster CRDT merge is a good
 property-test target: merge must be commutative, associative, idempotent.
 
-**Integration** — two `tts-core` nodes in one process over an in-memory
+**Integration** — two `voicecast-core` nodes in one process over an in-memory
 transport. Covers roster convergence, queue behavior, and cancellation without
 touching a network.
 

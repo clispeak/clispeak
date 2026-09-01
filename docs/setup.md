@@ -24,15 +24,15 @@ device and no "original" device with special rights. The founder is simply the
 first member; once a second device joins, the two are interchangeable.
 
 **Every device can do it from its GUI.** All five platforms run the same app,
-so the invite screen exists everywhere. On desktop you also get `tts invite` —
+so the invite screen exists everywhere. On desktop you also get `voicecast invite` —
 the CLI and the GUI button do the identical thing, mint the identical ticket,
 and honor the identical five-minute expiry. The CLI draws the QR in unicode
 blocks; the app draws a real one.
 
 | Device | Can invite from | Can join by |
 |---|---|---|
-| Desktop / laptop | `tts invite`, or the app window | pasting a ticket (CLI or app); camera if it has one |
-| Phone / tablet | the app | scanning a QR, or tapping a `tts://join/` link |
+| Desktop / laptop | `voicecast invite`, or the app window | pasting a ticket (CLI or app); camera if it has one |
+| Phone / tablet | the app | scanning a QR, or tapping a `voicecast://join/` link |
 
 Two consequences worth stating plainly:
 
@@ -49,14 +49,14 @@ needs to change, it's a per-space toggle rather than a redesign.
 ## 1. Desktop — install and create the space
 
 ```
-$ brew install tts        # or: paru -S tts, winget install tts
+$ brew install voicecast        # or: paru -S voicecast, winget install voicecast
 
-$ tts init
+$ voicecast init
   Generated identity for this device.
   Device name [desk]:
 
   Created a new space.
-  desk is now ready. Add another device with:  tts invite
+  desk is now ready. Add another device with:  voicecast invite
 ```
 
 `init` generates the ed25519 keypair, stores it in the system keyring, and
@@ -66,7 +66,7 @@ listening.
 The desktop can already talk to itself:
 
 ```
-$ tts "hello world"
+$ voicecast "hello world"
 ```
 
 ## 2. Android — join by scanning
@@ -74,7 +74,7 @@ $ tts "hello world"
 On the desktop:
 
 ```
-$ tts invite
+$ voicecast invite
 
   █▀▀▀▀▀█ ▀▄█▀▄ █▀▀▀▀▀█
   █ ███ █ ▀█ ▄▀ █ ███ █
@@ -83,7 +83,7 @@ $ tts invite
   ...
 
   Or paste this on the other device:
-    tts://join/AXQm9Rk2...vB7z
+    voicecast://join/AXQm9Rk2...vB7z
 
   Expires in 5:00.  Waiting...
 ```
@@ -120,15 +120,15 @@ The MacBook has a camera, but aiming a laptop at another screen is awkward. So
 paste instead — same payload, different presentation:
 
 ```
-$ tts invite --print-only
-  tts://join/BXn4Tp8...kQ2m
+$ voicecast invite --print-only
+  voicecast://join/BXn4Tp8...kQ2m
   Expires in 5:00.  Waiting...
 ```
 
 On the laptop, after installing:
 
 ```
-$ tts join tts://join/BXn4Tp8...kQ2m
+$ voicecast join voicecast://join/BXn4Tp8...kQ2m
   Device name [laptop]:
   Safety code: 7734-2216  — confirm this matches the inviting device.
   Joined. 3 devices in this space.
@@ -157,7 +157,7 @@ admitted without the desktop ever having seen it. (See *Membership* in
 ## 5. Everything sees everything
 
 ```
-$ tts devices
+$ voicecast devices
 
   NAME     PLATFORM   STATUS      VOICE            LAST SEEN
   desk     linux      online      espeak (!)fallback  now
@@ -173,11 +173,11 @@ Three joins. Four devices. No pairwise setup, no server, no accounts.
 ## 6. First real use
 
 ```
-$ tts --to all "setup complete"
+$ voicecast --to all "setup complete"
 
-$ tts --to pixel,iphone "build finished"
+$ voicecast --to pixel,iphone "build finished"
 
-$ cat CHANGELOG.md | tts --strip --to laptop
+$ cat CHANGELOG.md | voicecast --strip --to laptop
 ```
 
 ---
@@ -202,7 +202,7 @@ see *Feedback* in `cli.md`.
 Same one step, from any device:
 
 ```
-$ tts invite
+$ voicecast invite
 ```
 
 N devices requires N-1 joins. It does not grow quadratically.
@@ -210,7 +210,7 @@ N devices requires N-1 joins. It does not grow quadratically.
 ## Removing a device
 
 ```
-$ tts revoke pixel
+$ voicecast revoke pixel
   pixel removed from the space. Revocation gossiped to 3 devices.
 ```
 
@@ -227,10 +227,10 @@ both work and home, while the work laptop hears only work.
 From the phone (or any device already in a space):
 
 ```
-$ tts space new home
+$ voicecast space new home
   Created 'home'. This device is a member of 2 spaces.
 
-$ tts space list
+$ voicecast space list
   NAME    DEVICES   ROLE      DEFAULT
   work    3         member    *
   home    1         founder
@@ -239,7 +239,7 @@ $ tts space list
 Then invite into it exactly as before — invites are per-space:
 
 ```
-$ tts invite --space home
+$ voicecast invite --space home
 ```
 
 The two spaces never learn about each other. Devices in `work` cannot see or
@@ -249,7 +249,7 @@ and volume on every device that belongs to both.
 To detach a device entirely rather than adding:
 
 ```
-$ tts space leave work
+$ voicecast space leave work
   Left 'work'. Roster removed locally; 2 remaining members notified.
 ```
 
