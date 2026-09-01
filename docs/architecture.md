@@ -341,8 +341,6 @@ if that changes.
 
 ## Open questions
 
-- **OPEN** — Chunking rules at the edges: abbreviations, code blocks, URLs,
-  lists, and other text that has no clean sentence boundary.
 - **OPEN** — Roster gossip mechanics. `iroh-gossip`, or direct exchange on
   connect?
 - **OPEN** — What happens when a space has no members left online and a new
@@ -359,6 +357,8 @@ if that changes.
   `--json` with per-target status and exit codes. See `cli.md`.
 - ~~Quiet hours and mute~~ — receiver-side policy. The sender expresses
   intent and is told honestly what happened.
+- ~~Text handling and chunking~~ — strict validation, protection-pass
+  splitting. See `text.md`.
 - ~~Wire protocol~~ — CBOR, stream-per-message. See `protocol.md`.
 - ~~Multi-person spaces~~ — out of scope. Spaces are one person's own
   devices, which settles one-keypair-per-device.

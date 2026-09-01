@@ -114,4 +114,4 @@ hand — accepted, because iroh is the transport decision and it is QUIC.
 
 Chunk *content* rules — where text is split and how markdown, code blocks,
 URLs, and abbreviations are handled — are a separate concern. See
-`chunking.md`.
+`text.md`.

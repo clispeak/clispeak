@@ -31,12 +31,16 @@ $ tts --to pixel "needs your input"
 $ tts --to pixel,laptop "deploy is live"
 $ tts --to all "coffee"
 $ echo "hello" | tts
-$ cat CHANGELOG.md | tts --to laptop
+$ cat CHANGELOG.md | tts --strip --to laptop
 $ tts -f notes.md --to desk
 ```
 
 Text comes from arguments, or stdin when arguments are absent. Both are the
 same code path — long-form and short-form are not distinct modes.
+
+**Text is validated before sending.** Markdown and bare URLs are rejected with
+an explanation the agent can act on, rather than silently rewritten. `--strip`
+converts instead; `--raw` skips validation. See `text.md`.
 
 ### The subcommand collision
 
@@ -84,6 +88,8 @@ $ tts groups
 | `--timeout <secs>` | `120` | With `--wait` |
 | `--json` | off | Machine-readable result on stdout |
 | `-q, --quiet` | off | Suppress output; exit code only |
+| `--strip` | off | Convert markdown to speakable text instead of rejecting |
+| `--raw` | off | Speak exactly as given; skip validation entirely |
 | `--dry-run` | off | Resolve targets and print them; speak nothing |
 
 ## Priority and queue semantics
@@ -175,6 +181,7 @@ discarding the message.
 | `3` | Partial — at least one target succeeded, at least one didn't |
 | `4` | Every target failed |
 | `5` | Local node unavailable (could not reach or start it) |
+| `6` | Text rejected — markdown or a URL that won't read well aloud |
 
 ## Devices and membership
 

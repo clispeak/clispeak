@@ -1,4 +1,4 @@
-# Setup walkthrough
+n# Setup walkthrough
 
 The intended first-run experience, end to end, for someone setting up four
 devices. This is a design target, not documentation of built software.
@@ -177,7 +177,7 @@ $ tts --to all "setup complete"
 
 $ tts --to pixel,iphone "build finished"
 
-$ cat CHANGELOG.md | tts --to laptop
+$ cat CHANGELOG.md | tts --strip --to laptop
 ```
 
 ---
