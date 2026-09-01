@@ -209,3 +209,30 @@ fn stripped_output_can_be_chunked() {
     assert!(!got.is_empty());
     assert!(got.iter().all(|c| !c.contains('*') && !c.contains('`')));
 }
+
+#[test]
+fn chunking_always_terminates_on_awkward_punctuation() {
+    // `protected_ranges` advanced its cursor to the end of a protected token,
+    // but `token_end` strips trailing punctuation, so "Wait..." resolved back
+    // to "Wait" and the cursor moved *backwards* — an infinite loop that CI
+    // caught only as a job timeout.
+    //
+    // Every input here is one where a token ends in punctuation that gets
+    // stripped. If this test hangs, that invariant is broken again.
+    for input in [
+        "Wait... it finished.",
+        "....",
+        "a.b.c...",
+        "...",
+        ". . .",
+        "v1.2.3...",
+        "10.0.0.1...",
+        "end.",
+        "..a..b..",
+        "Dr... Chen",
+        "!?.,;:",
+        "a. b. c. d. e.",
+    ] {
+        let _ = chunk(input);
+    }
+}

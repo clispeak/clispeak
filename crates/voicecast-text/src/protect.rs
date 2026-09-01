@@ -35,7 +35,10 @@ pub fn protected_ranges(text: &str) -> Vec<(usize, usize)> {
                 let start = token_start(b, i);
                 let end = token_end(b, i);
                 out.push((start, end));
-                i = end;
+                // token_end strips trailing punctuation, so it can land at or
+                // before `i` — "Wait..." resolves back to "Wait". Advancing to
+                // it unconditionally walked backwards and looped forever.
+                i = end.max(i + 1);
                 continue;
             }
         }
