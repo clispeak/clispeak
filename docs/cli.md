@@ -277,6 +277,7 @@ its own app UI:
 - Mute (indefinite, manual)
 - Quiet hours, and whether `high` may break through (default: no)
 - **Per space**: separate mute, quiet hours, volume, and optionally voice
+- Voice model download, with fallback state and reason shown when degraded
 - Space membership; revoke other devices
 
 ## Config

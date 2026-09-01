@@ -160,7 +160,7 @@ admitted without the desktop ever having seen it. (See *Membership* in
 $ tts devices
 
   NAME     PLATFORM   STATUS      VOICE            LAST SEEN
-  desk     linux      online      piper/amy        now
+  desk     linux      online      espeak (!)fallback  now
   laptop   macos      online      Samantha         now
   pixel    android    online      en-us-x-tpf      12s ago
   iphone   ios        background  Samantha         4m ago

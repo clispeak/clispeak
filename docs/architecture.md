@@ -334,7 +334,7 @@ toggle are mitigations, not afterthoughts.
 
 | Platform | TTS engine | Background listening |
 |---|---|---|
-| Linux | Piper (bundled, neural, CPU) | Tray + autostart |
+| Linux | Piper (downloaded); espeak-ng fallback | Tray + autostart |
 | macOS | `AVSpeechSynthesizer` | Tray + autostart |
 | Windows | WinRT `SpeechSynthesizer` / SAPI5 | Tray + autostart |
 | Android | `android.speech.tts.TextToSpeech` | Foreground service |
@@ -373,6 +373,91 @@ One wrinkle: native OS engines generally play audio themselves, while Piper and
 API engines hand back buffers. Routing everything through buffers costs a
 little on native but gives uniform volume control, ducking, and a `stop` that
 actually stops mid-sentence.
+
+## Voice models and fallback
+
+Only Linux has this problem — the other four platforms ship a usable native
+engine. Linux needs Piper, and Piper needs a voice model: roughly 20–60MB of
+ONNX weights.
+
+**Neither bundling nor downloading works alone.** Bundling inflates every
+package by ~60MB, invites a packaging fight over binary blobs, and — the
+decisive one — **serves only English speakers**, since one bundled voice means
+everyone else gets a tool that cannot speak their language. Downloading solves
+all three but can fail on first run.
+
+**So: both, tiered.**
+
+1. **espeak-ng as the guaranteed floor.** Every distro ships it, so it is a
+   package dependency rather than a bundled blob — no size cost, no packaging
+   fight. It sounds like 1994, but it is intelligible and always present.
+2. **Piper downloaded on first run**, and preferred the moment it lands.
+
+The payoff is that **`no_engine` becomes nearly unreachable on Linux**: the
+worst case is a robotic voice, not silence. And a voice picker serves other
+languages, which bundling never could.
+
+### Fallback must explain itself
+
+A silent fallback is the real risk here — someone hears espeak, assumes that
+is the product, and never discovers a better voice was one click away. So
+degraded state is **visible and self-explanatory**, not merely logged.
+
+```
+  +- Voice ------------------------------+
+  |                                      |
+  |  (!)  Using fallback voice           |
+  |                                      |
+  |  Currently:  espeak-ng (robotic)     |
+  |  Reason:     high-quality voice not  |
+  |              downloaded yet          |
+  |                                      |
+  |  [ Download Piper - en_US - 63 MB ]  |
+  |                                      |
+  |  Speech works now. This only affects |
+  |  how it sounds.                      |
+  +--------------------------------------+
+```
+
+That last line matters as much as the warning: the device is working, not
+broken, and the user should not go hunting for a fault.
+
+**Reason codes**, carried in `Presence` and exposed to `--json`:
+
+| Code | Meaning | Action offered |
+|---|---|---|
+| `not_downloaded` | First run; no model yet | Download |
+| `downloading` | In progress | Progress, cancel |
+| `download_failed` | Network, checksum, or host unreachable | Retry, choose mirror |
+| `user_selected` | Deliberately chose espeak | None — this is intended |
+| `unsupported` | onnxruntime unavailable on this platform | Explain; no action |
+| `insufficient_disk` | Not enough space for the model | Free space, retry |
+
+`user_selected` is why the state is *reported* rather than *nagged*: someone
+who deliberately wants espeak should not be pestered forever.
+
+### Visible from other devices too
+
+Engine state travels in `Presence`, so `tts devices` shows it without visiting
+the machine:
+
+```
+  NAME     PLATFORM   STATUS    VOICE                   LAST SEEN
+  desk     linux      online    espeak-ng  (!)fallback  now
+  laptop   macos      online    Samantha                now
+```
+
+### Distribution
+
+Voice models come from Hugging Face — third-party infrastructure we do not
+run, acceptable on the same logic as n0's relays. URLs are pinned with
+checksums, with a mirror override in config.
+
+**Deferred but a natural fit:** the devices are already a P2P mesh, and
+`iroh-blobs` does content-addressed transfer. The first device could fetch a
+voice from Hugging Face and the rest fetch it *from each other* — saving
+bandwidth and working when the host is down, using infrastructure that already
+exists. A v2 nicety, not a v1 requirement.
 
 ## Deferred
 
@@ -428,8 +513,6 @@ it**, and that should warn rather than happen silently.
 
 ## Open questions
 
-- **OPEN** — Voice model distribution on Linux. Bundle a default with the
-  package, or download on first run?
 
 ### Resolved
 
@@ -440,6 +523,8 @@ it**, and that should warn rather than happen silently.
   `--json` with per-target status and exit codes. See `cli.md`.
 - ~~Quiet hours and mute~~ — receiver-side policy. The sender expresses
   intent and is told honestly what happened.
+- ~~Linux voice models~~ — espeak-ng floor, Piper downloaded, fallback
+  state surfaced in the UI.
 - ~~Joining with no members online~~ — dissolves; see *State and
   durability*.
 - ~~Roster sync~~ — digest in `Hello`, eager push on revoke, no gossip

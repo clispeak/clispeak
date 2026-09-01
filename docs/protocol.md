@@ -48,9 +48,14 @@ tts --to phone` cannot exhaust the phone's memory.
 ```
 Hello        { node_id, display_name, platform, proto_version, capabilities }
 RosterUpdate { entries[], tombstones[] }
-Presence     { online, engine_ready, muted, quiet_hours_active }
+Presence     { online, muted, quiet_hours_active,
+               engine: { name, voice, tier, reason? } }
 Ping / Pong
 ```
+
+`Presence.engine.tier` is `full` or `fallback`; `reason` explains a fallback
+(`not_downloaded`, `download_failed`, `user_selected`, …) so other devices can
+show *why* without visiting the machine.
 
 `capabilities` carries accepted content types, available voices, active engine,
 and max chunk size — this is what lets new receiver kinds appear later without
