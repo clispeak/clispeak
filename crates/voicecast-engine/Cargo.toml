@@ -1,0 +1,13 @@
+[package]
+name = "voicecast-engine"
+description = "Speech engine trait and per-platform implementations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

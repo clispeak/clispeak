@@ -1,0 +1,13 @@
+[package]
+name = "voicecast-proto"
+description = "Wire and IPC message types. Pure data, no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true

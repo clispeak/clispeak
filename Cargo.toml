@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/voicecast-proto",
+    "crates/voicecast-text",
+    "crates/voicecast-engine",
+    "crates/voicecast-core",
+    "crates/voicecast-cli",
+    "xtask",
+]
+# The M0 spike is throwaway and deliberately not part of the workspace.
+exclude = ["spike/m0-iroh"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+voicecast-proto = { path = "crates/voicecast-proto" }
+voicecast-text = { path = "crates/voicecast-text" }
+voicecast-engine = { path = "crates/voicecast-engine" }
+voicecast-core = { path = "crates/voicecast-core" }
+
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+todo = "allow"

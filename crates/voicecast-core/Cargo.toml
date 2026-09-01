@@ -1,0 +1,16 @@
+[package]
+name = "voicecast-core"
+description = "Transport, membership, queue and playback. Portable."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+voicecast-proto.workspace = true
+voicecast-engine.workspace = true
+voicecast-text.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

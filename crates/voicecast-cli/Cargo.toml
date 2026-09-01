@@ -1,0 +1,19 @@
+[package]
+name = "voicecast-cli"
+description = "The voicecast binary. A thin client to the local node."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "voicecast"
+path = "src/main.rs"
+
+[dependencies]
+voicecast-proto.workspace = true
+voicecast-text.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true
