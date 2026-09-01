@@ -1,0 +1,287 @@
+# CLI surface
+
+> Status: draft. The `tts` binary is a thin client to the local node — it
+> writes to an IPC socket and exits. See `architecture.md`.
+
+## Design principles
+
+**Fast by default.** An agent may fire many of these. The default path accepts
+the message locally and returns in single-digit milliseconds. Confirmation is
+opt-in, not the default.
+
+**Machine-readable on request.** The primary caller is an agent, so `--json`
+and meaningful exit codes are first-class, not an afterthought.
+
+**The sender expresses intent; the receiver enforces policy.** A sender can say
+"this is urgent." It cannot override a device's mute, quiet hours, or volume.
+Whatever the receiver decided is reported back honestly.
+
+---
+
+## Speaking
+
+```
+tts [OPTIONS] [TEXT...]
+tts say [OPTIONS] [TEXT...]
+```
+
+```
+$ tts "build finished"
+$ tts --to pixel "needs your input"
+$ tts --to pixel,laptop "deploy is live"
+$ tts --to all "coffee"
+$ echo "hello" | tts
+$ cat CHANGELOG.md | tts --to laptop
+$ tts -f notes.md --to desk
+```
+
+Text comes from arguments, or stdin when arguments are absent. Both are the
+same code path — long-form and short-form are not distinct modes.
+
+### The subcommand collision
+
+`tts stop` is ambiguous: speak the word "stop", or stop playback? The rule:
+
+**A first argument that exactly matches a subcommand name is treated as a
+subcommand.** To speak such a word, be explicit:
+
+```
+$ tts say stop
+$ tts -- stop
+```
+
+Multi-word text never collides. This only affects single bare words that
+happen to be reserved.
+
+## Targeting
+
+| Selector | Meaning |
+|---|---|
+| `--to desk` | One device by name |
+| `--to desk,pixel` | Several |
+| `--to all` | Every device in the space |
+| `--to here` | This machine only |
+| `--to phones` | A group (sender-side config) |
+| *(omitted)* | The configured default target |
+
+Groups are purely local config — they never appear in the protocol:
+
+```
+$ tts group set phones pixel,iphone
+$ tts group set loud desk,laptop
+$ tts groups
+```
+
+## Options
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-t, --to <sel>` | config default | Target selector |
+| `-p, --priority <lvl>` | `normal` | `low` \| `normal` \| `high` |
+| `-f, --file <path>` | — | Read text from a file |
+| `-v, --voice <name>` | receiver's | Request a voice, if the receiver has it |
+| `-w, --wait` | off | Block until every target reaches a terminal state |
+| `--timeout <secs>` | `120` | With `--wait` |
+| `--json` | off | Machine-readable result on stdout |
+| `-q, --quiet` | off | Suppress output; exit code only |
+| `--dry-run` | off | Resolve targets and print them; speak nothing |
+
+## Priority and queue semantics
+
+A device speaks one message at a time. Priority decides what happens when
+another arrives.
+
+| Priority | Behavior |
+|---|---|
+| `low` | Appended. **Dropped** if the queue is already deep, or during quiet hours. For chatter that isn't worth interrupting anything. |
+| `normal` | Appended. Spoken in order. The default. |
+| `high` | **Interrupts** the current message, speaks, then resumes the interrupted one from the start of the chunk it was cut off in. |
+
+Resuming from the chunk boundary rather than the exact word is a direct
+benefit of sentence-level chunking — you hear a clean sentence restart rather
+than a fragment.
+
+**`high` does not override receiver policy.** A muted device stays silent and
+reports `muted`. Whether high-priority messages may break through quiet hours
+is a per-device toggle, **off by default**, and set on the receiver. Otherwise
+"urgent" becomes meaningless the first time an agent marks everything urgent.
+
+## Control
+
+```
+$ tts stop                  # stop current message, clear queue, all targets
+$ tts stop --to pixel       # just that device
+$ tts stop --id m_8fk2p     # one specific message, wherever it is
+$ tts skip                  # abandon current, continue with the queue
+$ tts pause
+$ tts resume
+$ tts queue                 # what's pending, where
+```
+
+Every send returns a message ID, which is what `--id` addresses.
+
+## Feedback
+
+By default `tts` exits as soon as the local node accepts the message. This is
+the fast path, and it tells you nothing about whether anything was actually
+spoken.
+
+```
+$ tts --to pixel "done"
+m_8fk2p
+```
+
+With `--wait`, it blocks for terminal state on every target:
+
+```
+$ tts --to all --wait "deploy finished"
+  desk      spoken     3.2s
+  laptop    spoken     3.4s
+  pixel     spoken     3.1s
+  iphone    unreachable  (app not in foreground)
+$ echo $?
+3
+```
+
+With `--json`, for agents:
+
+```json
+{
+  "id": "m_8fk2p",
+  "targets": [
+    { "device": "desk",   "status": "spoken",      "duration_ms": 3210 },
+    { "device": "pixel",  "status": "spoken",      "duration_ms": 3140 },
+    { "device": "iphone", "status": "unreachable", "reason": "background" }
+  ]
+}
+```
+
+### Per-target status
+
+`queued` · `speaking` · `spoken` · `muted` · `quiet_hours` · `no_engine` ·
+`unreachable` · `rejected` · `cancelled` · `dropped`
+
+`no_engine` matters more than it looks: a Linux receiver whose Piper voice
+model hasn't downloaded yet cannot speak. It must say so rather than silently
+discarding the message.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Accepted — or, with `--wait`, spoken everywhere |
+| `1` | Usage or configuration error |
+| `2` | No targets matched the selector |
+| `3` | Partial — at least one target succeeded, at least one didn't |
+| `4` | Every target failed |
+| `5` | Local node unavailable (could not reach or start it) |
+
+## Devices and membership
+
+```
+$ tts devices                    # names, platform, status, voice, last seen
+$ tts invite                     # QR + ticket to add a device
+$ tts invite --print-only        # ticket only, for pasting over SSH
+$ tts join <ticket>              # join a space from this device
+$ tts revoke <name>
+$ tts rename <old> <new>
+$ tts status                     # this node: identity, connections, queue
+$ tts init                       # first run: identity + new space
+```
+
+## Spaces
+
+A device can belong to several spaces at once, kept fully separate.
+
+```
+$ tts space list
+  NAME    DEVICES   ROLE      DEFAULT
+  work    3         member    *
+  home    4         founder
+
+$ tts space new home           # found a new space from this device
+$ tts space leave work         # drop the roster + gossip a self-revocation
+$ tts space default home       # which space bare target names resolve in
+$ tts space rename work team   # local label only
+```
+
+Leaving works offline: the local roster is dropped immediately, and the signed
+tombstone reaches remaining members as they reconnect.
+
+### Targeting across spaces
+
+Bare names resolve in the **default space**. Qualify with `space/device` to
+reach anywhere else:
+
+```
+$ tts --to pixel "..."            # default space
+$ tts --to work/laptop "..."      # explicit
+$ tts --to work/all "..."         # every device in one space
+$ tts --to work/all,home/all      # both, spelled out
+```
+
+Ambiguity is an error, never a guess:
+
+```
+$ tts --to laptop "..."
+  error: 'laptop' exists in 2 spaces (work, home)
+         qualify it:  work/laptop  or  home/laptop
+```
+
+**There is deliberately no selector meaning "every device in every space."**
+`--to all` is scoped to one space. Crossing spaces requires naming them,
+because the failure it prevents — a work message arriving on the family
+tablet — is exactly what separate spaces are for.
+
+Groups may span spaces, since they're local config:
+
+```toml
+[groups]
+phones = ["home/pixel", "work/iphone"]
+```
+
+## Receiver-side settings
+
+Not reachable from the CLI of *another* device — these live on each device, in
+its own app UI:
+
+- Display name
+- Voice and engine
+- Volume
+- Mute (indefinite, manual)
+- Quiet hours, and whether `high` may break through (default: no)
+- **Per space**: separate mute, quiet hours, volume, and optionally voice
+- Space membership; revoke other devices
+
+## Config
+
+`~/.config/tts/` (XDG; platform equivalents elsewhere).
+
+```toml
+# config.toml
+default_space  = "home"
+default_target = "here"
+default_priority = "normal"
+
+[groups]
+phones = ["pixel", "iphone"]
+loud   = ["desk", "laptop"]
+```
+
+Identity lives in the system keyring, not here. The device roster is managed
+by the node, not hand-edited.
+
+## Agent usage
+
+The shape this is all built around:
+
+```bash
+tts --to phones "Claude needs your input on the migration plan"
+```
+
+Fire-and-forget, a few milliseconds, no blocking. When the agent needs to know
+it landed:
+
+```bash
+tts --to phones --wait --json "deploy finished" | jq -r '.targets[].status'
+```
