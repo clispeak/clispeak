@@ -387,10 +387,47 @@ it audio. The text-only invariant survives if this is ever revisited.
 **Self-hosted relay.** n0's public relays are acceptable. Config escape hatch
 if that changes.
 
+## State and durability
+
+Nothing in this system requires cross-device backup. That falls out of the
+design rather than being engineered, and it is worth recording *why*, because
+the instinct is to build a recovery flow that turns out to preserve nothing.
+
+| State | Lives | Survives |
+|---|---|---|
+| Identity keypair | System keyring | With its device. Meaningless elsewhere. |
+| Space roster | Every member device | Meaningless without living peers. |
+| Groups, defaults | `~/.config/tts/config.toml` | With your dotfiles. |
+| Quiet hours, voice, volume | Each device, per space | With its device. |
+
+### Why backing up a space is pointless
+
+Consider losing every device at once — the only case where recovery could
+matter. There are two branches and neither wants a backup:
+
+- **If any device survives**, it already holds the roster. Nothing was needed.
+- **If none survive**, the roster is a list of dead NodeIds. Restoring it
+  yields nothing: those devices are gone, and new ones are not in it.
+
+The roster has value only *relative to living devices*, so preserving it
+independently preserves nothing. Recovery is `tts init` and a couple of QR
+scans.
+
+### Edge cases that resolve themselves
+
+- **All devices asleep, want to add one** — inviting means using a device,
+  which means turning one on.
+- **Inviting while other members sleep** — the signed join record admits the
+  new device retroactively.
+- **Inviter drops mid-join** — the join fails; the ticket is valid until its
+  TTL; retry.
+- **Long-offline device returns** — digest mismatch on `Hello`, merge.
+
+The one behavior worth adding: **leaving a space as its last member destroys
+it**, and that should warn rather than happen silently.
+
 ## Open questions
 
-- **OPEN** — What happens when a space has no members left online and a new
-  device wants to join.
 - **OPEN** — Voice model distribution on Linux. Bundle a default with the
   package, or download on first run?
 
@@ -403,6 +440,8 @@ if that changes.
   `--json` with per-target status and exit codes. See `cli.md`.
 - ~~Quiet hours and mute~~ — receiver-side policy. The sender expresses
   intent and is told honestly what happened.
+- ~~Joining with no members online~~ — dissolves; see *State and
+  durability*.
 - ~~Roster sync~~ — digest in `Hello`, eager push on revoke, no gossip
   layer.
 - ~~Text handling and chunking~~ — strict validation, protection-pass

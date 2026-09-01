@@ -208,6 +208,7 @@ $ tts space list
 
 $ tts space new home           # found a new space from this device
 $ tts space leave work         # drop the roster + gossip a self-revocation
+                               # warns if you are the last member
 $ tts space default home       # which space bare target names resolve in
 $ tts space rename work team   # local label only
 $ tts space rotate             # new space, re-invite survivors (see below)
