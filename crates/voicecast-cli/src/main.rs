@@ -94,12 +94,28 @@ enum Command {
     Status,
 }
 
+/// Write a line to stdout, tolerating a closed pipe.
+///
+/// `println!` panics on EPIPE, so `voicecast ... | head -1` exited 101 —
+/// Rust's panic code — instead of the exit code the caller needs to read.
+/// An agent piping our output should still get 6 for "bad text".
+fn out(s: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stdout(), "{s}");
+}
+
+/// Write a line to stderr, tolerating a closed pipe. See [`out`].
+fn err(s: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{s}");
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     match run().await {
         Ok(code) => ExitCode::from(code),
         Err(e) => {
-            eprintln!("error: {e:#}");
+            err(&format!("error: {e:#}"));
             ExitCode::from(exit::USAGE)
         }
     }
@@ -164,16 +180,16 @@ fn flaglike_token(tokens: &[String]) -> Option<String> {
 /// Validate and wrap text, or print a rejection and return its exit code.
 fn build_speak(cli: &Cli, tokens: &[String]) -> anyhow::Result<Result<Request, u8>> {
     if let Some(flag) = flaglike_token(tokens) {
-        eprintln!("error: unknown option '{flag}'");
-        eprintln!();
-        eprintln!("If you meant to speak it, use the -- separator:");
-        eprintln!("  voicecast -- {flag} ...");
+        err(&format!("error: unknown option '{flag}'"));
+        err("");
+        err("If you meant to speak it, use the -- separator:");
+        err(&format!("  voicecast -- {flag} ..."));
         return Ok(Err(exit::USAGE));
     }
 
     let text = tokens.join(" ").trim().to_string();
     if text.is_empty() {
-        eprintln!("error: nothing to say");
+        err("error: nothing to say");
         return Ok(Err(exit::USAGE));
     }
 
@@ -203,31 +219,31 @@ fn build_speak(cli: &Cli, tokens: &[String]) -> anyhow::Result<Result<Request, u
 /// guess; one handed replacement text can simply send it.
 fn print_rejection(text: &str, rejection: &voicecast_text::Rejection) {
     let (start, end) = rejection.span();
-    eprintln!("error: {rejection}");
-    eprintln!();
+    err(&format!("error: {rejection}"));
+    err("");
 
     // Show the offending line with a caret run beneath the span.
     let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
     let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
     let line = &text[line_start..line_end];
-    eprintln!("  {line}");
+    err(&format!("  {line}"));
     let pad = text[line_start..start].chars().count();
     let width = text[start..end].chars().count().max(1);
-    eprintln!(
+    err(&format!(
         "  {}{} {}",
         " ".repeat(pad),
         "^".repeat(width),
         rejection.kind()
-    );
-    eprintln!();
+    ));
+    err("");
 
     let suggestion = voicecast_text::strip(text);
     if !suggestion.is_empty() && suggestion != text {
-        eprintln!("Write text as it should be spoken:");
-        eprintln!("  {suggestion:?}");
-        eprintln!();
+        err("Write text as it should be spoken:");
+        err(&format!("  {suggestion:?}"));
+        err("");
     }
-    eprintln!("Or pass --strip to convert automatically.");
+    err("Or pass --strip to convert automatically.");
 }
 
 /// Read all of stdin, refusing to hang on an interactive terminal.
@@ -248,8 +264,8 @@ async fn send(request: Request) -> anyhow::Result<u8> {
     let mut stream = match Stream::connect(name).await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("error: no voicecast node is running ({e})");
-            eprintln!("start one with: voicecastd");
+            err(&format!("error: no voicecast node is running ({e})"));
+            err("start one with: voicecastd");
             return Ok(exit::NO_NODE);
         }
     };
@@ -259,11 +275,11 @@ async fn send(request: Request) -> anyhow::Result<u8> {
 
     Ok(match response {
         Response::Accepted { msg_id } => {
-            println!("{msg_id}");
+            out(&msg_id);
             exit::OK
         }
         Response::Finished { status } => {
-            println!("{status:?}");
+            out(&format!("{status:?}"));
             exit::OK
         }
         Response::Status {
@@ -271,15 +287,15 @@ async fn send(request: Request) -> anyhow::Result<u8> {
             fallback,
             queued,
         } => {
-            println!(
+            out(&format!(
                 "engine:  {engine}{}",
                 if fallback { "  (fallback)" } else { "" }
-            );
-            println!("queued:  {queued}");
+            ));
+            out(&format!("queued:  {queued}"));
             exit::OK
         }
         Response::Error { message } => {
-            eprintln!("error: {message}");
+            err(&format!("error: {message}"));
             exit::USAGE
         }
     })
