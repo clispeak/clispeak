@@ -55,6 +55,11 @@ struct Cli {
     command: Option<Command>,
 
     /// Text to speak. Reads stdin when absent.
+    ///
+    /// Hyphen values are allowed because speech legitimately starts with one
+    /// — "- item one", "-5 degrees" — and clap would otherwise read them as
+    /// unknown flags.
+    #[arg(allow_hyphen_values = true)]
     text: Vec<String>,
 }
 
@@ -80,6 +85,7 @@ enum Command {
     /// Speak text. Only needed to say a word that is also a subcommand.
     Say {
         /// Text to speak.
+        #[arg(allow_hyphen_values = true)]
         text: Vec<String>,
     },
     /// Stop speaking and clear the queue.
@@ -100,22 +106,33 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> anyhow::Result<u8> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            let _ = e.print();
+            return Ok(match e.kind() {
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                    exit::OK
+                }
+                _ => exit::USAGE,
+            });
+        }
+    };
 
     let request = match &cli.command {
         Some(Command::Stop) => Request::Stop,
         Some(Command::Status) => Request::Status,
-        Some(Command::Say { text }) => match build_speak(&cli, text.join(" "))? {
+        Some(Command::Say { text }) => match build_speak(&cli, text)? {
             Ok(req) => req,
             Err(code) => return Ok(code),
         },
         None => {
-            let text = if cli.text.is_empty() {
-                read_stdin()?
+            let tokens = if cli.text.is_empty() {
+                vec![read_stdin()?]
             } else {
-                cli.text.join(" ")
+                cli.text.clone()
             };
-            match build_speak(&cli, text)? {
+            match build_speak(&cli, &tokens)? {
                 Ok(req) => req,
                 Err(code) => return Ok(code),
             }
@@ -125,9 +142,36 @@ async fn run() -> anyhow::Result<u8> {
     send(request).await
 }
 
+/// Reject text that is almost certainly a mistyped flag.
+///
+/// `allow_hyphen_values` is needed so ordinary speech like "- item one" or
+/// "-5 degrees" works, but it also makes clap accept `--priorty` as text —
+/// and silently *speaking* a typo'd flag is a worse failure than refusing it.
+///
+/// The Unix convention settles it: after an explicit `--` separator anything
+/// goes, and without one a token shaped like a long flag is treated as an
+/// error. Checked against the raw arguments because clap consumes `--`.
+fn flaglike_token(tokens: &[String]) -> Option<String> {
+    if std::env::args().any(|a| a == "--") {
+        return None;
+    }
+    tokens
+        .iter()
+        .find(|t| t.starts_with("--") && t.len() > 2)
+        .cloned()
+}
+
 /// Validate and wrap text, or print a rejection and return its exit code.
-fn build_speak(cli: &Cli, text: String) -> anyhow::Result<Result<Request, u8>> {
-    let text = text.trim().to_string();
+fn build_speak(cli: &Cli, tokens: &[String]) -> anyhow::Result<Result<Request, u8>> {
+    if let Some(flag) = flaglike_token(tokens) {
+        eprintln!("error: unknown option '{flag}'");
+        eprintln!();
+        eprintln!("If you meant to speak it, use the -- separator:");
+        eprintln!("  voicecast -- {flag} ...");
+        return Ok(Err(exit::USAGE));
+    }
+
+    let text = tokens.join(" ").trim().to_string();
     if text.is_empty() {
         eprintln!("error: nothing to say");
         return Ok(Err(exit::USAGE));

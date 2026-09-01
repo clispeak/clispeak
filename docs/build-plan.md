@@ -164,6 +164,9 @@ protection-pass splitting handles `10.0.0.1`, `src/main.rs:42`, `Dr.`,
 CLI → unix socket → node → `voicecast-engine` → sound. No network, no identity, no
 roster.
 
+Requires `espeak-ng` installed (`pacman -S espeak-ng`) — a runtime
+dependency, not a build one.
+
 *Exit:* `voicecast "hello world"` speaks on the same Linux machine through
 espeak-ng. `echo x | voicecast` works. Exit codes correct. **First demoable thing.**
 

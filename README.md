@@ -12,6 +12,19 @@ Built for agents to notify you — on your desk, or on the phone in your pocket
 while you're out. Devices connect **peer to peer**. There is no server to run
 and no account to create.
 
+## Running it today
+
+Linux needs `espeak-ng` on `PATH` — the guaranteed floor engine:
+
+```bash
+sudo pacman -S espeak-ng     # Arch;  apt install espeak-ng  on Debian
+```
+
+```bash
+voicecastd &                 # the node
+voicecast "hello world"
+```
+
 ## Status
 
 **Design complete. Transport validated. Implementation not started.**
