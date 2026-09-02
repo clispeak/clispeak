@@ -130,6 +130,12 @@ There is deliberately no selector meaning "everywhere". `rotate` replaces a
 space outright, which locks a lost device out immediately rather than
 eventually.
 
+Today only the default space can be paired into or managed: an invite always
+adds to it, joining one always enters it, and revoking and rotating act on it.
+Make a space the default first — the app says so on the others, rather than
+offering a button that would act on a different space than the one it sits in.
+Tracked as [issue #14](https://github.com/patrickhogg/voicecast/issues/14).
+
 See [cli.md](docs/cli.md) for the full surface and exit codes.
 
 ## Platforms
