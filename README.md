@@ -39,7 +39,7 @@ Two nodes can be run on one machine for testing by overriding
 | | Speech | Background |
 |---|---|---|
 | Linux | espeak-ng (Piper planned) | tray app |
-| Android | system text-to-speech | foreground service |
+| Android | system text-to-speech | foreground service + battery exemption |
 | macOS, Windows | not yet wired | tray app |
 | iOS | not yet wired | — |
 

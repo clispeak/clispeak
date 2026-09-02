@@ -16,6 +16,7 @@ class MainActivity : TauriActivity() {
         // Started here rather than from Rust so the engine is created with an
         // Activity context and Rust never has to hold a jobject.
         Speech.init(this)
+        Battery.attach(this)
 
         requestNotificationPermission()
         NodeService.start(this)

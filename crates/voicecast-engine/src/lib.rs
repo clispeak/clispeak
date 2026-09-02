@@ -10,7 +10,7 @@ mod silent;
 #[cfg(target_os = "android")]
 mod android;
 #[cfg(target_os = "android")]
-pub use android::AndroidEngine;
+pub use android::{AndroidEngine, is_battery_exempt, request_battery_exemption};
 
 pub use silent::SilentEngine;
 

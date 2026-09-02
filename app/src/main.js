@@ -39,6 +39,13 @@ async function refresh() {
     `<code>${status.device_id.slice(0, 16)}…</code> · ${status.engine}` +
     (status.fallback ? ' · <span class="warn">fallback voice</span>' : "");
 
+  // Only shown where it means something: desktop always reports true.
+  try {
+    $("battery").hidden = await invoke("battery_ok");
+  } catch (e) {
+    $("battery").hidden = true;
+  }
+
   const devices = await call("list_devices");
   $("devices").innerHTML = devices.length
     ? devices
@@ -50,6 +57,12 @@ async function refresh() {
         .join("")
     : "<div class='sub'>none yet</div>";
 }
+
+$("battery-fix").onclick = async () => {
+  await call("request_battery_exemption");
+  $("result").className = "sub";
+  $("result").textContent = "choose Allow, then come back";
+};
 
 $("rename").onclick = async () => {
   const name = $("name-input").value.trim();

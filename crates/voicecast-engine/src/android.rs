@@ -42,11 +42,17 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
     // This runs on a Java thread, so the application class loader is in
     // scope. Resolve the helper class now and keep a global reference — later
     // calls come from Rust threads that could not find it themselves.
-    if let Ok(mut env) = vm.attach_current_thread()
-        && let Ok(class) = env.find_class(SPEECH_CLASS_NAME)
-        && let Ok(global) = env.new_global_ref(class)
-    {
-        let _ = SPEECH_CLASS.set(global);
+    if let Ok(mut env) = vm.attach_current_thread() {
+        for (name, slot) in [
+            (SPEECH_CLASS_NAME, &SPEECH_CLASS),
+            (BATTERY_CLASS_NAME, &BATTERY_CLASS),
+        ] {
+            if let Ok(class) = env.find_class(name)
+                && let Ok(global) = env.new_global_ref(class)
+            {
+                let _ = slot.set(global);
+            }
+        }
     }
     let _ = JAVA_VM.set(vm);
     jni::sys::JNI_VERSION_1_6
@@ -56,6 +62,38 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
 fn speech_class() -> Result<&'static GlobalRef, EngineError> {
     SPEECH_CLASS.get().ok_or_else(|| {
         EngineError::Unavailable("the speech helper class was not found at load time".into())
+    })
+}
+
+/// Fully-qualified name of the battery-optimisation helper.
+const BATTERY_CLASS_NAME: &str = "com/voicecast/app/Battery";
+
+/// A global reference to the battery helper class. See [`SPEECH_CLASS`].
+static BATTERY_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+
+/// Whether Android will let this device keep receiving while asleep.
+///
+/// Lives in this crate because it owns the JNI boundary — `JNI_OnLoad` can
+/// only be defined once, and class references must be resolved there. It is
+/// not speech, but splitting it out would mean a second entry point that
+/// cannot exist.
+pub fn is_battery_exempt() -> bool {
+    call_static_bool(&BATTERY_CLASS, "isExempt").unwrap_or(false)
+}
+
+/// Ask the user to exempt this app from battery optimisation.
+pub fn request_battery_exemption() -> bool {
+    call_static_bool(&BATTERY_CLASS, "requestExemption").unwrap_or(false)
+}
+
+/// Call a no-argument static method returning a boolean on a cached class.
+fn call_static_bool(class: &OnceLock<GlobalRef>, method: &str) -> Result<bool, EngineError> {
+    let class = class
+        .get()
+        .ok_or_else(|| EngineError::Unavailable("helper class not found at load time".into()))?;
+    AndroidEngine::with_env(|env| {
+        env.call_static_method(<&JClass>::from(class.as_obj()), method, "()Z", &[])?
+            .z()
     })
 }
 

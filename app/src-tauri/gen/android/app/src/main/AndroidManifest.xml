@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- The service's notification. From Android 13 showing one needs asking. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Doze suspends network for optimised apps, so a sleeping phone stops
+         receiving even with a foreground service running. Asked for, never
+         assumed. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

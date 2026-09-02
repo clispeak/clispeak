@@ -96,6 +96,35 @@ async fn join_space(state: State<'_, AppState>, ticket: String) -> Result<usize,
     }
 }
 
+/// Whether this device will keep receiving while asleep.
+///
+/// `true` on desktop, which has no equivalent restriction — the UI only warns
+/// where the warning means something.
+#[tauri::command]
+fn battery_ok() -> bool {
+    #[cfg(target_os = "android")]
+    {
+        voicecast_engine::is_battery_exempt()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        true
+    }
+}
+
+/// Ask Android to stop optimising this app.
+#[tauri::command]
+fn request_battery_exemption() -> bool {
+    #[cfg(target_os = "android")]
+    {
+        voicecast_engine::request_battery_exemption()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        true
+    }
+}
+
 #[tauri::command]
 async fn rename_device(state: State<'_, AppState>, name: String) -> Result<String, String> {
     match state.node.rename(&name).await {
@@ -280,6 +309,8 @@ pub fn run() {
             make_invite,
             join_space,
             rename_device,
+            battery_ok,
+            request_battery_exemption,
             speak
         ])
         .on_window_event(|_window, _event| {
