@@ -853,7 +853,20 @@ async fn revoke_device(
 #[tauri::command]
 async fn leave_space(state: State<'_, AppState>, space: Option<String>) -> Result<String, String> {
     match state.node.leave(space.as_deref()).await {
-        Response::Renamed { name } => Ok(name),
+        Response::Left {
+            space,
+            unreached,
+            refounded,
+        } => {
+            let mut said = format!("left {space}");
+            if refounded {
+                said.push_str(" — it was the only one, so an empty space took its place");
+            }
+            if unreached > 0 {
+                said.push_str(&format!("; {unreached} device(s) not reached yet"));
+            }
+            Ok(said)
+        }
         other => Err(describe(other)),
     }
 }
