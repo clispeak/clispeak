@@ -92,7 +92,161 @@
       </p>
     </section>
 
-    <!-- Quiet ---------------------------------------------------------------- -->
+  </div>
+</main>
+
+<!-- Spaces: who can reach this device, and who this device can reach.
+     Its own tab rather than a section of settings — settings is for what is
+     set once and left alone, and membership is checked and changed. Devices
+     are listed inside the space that holds them, because every device is in
+     exactly one and listing them apart left no way to tell which. -->
+<main id="screen-spaces" hidden class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+  <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
+
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Spaces
+      </h2>
+
+      <!-- Above the list, so it stays put as spaces come and go. -->
+      <form id="new-space-form" class="mb-3 flex gap-2">
+        <label for="new-space" class="sr-only">Name for a new space</label>
+        <input id="new-space" type="text" autocomplete="off" placeholder="New space name"
+          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
+                 placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+                 focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
+        <button type="submit"
+          class="shrink-0 rounded-lg border border-neutral-300 px-4 text-sm font-medium transition
+                 hover:bg-neutral-100 active:scale-[0.99]
+                 dark:border-neutral-700 dark:hover:bg-neutral-800
+                 focus-visible:outline-2 focus-visible:outline-offset-2">
+          Create
+        </button>
+      </form>
+
+      <div id="spaces" class="flex flex-col gap-3">
+        <p class="text-sm text-neutral-500 dark:text-neutral-400">Loading…</p>
+      </div>
+
+      <p class="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
+        A name on its own means the default space. Reach anywhere else by
+        qualifying it, as in <span class="font-medium">work/laptop</span>.
+      </p>
+    </section>
+
+    <!-- Pairing. Here rather than in settings: an invite is how a device enters
+         a space, so it belongs beside the spaces. -->
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Add a device
+      </h2>
+      <p class="mb-2 text-xs text-neutral-500 dark:text-neutral-400">
+        An invite always adds to the default space, and joining one always enters
+        it. Make a space the default first to pair into it.
+      </p>
+
+      <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+        <button id="invite"
+          class="w-full rounded-lg border border-neutral-300 px-4 font-medium transition
+                 hover:bg-neutral-100 active:scale-[0.99]
+                 dark:border-neutral-700 dark:hover:bg-neutral-800
+                 focus-visible:outline-2 focus-visible:outline-offset-2">
+          Show an invite
+        </button>
+
+        <div id="invite-out" hidden class="mt-3">
+          <div id="qr" class="mx-auto w-fit rounded-lg bg-white p-3"></div>
+          <p class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400">
+            Scan this, or copy the code below.
+          </p>
+          <div class="mt-2 flex gap-2">
+            <code id="ticket"
+              class="min-w-0 flex-1 truncate rounded-lg bg-neutral-100 px-3 py-2
+                     font-mono text-xs text-neutral-600
+                     dark:bg-neutral-800 dark:text-neutral-300"></code>
+            <button id="copy"
+              class="shrink-0 rounded-lg border border-neutral-300 px-3 text-sm transition
+                     hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+              Copy
+            </button>
+          </div>
+          <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
+        </div>
+
+        <div class="my-4 flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-600">
+          <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
+          or
+          <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
+        </div>
+
+        <form id="join-form" class="flex gap-2">
+          <label for="join-input" class="sr-only">Invite code</label>
+          <input id="join-input" type="text" autocomplete="off" placeholder="Paste an invite"
+            class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 font-mono text-xs
+                   placeholder:font-sans placeholder:text-sm placeholder:text-neutral-400
+                   focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                   dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
+          <button id="join" type="submit"
+            class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
+                   hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+            Join
+          </button>
+        </form>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- Settings: everything that is set once and then left alone. -->
+<main id="screen-settings" hidden class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+  <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
+
+    <!-- Doze warning. Hidden unless it applies, which is Android only. ------- -->
+    <section id="battery" hidden
+      class="rounded-xl border border-amber-300/60 bg-amber-50 p-4
+             dark:border-amber-500/30 dark:bg-amber-500/10">
+      <h2 class="text-sm font-semibold text-amber-900 dark:text-amber-200">
+        Messages may not arrive
+      </h2>
+      <p class="mt-1 text-sm text-amber-900/80 dark:text-amber-200/80">
+        Android can suspend this app while the screen is off. Allowing background
+        activity keeps messages coming through.
+      </p>
+      <button id="battery-fix"
+        class="mt-3 w-full rounded-lg bg-amber-600 px-4 font-medium text-white
+               transition hover:bg-amber-700 active:scale-[0.99]
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Allow background activity
+      </button>
+    </section>
+
+  <!-- This device. First, because it is the name every other screen refers to
+         and what `--to <name>` resolves — and it sat last, under the agent
+         skill, which is the least likely thing on this screen to change. -->
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        This device
+      </h2>
+      <form id="rename-form" class="flex gap-2">
+        <label for="name-input" class="sr-only">Device name</label>
+        <input id="name-input" type="text" autocomplete="off"
+          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
+                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900" />
+        <button id="rename" type="submit"
+          class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
+                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          Rename
+        </button>
+      </form>
+    </section>
+
+
+    <!-- Quiet. In settings rather than beside the messages: whether this device
+         will make a noise is set once and then left, and it was taking the
+         bottom half of the screen you open to read what was said. -->
     <section>
       <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
         Quiet
@@ -150,32 +304,6 @@
       </div>
     </section>
 
-  </div>
-</main>
-
-<!-- Settings: everything that is set once and then left alone. -->
-<main id="screen-settings" hidden class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-  <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
-
-    <!-- Doze warning. Hidden unless it applies, which is Android only. ------- -->
-    <section id="battery" hidden
-      class="rounded-xl border border-amber-300/60 bg-amber-50 p-4
-             dark:border-amber-500/30 dark:bg-amber-500/10">
-      <h2 class="text-sm font-semibold text-amber-900 dark:text-amber-200">
-        Messages may not arrive
-      </h2>
-      <p class="mt-1 text-sm text-amber-900/80 dark:text-amber-200/80">
-        Android can suspend this app while the screen is off. Allowing background
-        activity keeps messages coming through.
-      </p>
-      <button id="battery-fix"
-        class="mt-3 w-full rounded-lg bg-amber-600 px-4 font-medium text-white
-               transition hover:bg-amber-700 active:scale-[0.99]
-               focus-visible:outline-2 focus-visible:outline-offset-2">
-        Allow background activity
-      </button>
-    </section>
-
     <!-- Speak ---------------------------------------------------------------- -->
     <section>
       <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
@@ -193,62 +321,6 @@
                  hover:bg-accent-500 active:scale-[0.98] disabled:opacity-40
                  focus-visible:outline-2 focus-visible:outline-offset-2">
           Speak
-        </button>
-      </form>
-    </section>
-
-    <!-- Devices -------------------------------------------------------------- -->
-    <section>
-      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-        Devices
-      </h2>
-      <ul id="devices" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
-                              border border-neutral-200 bg-white
-                              dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
-        <li class="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">Loading…</li>
-      </ul>
-    </section>
-
-      <button id="leave"
-        class="mt-2 w-full rounded-lg px-4 text-sm text-red-600 transition
-               hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10
-               focus-visible:outline-2 focus-visible:outline-offset-2">
-        Leave this space
-      </button>
-
-      <button id="rotate"
-        class="mt-1 w-full rounded-lg px-4 text-sm text-red-600 transition
-               hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10
-               focus-visible:outline-2 focus-visible:outline-offset-2">
-        Replace this space (lost or stolen device)
-      </button>
-    </section>
-
-    <!-- Spaces --------------------------------------------------------------- -->
-    <section id="spaces-section" hidden>
-      <!-- Revealed once the node answers, so it does not flash in empty. -->
-      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-        Spaces
-      </h2>
-      <ul id="spaces" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
-                             border border-neutral-200 bg-white
-                             dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900"></ul>
-      <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-        Separate sets of your own devices. Names without a space go to the
-        default one.
-      </p>
-      <form id="new-space-form" class="mt-2 flex gap-2">
-        <label for="new-space" class="sr-only">Name for a new space</label>
-        <input id="new-space" type="text" autocomplete="off" placeholder="New space name"
-          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
-                 placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
-                 focus:ring-2 focus:ring-accent-500/30
-                 dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
-        <button type="submit"
-          class="shrink-0 rounded-lg border border-neutral-300 px-4 text-sm font-medium transition
-                 hover:bg-neutral-100 active:scale-[0.99]
-                 dark:border-neutral-700 dark:hover:bg-neutral-800">
-          Add
         </button>
       </form>
     </section>
@@ -283,62 +355,6 @@
                  dark:border-neutral-700 dark:hover:bg-neutral-800">
           Preview this voice
         </button>
-      </div>
-    </section>
-
-    <!-- Pairing -------------------------------------------------------------- -->
-    <section>
-      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-        Add a device
-      </h2>
-
-      <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-        <button id="invite"
-          class="w-full rounded-lg border border-neutral-300 px-4 font-medium transition
-                 hover:bg-neutral-100 active:scale-[0.99]
-                 dark:border-neutral-700 dark:hover:bg-neutral-800
-                 focus-visible:outline-2 focus-visible:outline-offset-2">
-          Show an invite
-        </button>
-
-        <div id="invite-out" hidden class="mt-3">
-          <div id="qr" class="mx-auto w-fit rounded-lg bg-white p-3"></div>
-          <p class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400">
-            Scan this, or copy the code below.
-          </p>
-          <div class="mt-2 flex gap-2">
-            <code id="ticket"
-              class="min-w-0 flex-1 truncate rounded-lg bg-neutral-100 px-3 py-2
-                     font-mono text-xs text-neutral-600
-                     dark:bg-neutral-800 dark:text-neutral-300"></code>
-            <button id="copy"
-              class="shrink-0 rounded-lg border border-neutral-300 px-3 text-sm transition
-                     hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-              Copy
-            </button>
-          </div>
-          <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
-        </div>
-
-        <div class="my-4 flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-600">
-          <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
-          or
-          <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
-        </div>
-
-        <form id="join-form" class="flex gap-2">
-          <label for="join-input" class="sr-only">Invite code</label>
-          <input id="join-input" type="text" autocomplete="off" placeholder="Paste an invite"
-            class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 font-mono text-xs
-                   placeholder:font-sans placeholder:text-sm placeholder:text-neutral-400
-                   focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
-                   dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
-          <button id="join" type="submit"
-            class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
-                   hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-            Join
-          </button>
-        </form>
       </div>
     </section>
 
@@ -380,25 +396,6 @@
     </div>
   </section>
 
-  <!-- This device ---------------------------------------------------------- -->
-    <section>
-      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-        This device
-      </h2>
-      <form id="rename-form" class="flex gap-2">
-        <label for="name-input" class="sr-only">Device name</label>
-        <input id="name-input" type="text" autocomplete="off"
-          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
-                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
-                 dark:border-neutral-700 dark:bg-neutral-900" />
-        <button id="rename" type="submit"
-          class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
-                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-          Rename
-        </button>
-      </form>
-    </section>
-
   </div>
 </main>
 
@@ -417,6 +414,16 @@
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>
       Messages
+    </button>
+    <button id="tab-spaces" data-screen="spaces"
+      class="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" class="size-5" aria-hidden="true">
+        <path d="M12 3 3 7.5l9 4.5 9-4.5z" />
+        <path d="M3 12.5 12 17l9-4.5" />
+        <path d="M3 17.5 12 22l9-4.5" />
+      </svg>
+      Spaces
     </button>
     <button id="tab-settings" data-screen="settings"
       class="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition">
@@ -445,6 +452,10 @@
   <div class="w-full max-w-sm rounded-xl border border-neutral-200 bg-white p-5
               shadow-2xl dark:border-neutral-700 dark:bg-neutral-800">
     <p id="ask-text" class="text-sm text-neutral-700 dark:text-neutral-200"></p>
+    <input id="ask-input" hidden type="text" autocomplete="off"
+      class="mt-3 w-full rounded-lg border border-neutral-300 bg-white px-3
+             focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+             dark:border-neutral-700 dark:bg-neutral-950" />
     <div class="mt-5 flex justify-end gap-2">
       <button id="ask-no"
         class="rounded-lg px-3 py-1.5 text-sm text-neutral-600 transition
