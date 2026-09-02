@@ -1,71 +1,171 @@
 <!doctype html>
+<html lang="en" class="h-full">
+<head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>voicecast</title>
-<style>
-  :root { color-scheme: light dark; --fg:#111; --bg:#fafafa; --dim:#666; --line:#e3e3e3; --accent:#2b6cb0; }
-  @media (prefers-color-scheme: dark) {
-    :root { --fg:#eee; --bg:#161616; --dim:#999; --line:#2c2c2c; --accent:#7aa7d9; }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; padding: env(safe-area-inset-top) 1rem 1rem;
-    font: 15px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg);
-  }
-  h1 { font-size: 1.1rem; margin: 1rem 0 0.25rem; }
-  .sub { color: var(--dim); font-size: 0.85rem; margin-bottom: 1.25rem; }
-  section { border-top: 1px solid var(--line); padding: 1rem 0; }
-  h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em;
-       color: var(--dim); margin: 0 0 0.6rem; font-weight: 600; }
-  .row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.35rem 0; }
-  .row .id { color: var(--dim); font-family: ui-monospace, monospace; font-size: 0.8rem; }
-  button { font: inherit; padding: 0.6rem 1rem; border: 1px solid var(--line);
-           border-radius: 8px; background: transparent; color: var(--fg); width: 100%; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  input { font: inherit; width: 100%; padding: 0.6rem; border: 1px solid var(--line);
-          border-radius: 8px; background: transparent; color: var(--fg); }
-  .stack > * + * { margin-top: 0.6rem; }
-  code { font-family: ui-monospace, monospace; font-size: 0.78rem; word-break: break-all;
-         color: var(--dim); }
-  .warn { color: #b45309; }
-</style>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body class="h-full bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 antialiased">
 
-<h1 id="name">voicecast</h1>
-<div class="sub" id="ident">starting…</div>
+<div class="mx-auto flex min-h-full w-full max-w-md flex-col gap-6 px-5 py-6">
 
-<section id="battery" hidden class="stack">
-  <h2>Stays asleep</h2>
-  <div class="sub">
-    Android may suspend this app's network while the screen is off, so messages
-    sent to this device would not arrive. Exempting it keeps them coming.
-  </div>
-  <button id="battery-fix" class="primary">Allow background activity</button>
-</section>
+  <!-- Identity ------------------------------------------------------------ -->
+  <header class="flex items-start justify-between gap-3">
+    <div class="min-w-0">
+      <h1 id="name" class="truncate text-2xl font-semibold tracking-tight">voicecast</h1>
+      <p id="ident" class="mt-1 truncate font-mono text-xs text-neutral-500 dark:text-neutral-400">
+        starting…
+      </p>
+    </div>
+    <span id="engine-pill"
+      class="shrink-0 rounded-full px-2.5 py-1 text-xs font-medium
+             bg-neutral-200 text-neutral-700
+             dark:bg-neutral-800 dark:text-neutral-300"></span>
+  </header>
 
-<section>
-  <h2>Devices</h2>
-  <div id="devices">—</div>
-</section>
+  <!-- Doze warning. Hidden unless it applies, which is Android only. ------- -->
+  <section id="battery" hidden
+    class="rounded-xl border border-amber-300/60 bg-amber-50 p-4
+           dark:border-amber-500/30 dark:bg-amber-500/10">
+    <h2 class="text-sm font-semibold text-amber-900 dark:text-amber-200">
+      Messages may not arrive
+    </h2>
+    <p class="mt-1 text-sm text-amber-900/80 dark:text-amber-200/80">
+      Android can suspend this app while the screen is off. Allowing background
+      activity keeps messages coming through.
+    </p>
+    <button id="battery-fix"
+      class="mt-3 w-full rounded-lg bg-amber-600 px-4 font-medium text-white
+             transition hover:bg-amber-700 active:scale-[0.99]
+             focus-visible:outline-2 focus-visible:outline-offset-2">
+      Allow background activity
+    </button>
+  </section>
 
-<section class="stack">
-  <h2>This device</h2>
-  <input id="name-input" placeholder="name this device" />
-  <button id="rename">Rename</button>
-</section>
+  <!-- Devices -------------------------------------------------------------- -->
+  <section>
+    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+      Devices
+    </h2>
+    <ul id="devices" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
+                            border border-neutral-200 bg-white
+                            dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
+      <li class="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">Loading…</li>
+    </ul>
+  </section>
 
-<section class="stack">
-  <h2>Add a device</h2>
-  <button id="invite">Show an invite</button>
-  <code id="ticket"></code>
-  <input id="join-input" placeholder="voicecast://join/… paste an invite" />
-  <button id="join" class="primary">Join a space</button>
-</section>
+    <button id="leave"
+      class="mt-2 w-full rounded-lg px-4 text-sm text-red-600 transition
+             hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10
+             focus-visible:outline-2 focus-visible:outline-offset-2">
+      Leave this space
+    </button>
+  </section>
 
-<section class="stack">
-  <h2>Test</h2>
-  <input id="say-input" placeholder="say something" />
-  <button id="say">Speak here</button>
-  <div id="result" class="sub"></div>
-</section>
+  <!-- Speak ---------------------------------------------------------------- -->
+  <section>
+    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+      Say something
+    </h2>
+    <form id="speak-form" class="flex gap-2">
+      <label for="say-input" class="sr-only">Text to speak</label>
+      <input id="say-input" type="text" autocomplete="off" placeholder="Type a message"
+        class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
+               placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+               focus:ring-2 focus:ring-accent-500/30
+               dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
+      <button id="say" type="submit"
+        class="shrink-0 rounded-lg bg-accent-600 px-5 font-medium text-white transition
+               hover:bg-accent-500 active:scale-[0.98] disabled:opacity-40
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Speak
+      </button>
+    </form>
+  </section>
+
+  <!-- Pairing -------------------------------------------------------------- -->
+  <section>
+    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+      Add a device
+    </h2>
+
+    <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+      <button id="invite"
+        class="w-full rounded-lg border border-neutral-300 px-4 font-medium transition
+               hover:bg-neutral-100 active:scale-[0.99]
+               dark:border-neutral-700 dark:hover:bg-neutral-800
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Show an invite
+      </button>
+
+      <div id="invite-out" hidden class="mt-3">
+        <div id="qr" class="mx-auto w-fit rounded-lg bg-white p-3"></div>
+        <p class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400">
+          Scan this, or copy the code below.
+        </p>
+        <div class="mt-2 flex gap-2">
+          <code id="ticket"
+            class="min-w-0 flex-1 truncate rounded-lg bg-neutral-100 px-3 py-2
+                   font-mono text-xs text-neutral-600
+                   dark:bg-neutral-800 dark:text-neutral-300"></code>
+          <button id="copy"
+            class="shrink-0 rounded-lg border border-neutral-300 px-3 text-sm transition
+                   hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+            Copy
+          </button>
+        </div>
+        <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
+      </div>
+
+      <div class="my-4 flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-600">
+        <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
+        or
+        <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
+      </div>
+
+      <form id="join-form" class="flex gap-2">
+        <label for="join-input" class="sr-only">Invite code</label>
+        <input id="join-input" type="text" autocomplete="off" placeholder="Paste an invite"
+          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 font-mono text-xs
+                 placeholder:font-sans placeholder:text-sm placeholder:text-neutral-400
+                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
+        <button id="join" type="submit"
+          class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
+                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          Join
+        </button>
+      </form>
+    </div>
+  </section>
+
+  <!-- This device ---------------------------------------------------------- -->
+  <section>
+    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+      This device
+    </h2>
+    <form id="rename-form" class="flex gap-2">
+      <label for="name-input" class="sr-only">Device name</label>
+      <input id="name-input" type="text" autocomplete="off"
+        class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
+               focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+               dark:border-neutral-700 dark:bg-neutral-900" />
+      <button id="rename" type="submit"
+        class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
+               hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+        Rename
+      </button>
+    </form>
+  </section>
+
+  <div class="flex-1"></div>
+
+  <!-- Live region, so a screen reader announces results too. ---------------- -->
+  <p id="result" role="status" aria-live="polite"
+     class="min-h-5 text-center text-sm text-neutral-500 dark:text-neutral-400"></p>
+</div>
 
 <script type="module" src="main.js"></script>
+</body>
+</html>

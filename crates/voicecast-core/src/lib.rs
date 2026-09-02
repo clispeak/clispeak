@@ -19,7 +19,7 @@ pub use identity::{
 };
 pub use node::{Node, WindowHook};
 pub use roster::{Roster, RosterError, verify};
-pub use ticket::Ticket;
+pub use ticket::{Ticket, qr_svg};
 pub use transport::Transport;
 pub use voicecast_proto::Member;
 

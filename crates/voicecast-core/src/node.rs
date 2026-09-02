@@ -150,6 +150,16 @@ impl Node {
         rename(&self.shared, name).await
     }
 
+    /// Remove another device from this space.
+    pub async fn revoke(&self, name: &str) -> Response {
+        revoke(&self.shared, name).await
+    }
+
+    /// Leave the space, keeping this device's identity.
+    pub async fn leave(&self) -> Response {
+        leave(&self.shared).await
+    }
+
     /// Devices in this space.
     pub async fn devices(&self) -> Response {
         devices(&self.shared).await
@@ -272,6 +282,8 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
         Request::Join { ticket } => join(shared, transport, &ticket).await,
         Request::Devices => devices(shared).await,
         Request::Rename { name } => rename(shared, &name).await,
+        Request::Revoke { name } => revoke(shared, &name).await,
+        Request::Leave => leave(shared).await,
         Request::Show => match shared.on_show.lock().await.as_ref() {
             Some(hook) => {
                 hook();
@@ -638,6 +650,52 @@ async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
     }
     Response::Renamed {
         name: name.to_string(),
+    }
+}
+
+/// Remove another device from this space.
+///
+/// Local: the tombstone reaches other members as they sync, and the removed
+/// device keeps working until it does. That is the eventual consistency the
+/// architecture accepts, and the message says so rather than implying the
+/// removal was instant everywhere.
+async fn revoke(shared: &Arc<Shared>, name: &str) -> Response {
+    let me = shared.identity.id().to_string();
+    let mut roster = shared.roster.lock().await;
+
+    let Some(target) = roster.by_name(name).map(|m| m.endpoint_id.clone()) else {
+        return Response::Error {
+            message: format!("no device named '{name}' in this space"),
+        };
+    };
+    if target == me {
+        return Response::Error {
+            message: "that is this device — use `voicecast leave` instead".into(),
+        };
+    }
+
+    roster.revoke(&target);
+    if let Err(e) = roster.save(&shared.roster_path) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    Response::Renamed {
+        name: format!("removed {name}"),
+    }
+}
+
+/// Leave the space, keeping this device's identity.
+async fn leave(shared: &Arc<Shared>) -> Response {
+    let mut roster = shared.roster.lock().await;
+    *roster = Roster::leave(shared.identity.secret(), &shared.name);
+    if let Err(e) = roster.save(&shared.roster_path) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    Response::Renamed {
+        name: "left the space".into(),
     }
 }
 

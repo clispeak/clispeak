@@ -40,6 +40,8 @@ pub struct NodeStatus {
 pub struct Invite {
     /// The `voicecast://join/...` string.
     pub url: String,
+    /// The same invite as a scannable SVG, or empty if it could not be drawn.
+    pub qr: String,
     /// Seconds until it stops being accepted.
     pub expires_in: u64,
 }
@@ -83,7 +85,16 @@ async fn list_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, Str
 #[tauri::command]
 async fn make_invite(state: State<'_, AppState>) -> Result<Invite, String> {
     match state.node.invite().await {
-        Response::Invite { url, expires_in } => Ok(Invite { url, expires_in }),
+        Response::Invite { url, expires_in } => {
+            // A missing QR is a degraded invite, not a failed one: the code
+            // can still be copied.
+            let qr = voicecast_core::qr_svg(&url).unwrap_or_default();
+            Ok(Invite {
+                url,
+                qr,
+                expires_in,
+            })
+        }
         other => Err(describe(other)),
     }
 }
@@ -128,6 +139,22 @@ fn request_battery_exemption() -> bool {
 #[tauri::command]
 async fn rename_device(state: State<'_, AppState>, name: String) -> Result<String, String> {
     match state.node.rename(&name).await {
+        Response::Renamed { name } => Ok(name),
+        other => Err(describe(other)),
+    }
+}
+
+#[tauri::command]
+async fn revoke_device(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    match state.node.revoke(&name).await {
+        Response::Renamed { name } => Ok(name),
+        other => Err(describe(other)),
+    }
+}
+
+#[tauri::command]
+async fn leave_space(state: State<'_, AppState>) -> Result<String, String> {
+    match state.node.leave().await {
         Response::Renamed { name } => Ok(name),
         other => Err(describe(other)),
     }
@@ -311,6 +338,8 @@ pub fn run() {
             rename_device,
             battery_ok,
             request_battery_exemption,
+            revoke_device,
+            leave_space,
             speak
         ])
         .on_window_event(|_window, _event| {

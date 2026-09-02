@@ -1,102 +1,211 @@
-// Thin UI over the node running in this app's Rust side. Deliberately small:
-// the interesting behaviour lives in voicecast-core, shared with the CLI.
+// Thin UI over the node running in this app's Rust side. No framework and no
+// bundler: the interesting behaviour lives in voicecast-core, shared with the
+// CLI, and this file only moves values between it and the DOM.
 const { invoke } = window.__TAURI__.core;
 
 const $ = (id) => document.getElementById(id);
 
-/** Call a Tauri command, showing failures rather than swallowing them. */
+/** How often to re-read node state. Cheap, and keeps devices current. */
+const REFRESH_MS = 5000;
+
+/**
+ * Show a transient message.
+ *
+ * `tone` is "info" or "error"; errors persist until the next action rather
+ * than timing out, so a failure cannot vanish before it is read.
+ */
+function say(text, tone = "info") {
+  const el = $("result");
+  el.textContent = text;
+  el.className =
+    tone === "error"
+      ? "min-h-5 text-center text-sm text-red-600 dark:text-red-400"
+      : "min-h-5 text-center text-sm text-neutral-500 dark:text-neutral-400";
+}
+
+/** Call a Tauri command, surfacing failures rather than swallowing them. */
 async function call(cmd, args) {
   try {
     return await invoke(cmd, args);
   } catch (e) {
-    $("result").textContent = String(e);
-    $("result").className = "sub warn";
+    say(String(e), "error");
     throw e;
   }
 }
 
-/** Clear a message that has been superseded by things working again. */
-function clearResult() {
-  $("result").className = "sub";
-  $("result").textContent = "";
+/** Run an async action with the button disabled, so it cannot double-fire. */
+async function withButton(button, label, action) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  try {
+    await action();
+  } catch {
+    // `call` has already reported it.
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+/** One row in the device list. */
+function deviceRow(device) {
+  const li = document.createElement("li");
+  li.className = "flex items-center justify-between gap-3 px-4 py-3";
+
+  const left = document.createElement("div");
+  left.className = "min-w-0";
+  const name = document.createElement("p");
+  name.className = "truncate text-sm font-medium";
+  name.textContent = device.name;
+  const id = document.createElement("p");
+  id.className = "truncate font-mono text-xs text-neutral-500 dark:text-neutral-400";
+  id.textContent = device.endpoint_id.slice(0, 16) + "…";
+  left.append(name, id);
+
+  li.append(left);
+  if (device.is_self) {
+    const tag = document.createElement("span");
+    tag.className =
+      "shrink-0 rounded-full bg-neutral-200 px-2 py-0.5 text-xs text-neutral-600 " +
+      "dark:bg-neutral-800 dark:text-neutral-400";
+    tag.textContent = "this device";
+    li.append(tag);
+  } else {
+    // Removing another device is destructive and easy to hit by accident on a
+    // phone, so it asks first.
+    const remove = document.createElement("button");
+    remove.className =
+      "shrink-0 rounded-lg px-2 py-1 text-xs text-neutral-500 transition " +
+      "hover:bg-red-50 hover:text-red-600 dark:text-neutral-400 " +
+      "dark:hover:bg-red-500/10 dark:hover:text-red-400";
+    remove.textContent = "Remove";
+    remove.onclick = () =>
+      withButton(remove, "…", async () => {
+        if (!confirm(`Remove ${device.name} from this space?`)) return;
+        say(await call("revoke_device", { name: device.name }));
+        await refresh();
+      });
+    li.append(remove);
+  }
+  return li;
 }
 
 async function refresh() {
-  // The node starts asynchronously, so early polls can fail while it comes
-  // up. Report that as a transient state rather than an error, and clear it
-  // once it succeeds — otherwise a startup blip stays on screen forever.
+  // The node starts asynchronously, so early polls fail while it comes up.
+  // That is a transient state, not an error worth painting red.
   let status;
   try {
     status = await invoke("node_status");
-  } catch (e) {
+  } catch {
     $("ident").textContent = "starting…";
     return;
   }
-  clearResult();
+
   $("name").textContent = status.name;
-  $("name-input").placeholder = status.name;
-  $("ident").innerHTML =
-    `<code>${status.device_id.slice(0, 16)}…</code> · ${status.engine}` +
-    (status.fallback ? ' · <span class="warn">fallback voice</span>' : "");
+  $("ident").textContent = status.device_id.slice(0, 20) + "…";
+  if (document.activeElement !== $("name-input")) {
+    $("name-input").value = status.name;
+  }
+
+  const pill = $("engine-pill");
+  pill.textContent = status.engine;
+  pill.className =
+    "shrink-0 rounded-full px-2.5 py-1 text-xs font-medium " +
+    (status.fallback
+      ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+      : "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300");
 
   // Only shown where it means something: desktop always reports true.
   try {
     $("battery").hidden = await invoke("battery_ok");
-  } catch (e) {
+  } catch {
     $("battery").hidden = true;
   }
 
-  const devices = await call("list_devices");
-  $("devices").innerHTML = devices.length
-    ? devices
-        .map(
-          (d) =>
-            `<div class="row"><span>${d.name}${d.is_self ? " (this device)" : ""}</span>` +
-            `<span class="id">${d.endpoint_id.slice(0, 12)}…</span></div>`,
-        )
-        .join("")
-    : "<div class='sub'>none yet</div>";
+  const devices = await invoke("list_devices").catch(() => null);
+  if (!devices) return;
+  const list = $("devices");
+  list.replaceChildren(
+    ...(devices.length
+      ? devices.map(deviceRow)
+      : [
+          Object.assign(document.createElement("li"), {
+            className: "px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400",
+            textContent: "No devices yet — add one below.",
+          }),
+        ]),
+  );
 }
 
-$("battery-fix").onclick = async () => {
-  await call("request_battery_exemption");
-  $("result").className = "sub";
-  $("result").textContent = "choose Allow, then come back";
+$("speak-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("say-input").value.trim();
+  if (!text) return;
+  await withButton($("say"), "…", async () => {
+    await call("speak", { text });
+    $("say-input").value = "";
+    say("spoken");
+  });
 };
 
-$("rename").onclick = async () => {
+$("invite").onclick = () =>
+  withButton($("invite"), "…", async () => {
+    const { url, qr, expires_in } = await call("make_invite");
+    // Trusted: the SVG is produced by our own Rust side, not user input.
+    $("qr").innerHTML = qr;
+    $("qr").hidden = !qr;
+    $("ticket").textContent = url;
+    $("expiry").textContent = `Expires in ${Math.max(1, Math.round(expires_in / 60))} min. Single use.`;
+    $("invite-out").hidden = false;
+    say("");
+  });
+
+$("copy").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($("ticket").textContent);
+    say("copied");
+  } catch {
+    say("could not copy — select the code instead", "error");
+  }
+};
+
+$("join-form").onsubmit = async (e) => {
+  e.preventDefault();
+  await withButton($("join"), "…", async () => {
+    const members = await call("join_space", { ticket: $("join-input").value });
+    $("join-input").value = "";
+    say(`joined — ${members} devices`);
+    await refresh();
+  });
+};
+
+$("rename-form").onsubmit = async (e) => {
+  e.preventDefault();
   const name = $("name-input").value.trim();
   if (!name) {
-    $("result").className = "sub warn";
-    $("result").textContent = "type a name first";
+    say("a device needs a name", "error");
     return;
   }
-  await call("rename_device", { name });
-  $("result").className = "sub";
-  $("result").textContent = `renamed to ${name}`;
-  $("name-input").value = "";
-  await refresh();
+  await withButton($("rename"), "…", async () => {
+    await call("rename_device", { name });
+    say(`renamed to ${name}`);
+    await refresh();
+  });
 };
 
-$("invite").onclick = async () => {
-  const { url, expires_in } = await call("make_invite");
-  $("ticket").textContent = url;
-  $("result").className = "sub";
-  $("result").textContent = `Expires in ${Math.floor(expires_in / 60)}m. Single use.`;
-};
+$("leave").onclick = () =>
+  withButton($("leave"), "…", async () => {
+    if (!confirm("Leave this space? Other devices will stop reaching this one.")) return;
+    say(await call("leave_space"));
+    await refresh();
+  });
 
-$("join").onclick = async () => {
-  const members = await call("join_space", { ticket: $("join-input").value.trim() });
-  $("result").className = "sub";
-  $("result").textContent = `Joined. ${members} devices.`;
-  await refresh();
-};
-
-$("say").onclick = async () => {
-  await call("speak", { text: $("say-input").value });
-  $("result").className = "sub";
-  $("result").textContent = "spoken";
-};
+$("battery-fix").onclick = () =>
+  withButton($("battery-fix"), "…", async () => {
+    await call("request_battery_exemption");
+    say("choose Allow, then come back");
+  });
 
 refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, REFRESH_MS);

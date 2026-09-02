@@ -1,8 +1,9 @@
-*.log
-.DS_Store
+app/src/styles.css
 app/src-tauri/gen/android/**/build/
 app/src-tauri/gen/android/.gradle/
 app/src-tauri/gen/apple/
 dist/
+.DS_Store
+*.log
 node_modules/
 target/

@@ -1,0 +1,33 @@
+/* Tailwind v4 needs no config file; the theme is declared here. */
+@import "tailwindcss";
+
+/* Sources are listed explicitly because there is no bundler to infer them. */
+@source "./index.html";
+@source "./main.js";
+
+@theme {
+  /* One accent, used for the primary action only, so "the button that does
+     the thing" is never ambiguous. */
+  --color-accent-500: oklch(0.62 0.14 250);
+  --color-accent-600: oklch(0.55 0.15 250);
+}
+
+@layer base {
+  /* The webview paints its own background behind the page, so this must be
+     explicit or the app borrows the host's theme and looks broken. */
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    /* Safe areas matter on a phone: content otherwise slides under the
+       status bar and the gesture pill. */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    overscroll-behavior: none;
+  }
+  /* Touch targets. Anything tappable is at least 44px tall. */
+  button,
+  input {
+    min-height: 2.75rem;
+  }
+}

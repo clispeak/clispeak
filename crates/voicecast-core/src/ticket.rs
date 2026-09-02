@@ -54,20 +54,50 @@ impl Ticket {
     }
 
     /// Parse a ticket, with or without the URL prefix.
+    ///
+    /// Errors are written for whoever pasted the thing, not for a log file: a
+    /// person who mis-copies an invite should be told that, rather than shown
+    /// a CBOR decoder's opinion of a truncated buffer.
     pub fn parse(s: &str) -> Result<Self> {
-        let body = s
-            .trim()
-            .strip_prefix("voicecast://join/")
-            .unwrap_or(s.trim());
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            bail!("paste an invite first, then try again");
+        }
+        let body = trimmed.strip_prefix("voicecast://join/").unwrap_or(trimmed);
         let bytes = BASE32_NOPAD
             .decode(body.to_uppercase().as_bytes())
-            .context("that does not look like a voicecast invite")?;
-        let ticket: Self = ciborium::from_reader(&bytes[..]).context("decoding ticket")?;
+            .map_err(|_| anyhow::anyhow!("that does not look like a voicecast invite"))?;
+        let ticket: Self = ciborium::from_reader(&bytes[..])
+            .map_err(|_| anyhow::anyhow!("that invite looks truncated, copy the whole code"))?;
         if !ticket.is_valid() {
-            bail!("this invite expired; ask for a new one");
+            bail!("that invite has expired, ask for a new one");
         }
         Ok(ticket)
     }
+}
+
+/// Render an invite as an SVG QR code.
+///
+/// Generated here rather than in the interface: a QR encoder is Reed-Solomon
+/// and bit-masking, and a subtly wrong one produces a code that *looks* right
+/// and will not scan. Doing it once in Rust also lets the CLI print the same
+/// invite as terminal blocks.
+///
+/// The SVG carries no fill colours, so it inherits the page's — which keeps
+/// it legible in both light and dark without two code paths.
+pub fn qr_svg(text: &str) -> Result<String> {
+    use qrcode::{EcLevel, QrCode, render::svg};
+    // Low correction: the payload is already long, and a screen is a clean
+    // scanning surface — no need to spend capacity on damage tolerance.
+    let code = QrCode::with_error_correction_level(text, EcLevel::L)
+        .context("that invite is too long to encode as a QR code")?;
+    Ok(code
+        .render()
+        .min_dimensions(220, 220)
+        .quiet_zone(true)
+        .dark_color(svg::Color("#000000"))
+        .light_color(svg::Color("#ffffff"))
+        .build())
 }
 
 /// A token with enough entropy that guessing it is not worth trying.

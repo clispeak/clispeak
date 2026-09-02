@@ -113,6 +113,13 @@ pub enum Request {
     Show,
     /// Shut the node down.
     Quit,
+    /// Remove another device from this space.
+    Revoke {
+        /// The device's label.
+        name: String,
+    },
+    /// Leave the space, keeping this device's identity.
+    Leave,
     /// Change this device's local label.
     Rename {
         /// The new label.

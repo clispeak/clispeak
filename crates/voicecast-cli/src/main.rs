@@ -111,6 +111,13 @@ enum Command {
     Show,
     /// Shut the local node down.
     Quit,
+    /// Remove another device from this space.
+    Revoke {
+        /// The device's name.
+        name: String,
+    },
+    /// Leave the space, keeping this device's identity.
+    Leave,
     /// Change this device's name.
     Rename {
         /// The new name.
@@ -165,6 +172,8 @@ async fn run() -> anyhow::Result<u8> {
         Some(Command::Invite) => Request::Invite,
         Some(Command::Devices) => Request::Devices,
         Some(Command::Show) => Request::Show,
+        Some(Command::Revoke { name }) => Request::Revoke { name: name.clone() },
+        Some(Command::Leave) => Request::Leave,
         Some(Command::Quit) => Request::Quit,
         Some(Command::Rename { name }) => Request::Rename { name: name.clone() },
         Some(Command::Join { ticket }) => Request::Join {

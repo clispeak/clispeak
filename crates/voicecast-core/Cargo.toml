@@ -21,6 +21,7 @@ rand = "0.10.2"
 thiserror.workspace = true
 iroh = "1.1"
 data-encoding = "2.11.1"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 
 [lints]
 workspace = true

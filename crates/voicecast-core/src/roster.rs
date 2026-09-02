@@ -114,6 +114,15 @@ impl Roster {
         roster
     }
 
+    /// Leave the space, keeping only this device.
+    ///
+    /// The identity is deliberately kept: leaving is not the same as becoming
+    /// a different device, and rejoining later should be recognisable as the
+    /// same machine.
+    pub fn leave(secret: &SecretKey, name: &str) -> Self {
+        Self::found(secret, name)
+    }
+
     /// Rebuild a roster from a peer's snapshot, verifying every signature.
     pub fn from_parts(members: Vec<Member>, revoked: Vec<(String, u64)>) -> Self {
         let mut roster = Self::adopt(members);

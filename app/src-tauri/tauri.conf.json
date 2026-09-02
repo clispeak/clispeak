@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.voicecast.app",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../src",
+    "beforeBuildCommand": "npm run build:css",
+    "beforeDevCommand": "npm run build:css"
   },
   "app": {
     "windows": [
