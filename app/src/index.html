@@ -6,15 +6,16 @@
 <title>voicecast</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="h-full bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 antialiased">
+<body class="flex h-full flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 antialiased">
 
-<div class="mx-auto flex min-h-full w-full max-w-md flex-col gap-6 px-5 py-6">
-
-  <!-- Identity ------------------------------------------------------------ -->
-  <header class="flex items-start justify-between gap-3">
+<!-- Identity. Shared by both screens, because which device you are looking at
+     is the one thing that is true on every screen. -->
+<header class="shrink-0 border-b border-neutral-200 bg-neutral-50/90 px-5 py-3 backdrop-blur
+               dark:border-neutral-800 dark:bg-neutral-950/90">
+  <div class="mx-auto flex w-full max-w-md items-center justify-between gap-3">
     <div class="min-w-0">
-      <h1 id="name" class="truncate text-2xl font-semibold tracking-tight">voicecast</h1>
-      <p id="ident" class="mt-1 truncate font-mono text-xs text-neutral-500 dark:text-neutral-400">
+      <h1 id="name" class="truncate text-lg font-semibold tracking-tight">voicecast</h1>
+      <p id="ident" class="truncate font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
         starting…
       </p>
     </div>
@@ -22,305 +23,374 @@
       class="shrink-0 rounded-full px-2.5 py-1 text-xs font-medium
              bg-neutral-200 text-neutral-700
              dark:bg-neutral-800 dark:text-neutral-300"></span>
-  </header>
+  </div>
+</header>
 
-  <!-- Doze warning. Hidden unless it applies, which is Android only. ------- -->
-  <section id="battery" hidden
-    class="rounded-xl border border-amber-300/60 bg-amber-50 p-4
-           dark:border-amber-500/30 dark:bg-amber-500/10">
-    <h2 class="text-sm font-semibold text-amber-900 dark:text-amber-200">
-      Messages may not arrive
-    </h2>
-    <p class="mt-1 text-sm text-amber-900/80 dark:text-amber-200/80">
-      Android can suspend this app while the screen is off. Allowing background
-      activity keeps messages coming through.
-    </p>
-    <button id="battery-fix"
-      class="mt-3 w-full rounded-lg bg-amber-600 px-4 font-medium text-white
-             transition hover:bg-amber-700 active:scale-[0.99]
-             focus-visible:outline-2 focus-visible:outline-offset-2">
-      Allow background activity
-    </button>
-  </section>
+<!-- Home: what this device is saying, what it has been asked to say, and
+     whether it is willing to say anything at all. -->
+<main id="screen-home" class="flex-1 overflow-y-auto">
+  <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
 
-  <!-- Devices -------------------------------------------------------------- -->
-  <section>
-    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-      Devices
-    </h2>
-    <ul id="devices" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
-                            border border-neutral-200 bg-white
-                            dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
-      <li class="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">Loading…</li>
-    </ul>
-  </section>
-
-    <button id="leave"
-      class="mt-2 w-full rounded-lg px-4 text-sm text-red-600 transition
-             hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10
-             focus-visible:outline-2 focus-visible:outline-offset-2">
-      Leave this space
-    </button>
-
-    <button id="rotate"
-      class="mt-1 w-full rounded-lg px-4 text-sm text-red-600 transition
-             hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10
-             focus-visible:outline-2 focus-visible:outline-offset-2">
-      Replace this space (lost or stolen device)
-    </button>
-  </section>
-
-  <!-- Spaces --------------------------------------------------------------- -->
-  <section id="spaces-section" hidden>
-    <!-- Revealed once the node answers, so it does not flash in empty. -->
-    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-      Spaces
-    </h2>
-    <ul id="spaces" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
-                           border border-neutral-200 bg-white
-                           dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900"></ul>
-    <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-      Separate sets of your own devices. Names without a space go to the
-      default one.
-    </p>
-    <form id="new-space-form" class="mt-2 flex gap-2">
-      <label for="new-space" class="sr-only">Name for a new space</label>
-      <input id="new-space" type="text" autocomplete="off" placeholder="New space name"
-        class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
-               placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
-               focus:ring-2 focus:ring-accent-500/30
-               dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
-      <button type="submit"
-        class="shrink-0 rounded-lg border border-neutral-300 px-4 text-sm font-medium transition
-               hover:bg-neutral-100 active:scale-[0.99]
-               dark:border-neutral-700 dark:hover:bg-neutral-800">
-        Add
-      </button>
-    </form>
-  </section>
-
-  <!-- Speak ---------------------------------------------------------------- -->
-  <section>
-    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-      Say something
-    </h2>
-    <form id="speak-form" class="flex gap-2">
-      <label for="say-input" class="sr-only">Text to speak</label>
-      <input id="say-input" type="text" autocomplete="off" placeholder="Type a message"
-        class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
-               placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
-               focus:ring-2 focus:ring-accent-500/30
-               dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
-      <button id="say" type="submit"
-        class="shrink-0 rounded-lg bg-accent-600 px-5 font-medium text-white transition
-               hover:bg-accent-500 active:scale-[0.98] disabled:opacity-40
-               focus-visible:outline-2 focus-visible:outline-offset-2">
-        Speak
-      </button>
-    </form>
-  </section>
-
-  <!-- History -------------------------------------------------------------- -->
-  <section>
-    <div class="mb-2 flex items-baseline justify-between">
-      <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-        History
-      </h2>
-      <div class="flex items-center gap-3">
-        <label class="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-          <input id="history-unheard" type="checkbox" class="size-3.5 accent-accent-600" />
-          Unheard only
-        </label>
-        <button id="history-clear"
-          class="text-xs text-neutral-500 underline-offset-2 hover:underline
-                 dark:text-neutral-400">
-          Clear
+    <!-- Now playing. Only present while there is something to act on, so the
+         controls never sit there greyed out with nothing to control. -->
+    <section id="now-playing" hidden
+      class="rounded-xl border border-accent-500/40 bg-accent-500/5 p-4
+             dark:border-accent-500/30 dark:bg-accent-500/10">
+      <div class="flex items-center gap-2">
+        <span id="np-state"
+          class="shrink-0 rounded-full bg-accent-600 px-2 py-0.5 text-[11px] font-medium text-white"></span>
+        <span id="np-from" class="truncate text-xs text-neutral-600 dark:text-neutral-300"></span>
+        <span class="flex-1"></span>
+        <span id="np-waiting" class="shrink-0 text-[11px] text-neutral-500 dark:text-neutral-400"></span>
+      </div>
+      <p id="np-text" class="mt-2 line-clamp-3 text-sm text-neutral-800 dark:text-neutral-200"></p>
+      <div class="mt-3 flex gap-2">
+        <button id="np-pause"
+          class="flex-1 rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium transition
+                 hover:bg-neutral-100 active:scale-[0.99]
+                 dark:border-neutral-700 dark:hover:bg-neutral-800"></button>
+        <button id="np-skip"
+          class="flex-1 rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium transition
+                 hover:bg-neutral-100 active:scale-[0.99]
+                 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          Skip
+        </button>
+        <button id="np-stop"
+          class="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition
+                 hover:bg-red-500 active:scale-[0.99]">
+          Stop
         </button>
       </div>
-    </div>
-    <ul id="history" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
-                            border border-neutral-200 bg-white
-                            dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
-      <li class="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">Nothing yet.</li>
-    </ul>
-    <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-      Messages that arrived while this device was muted or quiet are kept here
-      to read or play.
-    </p>
-  </section>
+    </section>
 
-  <!-- Voice ---------------------------------------------------------------- -->
-  <section id="voice-section" hidden>
-    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-      Voice
-    </h2>
-    <div class="space-y-4 rounded-xl border border-neutral-200 bg-white p-4
-                dark:border-neutral-800 dark:bg-neutral-900">
-      <div id="voice-picker-wrap">
-        <label for="voice-picker" class="mb-1 block text-sm">Voice</label>
-        <select id="voice-picker"
-          class="w-full rounded-lg border border-neutral-300 bg-white px-3
-                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
-                 dark:border-neutral-700 dark:bg-neutral-900"></select>
-      </div>
-
-      <div>
-        <div class="mb-1 flex items-baseline justify-between">
-          <label for="rate" class="text-sm">Speed</label>
-          <span id="rate-value" class="font-mono text-xs text-neutral-500 dark:text-neutral-400"></span>
-        </div>
-        <input id="rate" type="range" min="0.5" max="2" step="0.05"
-          class="w-full accent-accent-600" />
-      </div>
-
-      <button id="preview"
-        class="w-full rounded-lg border border-neutral-300 px-4 text-sm font-medium transition
-               hover:bg-neutral-100 active:scale-[0.99]
-               dark:border-neutral-700 dark:hover:bg-neutral-800">
-        Preview this voice
-      </button>
-    </div>
-  </section>
-
-  <!-- Quiet ---------------------------------------------------------------- -->
-  <section>
-    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-      Quiet
-    </h2>
-    <div class="space-y-4 rounded-xl border border-neutral-200 bg-white p-4
-                dark:border-neutral-800 dark:bg-neutral-900">
-
-      <!-- Why this device is silent, when it is. Shown rather than left to be
-           deduced from two controls further down. -->
-      <p id="silent-banner" hidden
-        class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900
-               dark:bg-amber-500/10 dark:text-amber-200"></p>
-
-      <div class="flex items-center justify-between gap-3">
-        <div class="min-w-0">
-          <label for="mute" class="text-sm font-medium">Mute</label>
-          <p class="text-xs text-neutral-500 dark:text-neutral-400">
-            Silent until you turn this off. Nothing breaks through.
-          </p>
-        </div>
-        <input id="mute" type="checkbox" class="size-5 shrink-0 accent-accent-600" />
-      </div>
-
-      <div class="border-t border-neutral-200 pt-4 dark:border-neutral-800">
-        <div class="flex items-center justify-between gap-3">
-          <div class="min-w-0">
-            <label for="quiet-on" class="text-sm font-medium">Quiet hours</label>
-            <p class="text-xs text-neutral-500 dark:text-neutral-400">
-              Silent every day between these times.
-            </p>
-          </div>
-          <input id="quiet-on" type="checkbox" class="size-5 shrink-0 accent-accent-600" />
-        </div>
-
-        <div id="quiet-controls" hidden class="mt-3 space-y-3">
-          <div class="flex items-center gap-2">
-            <label for="quiet-from" class="sr-only">Quiet hours start</label>
-            <input id="quiet-from" type="time" value="22:00"
-              class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5
-                     focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
-                     dark:border-neutral-700 dark:bg-neutral-900" />
-            <span class="text-sm text-neutral-500 dark:text-neutral-400">to</span>
-            <label for="quiet-to" class="sr-only">Quiet hours end</label>
-            <input id="quiet-to" type="time" value="07:00"
-              class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5
-                     focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
-                     dark:border-neutral-700 dark:bg-neutral-900" />
-          </div>
-          <label class="flex items-center gap-2 text-sm">
-            <input id="quiet-high" type="checkbox" class="size-4 shrink-0 accent-accent-600" />
-            Let urgent messages through anyway
+    <!-- History -------------------------------------------------------------- -->
+    <section>
+      <div class="mb-2 flex items-baseline justify-between">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+          History
+        </h2>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+            <input id="history-unheard" type="checkbox" class="size-3.5 accent-accent-600" />
+            Unheard only
           </label>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Pairing -------------------------------------------------------------- -->
-  <section>
-    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-      Add a device
-    </h2>
-
-    <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-      <button id="invite"
-        class="w-full rounded-lg border border-neutral-300 px-4 font-medium transition
-               hover:bg-neutral-100 active:scale-[0.99]
-               dark:border-neutral-700 dark:hover:bg-neutral-800
-               focus-visible:outline-2 focus-visible:outline-offset-2">
-        Show an invite
-      </button>
-
-      <div id="invite-out" hidden class="mt-3">
-        <div id="qr" class="mx-auto w-fit rounded-lg bg-white p-3"></div>
-        <p class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400">
-          Scan this, or copy the code below.
-        </p>
-        <div class="mt-2 flex gap-2">
-          <code id="ticket"
-            class="min-w-0 flex-1 truncate rounded-lg bg-neutral-100 px-3 py-2
-                   font-mono text-xs text-neutral-600
-                   dark:bg-neutral-800 dark:text-neutral-300"></code>
-          <button id="copy"
-            class="shrink-0 rounded-lg border border-neutral-300 px-3 text-sm transition
-                   hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-            Copy
+          <button id="history-clear"
+            class="text-xs text-neutral-500 underline-offset-2 hover:underline
+                   dark:text-neutral-400">
+            Clear
           </button>
         </div>
-        <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
       </div>
+      <ul id="history" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
+                              border border-neutral-200 bg-white
+                              dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
+        <li class="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">Nothing yet.</li>
+      </ul>
+      <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        Messages that arrived while this device was muted or quiet are kept here
+        to read or play.
+      </p>
+    </section>
 
-      <div class="my-4 flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-600">
-        <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
-        or
-        <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
+    <!-- Quiet ---------------------------------------------------------------- -->
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Quiet
+      </h2>
+      <div class="space-y-4 rounded-xl border border-neutral-200 bg-white p-4
+                  dark:border-neutral-800 dark:bg-neutral-900">
+
+        <!-- Why this device is silent, when it is. Shown rather than left to be
+             deduced from two controls further down. -->
+        <p id="silent-banner" hidden
+          class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900
+                 dark:bg-amber-500/10 dark:text-amber-200"></p>
+
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <label for="mute" class="text-sm font-medium">Mute</label>
+            <p class="text-xs text-neutral-500 dark:text-neutral-400">
+              Silent until you turn this off. Nothing breaks through.
+            </p>
+          </div>
+          <input id="mute" type="checkbox" class="size-5 shrink-0 accent-accent-600" />
+        </div>
+
+        <div class="border-t border-neutral-200 pt-4 dark:border-neutral-800">
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <label for="quiet-on" class="text-sm font-medium">Quiet hours</label>
+              <p class="text-xs text-neutral-500 dark:text-neutral-400">
+                Silent every day between these times.
+              </p>
+            </div>
+            <input id="quiet-on" type="checkbox" class="size-5 shrink-0 accent-accent-600" />
+          </div>
+
+          <div id="quiet-controls" hidden class="mt-3 space-y-3">
+            <div class="flex items-center gap-2">
+              <label for="quiet-from" class="sr-only">Quiet hours start</label>
+              <input id="quiet-from" type="time" value="22:00"
+                class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5
+                       focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                       dark:border-neutral-700 dark:bg-neutral-900" />
+              <span class="text-sm text-neutral-500 dark:text-neutral-400">to</span>
+              <label for="quiet-to" class="sr-only">Quiet hours end</label>
+              <input id="quiet-to" type="time" value="07:00"
+                class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5
+                       focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                       dark:border-neutral-700 dark:bg-neutral-900" />
+            </div>
+            <label class="flex items-center gap-2 text-sm">
+              <input id="quiet-high" type="checkbox" class="size-4 shrink-0 accent-accent-600" />
+              Let urgent messages through anyway
+            </label>
+          </div>
+        </div>
       </div>
+    </section>
 
-      <form id="join-form" class="flex gap-2">
-        <label for="join-input" class="sr-only">Invite code</label>
-        <input id="join-input" type="text" autocomplete="off" placeholder="Paste an invite"
-          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 font-mono text-xs
-                 placeholder:font-sans placeholder:text-sm placeholder:text-neutral-400
-                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+  </div>
+</main>
+
+<!-- Settings: everything that is set once and then left alone. -->
+<main id="screen-settings" hidden class="flex-1 overflow-y-auto">
+  <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
+
+    <!-- Doze warning. Hidden unless it applies, which is Android only. ------- -->
+    <section id="battery" hidden
+      class="rounded-xl border border-amber-300/60 bg-amber-50 p-4
+             dark:border-amber-500/30 dark:bg-amber-500/10">
+      <h2 class="text-sm font-semibold text-amber-900 dark:text-amber-200">
+        Messages may not arrive
+      </h2>
+      <p class="mt-1 text-sm text-amber-900/80 dark:text-amber-200/80">
+        Android can suspend this app while the screen is off. Allowing background
+        activity keeps messages coming through.
+      </p>
+      <button id="battery-fix"
+        class="mt-3 w-full rounded-lg bg-amber-600 px-4 font-medium text-white
+               transition hover:bg-amber-700 active:scale-[0.99]
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Allow background activity
+      </button>
+    </section>
+
+    <!-- Speak ---------------------------------------------------------------- -->
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Say something
+      </h2>
+      <form id="speak-form" class="flex gap-2">
+        <label for="say-input" class="sr-only">Text to speak</label>
+        <input id="say-input" type="text" autocomplete="off" placeholder="Type a message"
+          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
+                 placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+                 focus:ring-2 focus:ring-accent-500/30
                  dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
-        <button id="join" type="submit"
-          class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
-                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-          Join
+        <button id="say" type="submit"
+          class="shrink-0 rounded-lg bg-accent-600 px-5 font-medium text-white transition
+                 hover:bg-accent-500 active:scale-[0.98] disabled:opacity-40
+                 focus-visible:outline-2 focus-visible:outline-offset-2">
+          Speak
         </button>
       </form>
-    </div>
-  </section>
+    </section>
 
-  <!-- This device ---------------------------------------------------------- -->
-  <section>
-    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-      This device
-    </h2>
-    <form id="rename-form" class="flex gap-2">
-      <label for="name-input" class="sr-only">Device name</label>
-      <input id="name-input" type="text" autocomplete="off"
-        class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
-               focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
-               dark:border-neutral-700 dark:bg-neutral-900" />
-      <button id="rename" type="submit"
-        class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
-               hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-        Rename
+    <!-- Devices -------------------------------------------------------------- -->
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Devices
+      </h2>
+      <ul id="devices" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
+                              border border-neutral-200 bg-white
+                              dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
+        <li class="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">Loading…</li>
+      </ul>
+    </section>
+
+      <button id="leave"
+        class="mt-2 w-full rounded-lg px-4 text-sm text-red-600 transition
+               hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Leave this space
       </button>
-    </form>
-  </section>
 
-  <div class="flex-1"></div>
+      <button id="rotate"
+        class="mt-1 w-full rounded-lg px-4 text-sm text-red-600 transition
+               hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Replace this space (lost or stolen device)
+      </button>
+    </section>
 
-  <!-- Live region, so a screen reader announces results too. ---------------- -->
-  <p id="result" role="status" aria-live="polite"
-     class="min-h-5 text-center text-sm text-neutral-500 dark:text-neutral-400"></p>
-</div>
+    <!-- Spaces --------------------------------------------------------------- -->
+    <section id="spaces-section" hidden>
+      <!-- Revealed once the node answers, so it does not flash in empty. -->
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Spaces
+      </h2>
+      <ul id="spaces" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
+                             border border-neutral-200 bg-white
+                             dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900"></ul>
+      <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        Separate sets of your own devices. Names without a space go to the
+        default one.
+      </p>
+      <form id="new-space-form" class="mt-2 flex gap-2">
+        <label for="new-space" class="sr-only">Name for a new space</label>
+        <input id="new-space" type="text" autocomplete="off" placeholder="New space name"
+          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
+                 placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+                 focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
+        <button type="submit"
+          class="shrink-0 rounded-lg border border-neutral-300 px-4 text-sm font-medium transition
+                 hover:bg-neutral-100 active:scale-[0.99]
+                 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          Add
+        </button>
+      </form>
+    </section>
+
+    <!-- Voice ---------------------------------------------------------------- -->
+    <section id="voice-section" hidden>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Voice
+      </h2>
+      <div class="space-y-4 rounded-xl border border-neutral-200 bg-white p-4
+                  dark:border-neutral-800 dark:bg-neutral-900">
+        <div id="voice-picker-wrap">
+          <label for="voice-picker" class="mb-1 block text-sm">Voice</label>
+          <select id="voice-picker"
+            class="w-full rounded-lg border border-neutral-300 bg-white px-3
+                   focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                   dark:border-neutral-700 dark:bg-neutral-900"></select>
+        </div>
+
+        <div>
+          <div class="mb-1 flex items-baseline justify-between">
+            <label for="rate" class="text-sm">Speed</label>
+            <span id="rate-value" class="font-mono text-xs text-neutral-500 dark:text-neutral-400"></span>
+          </div>
+          <input id="rate" type="range" min="0.5" max="2" step="0.05"
+            class="w-full accent-accent-600" />
+        </div>
+
+        <button id="preview"
+          class="w-full rounded-lg border border-neutral-300 px-4 text-sm font-medium transition
+                 hover:bg-neutral-100 active:scale-[0.99]
+                 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          Preview this voice
+        </button>
+      </div>
+    </section>
+
+    <!-- Pairing -------------------------------------------------------------- -->
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Add a device
+      </h2>
+
+      <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+        <button id="invite"
+          class="w-full rounded-lg border border-neutral-300 px-4 font-medium transition
+                 hover:bg-neutral-100 active:scale-[0.99]
+                 dark:border-neutral-700 dark:hover:bg-neutral-800
+                 focus-visible:outline-2 focus-visible:outline-offset-2">
+          Show an invite
+        </button>
+
+        <div id="invite-out" hidden class="mt-3">
+          <div id="qr" class="mx-auto w-fit rounded-lg bg-white p-3"></div>
+          <p class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400">
+            Scan this, or copy the code below.
+          </p>
+          <div class="mt-2 flex gap-2">
+            <code id="ticket"
+              class="min-w-0 flex-1 truncate rounded-lg bg-neutral-100 px-3 py-2
+                     font-mono text-xs text-neutral-600
+                     dark:bg-neutral-800 dark:text-neutral-300"></code>
+            <button id="copy"
+              class="shrink-0 rounded-lg border border-neutral-300 px-3 text-sm transition
+                     hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+              Copy
+            </button>
+          </div>
+          <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
+        </div>
+
+        <div class="my-4 flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-600">
+          <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
+          or
+          <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
+        </div>
+
+        <form id="join-form" class="flex gap-2">
+          <label for="join-input" class="sr-only">Invite code</label>
+          <input id="join-input" type="text" autocomplete="off" placeholder="Paste an invite"
+            class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 font-mono text-xs
+                   placeholder:font-sans placeholder:text-sm placeholder:text-neutral-400
+                   focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                   dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
+          <button id="join" type="submit"
+            class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
+                   hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+            Join
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- This device ---------------------------------------------------------- -->
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        This device
+      </h2>
+      <form id="rename-form" class="flex gap-2">
+        <label for="name-input" class="sr-only">Device name</label>
+        <input id="name-input" type="text" autocomplete="off"
+          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
+                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900" />
+        <button id="rename" type="submit"
+          class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
+                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          Rename
+        </button>
+      </form>
+    </section>
+
+  </div>
+</main>
+
+<!-- Live region, so a screen reader announces results too. -->
+<p id="result" role="status" aria-live="polite"
+   class="shrink-0 px-5 pb-1 text-center text-sm text-neutral-500 dark:text-neutral-400"></p>
+
+<!-- Bottom tabs, where a thumb reaches on a phone. -->
+<nav class="shrink-0 border-t border-neutral-200 bg-neutral-50 pb-[env(safe-area-inset-bottom)]
+            dark:border-neutral-800 dark:bg-neutral-950">
+  <div class="mx-auto flex w-full max-w-md">
+    <button id="tab-home" data-screen="home"
+      class="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" class="size-5" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      </svg>
+      Messages
+    </button>
+    <button id="tab-settings" data-screen="settings"
+      class="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" class="size-5" aria-hidden="true">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+      Settings
+    </button>
+  </div>
+</nav>
 
 <script type="module" src="main.js"></script>
 </body>

@@ -287,6 +287,68 @@ async fn list_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, Str
     }
 }
 
+/// What this device is saying right now.
+#[derive(Serialize)]
+pub struct NowPlaying {
+    /// The message being spoken, if any.
+    pub msg_id: Option<String>,
+    /// Its text, so the controls say what they would stop.
+    pub text: Option<String>,
+    /// Which device it came from.
+    pub from: Option<String>,
+    /// Whether speech is held rather than finished.
+    pub paused: bool,
+    /// How many messages are waiting behind it.
+    pub waiting: usize,
+}
+
+/// What this device is saying, for the playback controls.
+#[tauri::command]
+fn now_playing(state: State<'_, AppState>) -> NowPlaying {
+    let (speaking, pending, paused) = match state.node.queue_state() {
+        Response::Queue {
+            speaking,
+            pending,
+            paused,
+        } => (speaking, pending, paused),
+        _ => (None, Vec::new(), false),
+    };
+    // The text comes from the history rather than the queue: the queue holds
+    // chunks mid-flight, and the history holds the message as it was sent.
+    let entry = speaking.as_deref().and_then(|id| state.node.message(id));
+    NowPlaying {
+        msg_id: speaking,
+        text: entry.as_ref().map(|e| e.text.clone()),
+        from: entry.map(|e| e.from),
+        paused,
+        waiting: pending.len(),
+    }
+}
+
+/// Hold what is being spoken here.
+#[tauri::command]
+fn pause_speech(state: State<'_, AppState>) {
+    state.node.pause();
+}
+
+/// Start speaking here again.
+#[tauri::command]
+fn resume_speech(state: State<'_, AppState>) {
+    state.node.unpause();
+}
+
+/// Stop what is being spoken here and drop the queue behind it.
+#[tauri::command]
+fn stop_speech(state: State<'_, AppState>) {
+    state.node.stop();
+}
+
+/// Abandon the current message and move to the next.
+#[tauri::command]
+fn skip_speech(state: State<'_, AppState>) {
+    state.node.skip();
+}
+
 /// Recent messages this device was asked to speak, spoken or not.
 #[tauri::command]
 fn history(
@@ -730,6 +792,11 @@ pub fn run() {
             cli_installable,
             cli_expected_path,
             install_cli,
+            now_playing,
+            pause_speech,
+            resume_speech,
+            stop_speech,
+            skip_speech,
             history,
             replay,
             clear_history,

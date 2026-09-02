@@ -9,6 +9,40 @@ const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 5000;
 
 /**
+ * How often to re-read what is being spoken.
+ *
+ * Faster than the rest, because these are controls for something happening
+ * right now: a stop button that takes five seconds to notice the message
+ * ended is a button people press twice.
+ */
+const PLAYING_MS = 1000;
+
+/** Which screen is showing. */
+let screen = "home";
+
+/**
+ * Show one screen and mark its tab.
+ *
+ * Two screens rather than one long column: the app is mostly a receiver, and
+ * what it is saying and what it has said are what you open it for. Everything
+ * that is set once and left alone belongs behind a tab.
+ */
+function showScreen(name) {
+  screen = name;
+  $("screen-home").hidden = name !== "home";
+  $("screen-settings").hidden = name !== "settings";
+  for (const tab of [$("tab-home"), $("tab-settings")]) {
+    const active = tab.dataset.screen === name;
+    tab.className =
+      "flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition " +
+      (active
+        ? "text-accent-600 dark:text-accent-400"
+        : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200");
+    tab.setAttribute("aria-current", active ? "page" : "false");
+  }
+}
+
+/**
  * Show a transient message.
  *
  * `tone` is "info" or "error"; errors persist until the next action rather
@@ -166,6 +200,37 @@ async function refresh() {
           }),
         ]),
   );
+}
+
+/**
+ * Show what this device is saying, with the controls to stop it.
+ *
+ * The reason this exists on the receiving device: a message already playing
+ * could only be stopped from another machine or a terminal, which is no use
+ * when the phone in your hand is the thing talking.
+ */
+async function refreshPlaying() {
+  let playing;
+  try {
+    playing = await invoke("now_playing");
+  } catch {
+    return;
+  }
+
+  const active = playing.msg_id != null;
+  $("now-playing").hidden = !active;
+  if (!active) return;
+
+  $("np-state").textContent = playing.paused ? "paused" : "speaking";
+  $("np-state").className =
+    "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-white " +
+    (playing.paused ? "bg-neutral-500" : "bg-accent-600");
+  $("np-from").textContent = playing.from ? `from ${playing.from}` : "";
+  $("np-text").textContent = playing.text ?? "";
+  $("np-waiting").textContent = playing.waiting
+    ? `${playing.waiting} waiting`
+    : "";
+  $("np-pause").textContent = playing.paused ? "Resume" : "Pause";
 }
 
 /** A clock time for today, or a date for anything older. */
@@ -587,6 +652,29 @@ $("leave").onclick = () =>
     await refresh();
   });
 
+$("tab-home").onclick = () => showScreen("home");
+$("tab-settings").onclick = () => showScreen("settings");
+
+$("np-pause").onclick = async () => {
+  // Read the label rather than tracking state here: the poll owns what is
+  // true, and a second source would drift from it.
+  const resuming = $("np-pause").textContent === "Resume";
+  await call(resuming ? "resume_speech" : "pause_speech");
+  await refreshPlaying();
+};
+
+$("np-skip").onclick = async () => {
+  await call("skip_speech");
+  await refreshPlaying();
+  await refreshHistory();
+};
+
+$("np-stop").onclick = async () => {
+  await call("stop_speech");
+  await refreshPlaying();
+  await refreshHistory();
+};
+
 $("history-unheard").onchange = refreshHistory;
 
 $("history-clear").onclick = () =>
@@ -653,9 +741,12 @@ async function collectScannedInvite() {
   }
 }
 
+showScreen("home");
 refresh();
+refreshPlaying();
 collectScannedInvite();
 setInterval(() => {
   refresh();
   collectScannedInvite();
 }, REFRESH_MS);
+setInterval(refreshPlaying, PLAYING_MS);

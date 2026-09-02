@@ -320,6 +320,41 @@ impl Node {
         self.shared.speaker.clear();
     }
 
+    /// Hold what is being spoken here, keeping it to resume.
+    pub fn pause(&self) {
+        self.shared.speaker.pause();
+    }
+
+    /// Start speaking here again after a pause.
+    pub fn unpause(&self) {
+        self.shared.speaker.unpause();
+    }
+
+    /// Abandon the current message here and move to the next.
+    pub fn skip(&self) {
+        self.shared.speaker.skip();
+    }
+
+    /// What is being spoken here, and what is waiting.
+    pub fn queue_state(&self) -> Response {
+        let snap = self.shared.speaker.snapshot();
+        Response::Queue {
+            speaking: snap.speaking,
+            pending: snap.pending,
+            paused: snap.paused,
+        }
+    }
+
+    /// One message from the history, for showing what is playing.
+    pub fn message(&self, msg_id: &str) -> Option<Entry> {
+        self.shared
+            .history
+            .lock()
+            .expect("history lock")
+            .get(msg_id)
+            .cloned()
+    }
+
     /// Check in with every peer on a timer, so presence stays current.
     ///
     /// A minute is a compromise: often enough that a device which dropped off
@@ -1099,9 +1134,15 @@ async fn speak_here(
     let started = std::time::Instant::now();
     match tokio::time::timeout(*timeout, rx).await {
         Ok(Ok(status)) => (status, Some(started.elapsed().as_millis() as u64), None),
-        // The worker went away, or we gave up first. Either way it was
-        // accepted, so say that rather than claim a failure.
-        _ => (Status::Queued, None, Some("still speaking".into())),
+        // We gave up waiting before the device finished. It was accepted and
+        // is still going, so say *that* — "queued" reads as though nothing
+        // had started, which is exactly wrong for a long message that is
+        // halfway through being read aloud.
+        _ => (
+            Status::Speaking,
+            None,
+            Some("still speaking; --timeout to wait longer".into()),
+        ),
     }
 }
 
