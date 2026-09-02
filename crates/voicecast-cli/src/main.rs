@@ -107,6 +107,11 @@ enum Command {
     },
     /// List devices in this space.
     Devices,
+    /// Change this device's name.
+    Rename {
+        /// The new name.
+        name: String,
+    },
 }
 
 /// Write a line to stdout, tolerating a closed pipe.
@@ -155,6 +160,7 @@ async fn run() -> anyhow::Result<u8> {
         Some(Command::Status) => Request::Status,
         Some(Command::Invite) => Request::Invite,
         Some(Command::Devices) => Request::Devices,
+        Some(Command::Rename { name }) => Request::Rename { name: name.clone() },
         Some(Command::Join { ticket }) => Request::Join {
             ticket: ticket.clone(),
         },
@@ -337,6 +343,11 @@ async fn send(request: Request) -> anyhow::Result<u8> {
                 expires_in % 60
             ));
             err("On the other device:  voicecast join <the line above>");
+            exit::OK
+        }
+        Response::Renamed { name } => {
+            out(&format!("renamed to {name}"));
+            err("Other devices keep the old name until they sync.");
             exit::OK
         }
         Response::Joined { members } => {

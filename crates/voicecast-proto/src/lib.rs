@@ -109,6 +109,11 @@ pub enum Request {
     },
     /// List devices in the space.
     Devices,
+    /// Change this device's local label.
+    Rename {
+        /// The new label.
+        name: String,
+    },
     /// Stop playback and clear the queue.
     Stop,
     /// Report node health.
@@ -140,6 +145,11 @@ pub enum Response {
     Joined {
         /// How many devices are now in it.
         members: usize,
+    },
+    /// The device was renamed.
+    Renamed {
+        /// Its new label.
+        name: String,
     },
     /// Devices in the space.
     Devices {

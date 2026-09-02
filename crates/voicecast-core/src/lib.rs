@@ -13,7 +13,9 @@ pub mod roster;
 pub mod ticket;
 pub mod transport;
 
-pub use identity::{FileKeyStore, Identity, IdentityError, KeyStore, config_dir};
+pub use identity::{
+    FileKeyStore, Identity, IdentityError, KeyStore, config_dir, device_name, set_device_name,
+};
 pub use node::Node;
 pub use roster::{Roster, RosterError, verify};
 pub use ticket::Ticket;

@@ -11,7 +11,9 @@
       {
         "title": "voicecast",
         "width": 420,
-        "height": 640
+        "height": 640,
+        "label": "main",
+        "visible": true
       }
     ],
     "security": {
@@ -23,7 +25,8 @@
     "active": true,
     "targets": "all",
     "icon": [
-      "icons/icon.png"
+      "icons/icon.png",
+      "icons/icon.ico"
     ]
   }
 }

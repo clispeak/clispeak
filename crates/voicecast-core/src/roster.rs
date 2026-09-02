@@ -139,6 +139,20 @@ impl Roster {
         !self.revoked.contains_key(&key) && self.members.contains_key(&key)
     }
 
+    /// Rename a member, leaving its signature valid.
+    ///
+    /// Names sit outside the signed payload precisely so this is possible —
+    /// see [`Member::signed_payload`]. Returns whether anything changed.
+    pub fn rename(&mut self, endpoint_id: &str, name: &str) -> bool {
+        match self.members.get_mut(endpoint_id) {
+            Some(m) if m.name != name => {
+                m.name = name.to_string();
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Look up a member by its local label.
     pub fn by_name(&self, name: &str) -> Option<&Member> {
         self.members.values().find(|m| m.name == name)

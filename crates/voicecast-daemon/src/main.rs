@@ -24,8 +24,7 @@ async fn main() -> Result<()> {
     eprintln!("key store: {}", identity.location());
 
     // The device's label. A local convenience only — identity is the key.
-    let name = std::env::var("VOICECAST_NAME")
-        .unwrap_or_else(|_| hostname().unwrap_or_else(|| "this device".to_string()));
+    let name = voicecast_core::device_name();
 
     let transport = Transport::bind(identity.secret().clone())
         .await
@@ -33,12 +32,4 @@ async fn main() -> Result<()> {
 
     let node = Node::new(Arc::new(engine), identity, transport, name).await?;
     node.serve().await
-}
-
-/// This machine's hostname, if it has a usable one.
-fn hostname() -> Option<String> {
-    std::fs::read_to_string("/etc/hostname")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
 }

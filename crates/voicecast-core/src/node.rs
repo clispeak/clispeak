@@ -65,6 +65,10 @@ impl Node {
         if roster.members().count() == 0 {
             roster = Roster::found(identity.secret(), &name);
             roster.save(&roster_path).context("saving roster")?;
+        } else if roster.rename(&identity.id().to_string(), &name) {
+            // The label is captured when the device joins; without this a
+            // rename would show everywhere except in the device's own list.
+            roster.save(&roster_path).context("saving roster")?;
         }
 
         let worker_engine = Arc::clone(&engine);
@@ -237,6 +241,7 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
         Request::Invite => invite(shared).await,
         Request::Join { ticket } => join(shared, transport, &ticket).await,
         Request::Devices => devices(shared).await,
+        Request::Rename { name } => rename(shared, &name).await,
         Request::Status => Response::Status {
             device_id: shared.identity.id().to_string(),
             key_store: shared.identity.location().to_string(),
@@ -435,6 +440,34 @@ async fn do_join(shared: &Arc<Shared>, transport: &Arc<Transport>, t: &Ticket) -
         }
         PeerMessage::JoinRefused { reason } => anyhow::bail!("{reason}"),
         other => anyhow::bail!("unexpected reply: {other:?}"),
+    }
+}
+
+/// Change this device's label.
+///
+/// Local only. Peers keep the old label until roster sync exists, so this
+/// says so rather than implying the change travelled.
+async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
+    let name = name.trim();
+    if name.is_empty() {
+        return Response::Error {
+            message: "a device name cannot be empty".into(),
+        };
+    }
+    if let Err(e) = crate::set_device_name(name) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    let mut roster = shared.roster.lock().await;
+    roster.rename(&shared.identity.id().to_string(), name);
+    if let Err(e) = roster.save(&shared.roster_path) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    Response::Renamed {
+        name: name.to_string(),
     }
 }
 

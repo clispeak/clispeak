@@ -11,7 +11,11 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{
+    Manager, State,
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+};
 use voicecast_core::{Identity, Node, Transport};
 use voicecast_engine::{EspeakEngine, SpeechEngine};
 use voicecast_proto::{DeviceInfo, Priority, Response};
@@ -131,24 +135,11 @@ fn key_store() -> anyhow::Result<Box<dyn voicecast_core::KeyStore>> {
 async fn start_node() -> anyhow::Result<Node> {
     let store = key_store()?;
     let identity = Identity::load_or_create(store.as_ref())?;
-    let name = device_name();
+    let name = voicecast_core::device_name();
 
     let engine: Arc<dyn SpeechEngine> = Arc::new(EspeakEngine::new()?);
     let transport = Transport::bind(identity.secret().clone()).await?;
     Node::new(engine, identity, transport, name).await
-}
-
-/// This device's local label. A convenience only — identity is the key.
-fn device_name() -> String {
-    std::env::var("VOICECAST_NAME")
-        .ok()
-        .or_else(|| {
-            std::fs::read_to_string("/etc/hostname")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_else(|| "this device".to_string())
 }
 
 /// Start the app.
@@ -159,6 +150,9 @@ fn device_name() -> String {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            #[cfg(desktop)]
+            build_tray(app.handle())?;
+
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match start_node().await {
@@ -167,10 +161,18 @@ pub fn run() {
                         handle.manage(AppState {
                             node: Arc::clone(&node),
                         });
-                        // Peers only: a phone has no CLI, so binding a local
-                        // IPC socket would serve nobody.
-                        if let Err(e) = node.serve_peers().await {
-                            eprintln!("peer loop stopped: {e:#}");
+                        // On desktop the app is the node the CLI talks to:
+                        // install it, open it, and `voicecast --to phone ...`
+                        // works with no separate daemon. A phone has no CLI,
+                        // so binding a local socket there would serve nobody
+                        // and may not work on Android at all.
+                        let outcome = if cfg!(any(target_os = "android", target_os = "ios")) {
+                            node.serve_peers().await
+                        } else {
+                            node.serve().await
+                        };
+                        if let Err(e) = outcome {
+                            eprintln!("node stopped: {e:#}");
                         }
                     }
                     Err(e) => eprintln!("could not start node: {e:#}"),
@@ -185,6 +187,56 @@ pub fn run() {
             join_space,
             speak
         ])
+        .on_window_event(|window, event| {
+            // Closing the window hides it rather than quitting: the node has
+            // to keep running for the CLI and for peers to reach this device.
+            // Quitting is a deliberate act from the tray menu.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running voicecast");
+}
+
+/// A tray icon so the user can see the node is running, and stop it.
+///
+/// A visible icon beats a hidden daemon: it says the thing is alive and gives
+/// an obvious way to quit. On Linux this needs the desktop shell to provide a
+/// StatusNotifierItem host, which not every compositor does — the app still
+/// works without one, it is just harder to notice.
+#[cfg(desktop)]
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "Show voicecast", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit voicecast", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+
+    // Embedded rather than taken from the window icon: libayatana-appindicator
+    // refuses to register a tray item with no icon, and it fails silently —
+    // the process simply never claims a StatusNotifierItem name.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+
+    TrayIconBuilder::with_id("voicecast")
+        .icon(icon)
+        .tooltip("voicecast")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => reveal(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
+}
+
+/// Bring the window back from the tray.
+#[cfg(desktop)]
+fn reveal(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 }

@@ -27,6 +27,7 @@ voicecast "hello world"
 voicecast invite             # on one device
 voicecast join <ticket>      # on the other
 voicecast devices
+voicecast rename "Phil's Laptop"
 voicecast --to laptop "build finished"
 ```
 

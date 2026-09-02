@@ -157,6 +157,43 @@ pub fn config_dir() -> Result<PathBuf, IdentityError> {
     Ok(dirs.config_dir().to_path_buf())
 }
 
+/// This device's local label.
+///
+/// A convenience for humans, never an identity — it is deliberately excluded
+/// from a join record's signature so renaming costs nothing. Resolution order:
+/// an explicitly chosen name, then `VOICECAST_NAME`, then the hostname.
+pub fn device_name() -> String {
+    if let Ok(dir) = config_dir()
+        && let Ok(name) = std::fs::read_to_string(dir.join("name"))
+    {
+        let name = name.trim();
+        if !name.is_empty() {
+            return name.to_string();
+        }
+    }
+    if let Ok(name) = std::env::var("VOICECAST_NAME")
+        && !name.trim().is_empty()
+    {
+        return name.trim().to_string();
+    }
+    hostname().unwrap_or_else(|| "this device".to_string())
+}
+
+/// Choose this device's label, remembering it across restarts.
+pub fn set_device_name(name: &str) -> Result<(), IdentityError> {
+    let dir = config_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| IdentityError::Store(e.to_string()))?;
+    std::fs::write(dir.join("name"), name.trim()).map_err(|e| IdentityError::Store(e.to_string()))
+}
+
+/// This machine's hostname, if it has a usable one.
+fn hostname() -> Option<String> {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Write bytes to a file only the owner can read.
 ///
 /// Permissions are set at creation on Unix. Elsewhere the containing
