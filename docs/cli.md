@@ -85,7 +85,7 @@ $ voicecast groups
 | `-f, --file <path>` | — | Read text from a file |
 | `-v, --voice <name>` | receiver's | Request a voice, if the receiver has it |
 | `-w, --wait` | off | Block until every target reaches a terminal state |
-| `--timeout <secs>` | `120` | With `--wait` |
+| `--timeout <secs>` | estimated | With `--wait`. Overrides the estimate below |
 | `--json` | off | Machine-readable result on stdout |
 | `-q, --quiet` | off | Suppress normal output. Errors still go to stderr — a failure nobody can explain is worse than a quiet success |
 | `--strip` | off | Convert markdown to speakable text instead of rejecting |
@@ -148,6 +148,31 @@ $ voicecast --to all --wait "deploy finished"
 $ echo $?
 3
 ```
+
+### How long `--wait` waits
+
+There is no fixed limit. The receiving device estimates one from the text it
+was given, its own speaking rate, and whatever is already queued in front of
+it, then adds an allowance for starting up. The bound is at least 30 seconds
+and at most an hour.
+
+It is estimated rather than fixed because any constant is wrong at exactly one
+length. The previous flat 120 seconds was fine until a 569-word message
+arrived: that is around 148 seconds of speech, so the device said all of it
+while the caller was told it had not finished — see issue #6.
+
+The estimate assumes a device speaks more slowly than any engine here actually
+does, because it is an upper bound on waiting rather than a delay. The wait
+ends the moment speaking does, so a generous estimate costs nothing; a mean
+one reports a message as unfinished while it is being read aloud.
+
+It is worked out on the **receiving** device, which is the only one that knows
+its engine, its rate and its queue. `--timeout` is the caller overriding all of
+that, and always wins — including for a remote device, which is sent the value.
+
+If the bound is reached the message is reported as `speaking` rather than
+`spoken`, with a detail saying so. That is not a failure: the device is still
+talking, and the message lands in its history either way.
 
 With `--json`, for agents:
 

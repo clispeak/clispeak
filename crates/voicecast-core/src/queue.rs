@@ -276,6 +276,24 @@ impl Speaker {
         self.inner.0.lock().expect("queue lock").depth()
     }
 
+    /// How many words are still to be spoken, across everything queued.
+    ///
+    /// Used to work out how long a caller asking to wait should be prepared
+    /// to wait: its own message is only part of the answer when something is
+    /// already talking. The message being spoken is counted whole, since how
+    /// much of it is left is not tracked — an over-estimate, which is the
+    /// safe direction for a bound on waiting.
+    pub fn pending_words(&self) -> usize {
+        let inner = self.inner.0.lock().expect("queue lock");
+        inner
+            .urgent
+            .iter()
+            .chain(inner.resume.iter())
+            .chain(inner.normal.iter())
+            .map(|j| words_in(&j.chunks))
+            .sum()
+    }
+
     /// What is playing and what is waiting.
     pub fn snapshot(&self) -> Snapshot {
         let inner = self.inner.0.lock().expect("queue lock");
@@ -409,6 +427,12 @@ impl Speaker {
     }
 }
 
+/// Words across a set of chunks, counted the way a speech engine consumes
+/// them: whitespace-separated, punctuation and all.
+pub fn words_in(chunks: &[String]) -> usize {
+    chunks.iter().map(|c| c.split_whitespace().count()).sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,6 +508,43 @@ mod tests {
 
     async fn settle() {
         tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+
+    /// Words counted the way the estimate needs them.
+    #[test]
+    fn words_are_counted_across_chunks() {
+        assert_eq!(words_in(&[]), 0);
+        assert_eq!(words_in(&["one two".into(), "three".into()]), 3);
+        // Punctuation rides along with the word it belongs to, and repeated
+        // or surrounding whitespace does not invent extra ones.
+        assert_eq!(words_in(&["  Dr. Smith,   again.  ".into()]), 3);
+    }
+
+    /// What is still to be said includes what is waiting, not just what is
+    /// playing — a caller waits through the whole queue in front of it.
+    #[tokio::test]
+    async fn pending_words_covers_everything_still_to_be_spoken() {
+        let engine = FakeEngine::new();
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
+        assert_eq!(speaker.pending_words(), 0);
+
+        let (first, _first_done) = job("m1", &["one two three", "four five"]);
+        speaker.submit(first, false);
+        let (second, _second_done) = job("m2", &["six seven"]);
+        speaker.submit(second, false);
+
+        // Counted before the thread has drained anything, so both are still
+        // in hand. Over-counting as speaking proceeds is the safe direction:
+        // this bounds how long a caller waits, and waiting ends when speech
+        // does.
+        assert!(
+            speaker.pending_words() > 0,
+            "queued messages should count towards the wait"
+        );
+
+        speaker.clear();
+        settle().await;
+        assert_eq!(speaker.pending_words(), 0, "a cleared queue owes nothing");
     }
 
     #[tokio::test]
