@@ -250,6 +250,27 @@ worth knowing, an ad-hoc signed bundle is a new identity to macOS on every
 rebuild, so the keychain prompt blocks node startup until someone clicks it.
 A Mac waiting on that dialog is indistinguishable from one that is off.
 
+### M10 — Windows
+
+Piper, an installer that does the whole job, and the command-line tool on the
+PATH without anyone opening a terminal.
+
+**The bar is higher here than on the other desktops, on purpose.** Linux and
+macOS are installed by people comfortable in a shell; a Windows user is
+assumed not to be, and anything left for them to do by hand will not get done
+— and will look like a broken app rather than an unfinished install. So the
+installer carries Piper, a voice *and* the Visual C++ runtime, sets the PATH
+itself, and checks the result before it closes.
+
+The runtime matters more than it sounds. A clean Windows install has none, and
+without it `piper.exe` installs correctly, is found correctly, and exits
+`0xC0000135` with no message and no named library. Bundling the three CRT DLLs
+beside it removes the failure rather than reporting it.
+
+*Exit:* a double-click on a clean Windows machine gives a device that speaks
+and a `voicecast` a **new** shell can find, with no terminal step and no admin
+prompt at any point.
+
 ---
 
 ## Testing strategy
