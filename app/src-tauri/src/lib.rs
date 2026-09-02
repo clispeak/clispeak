@@ -228,12 +228,18 @@ fn dns_resolver() -> Option<iroh::dns::DnsResolver> {
 fn speech_engine() -> Arc<dyn SpeechEngine> {
     #[cfg(all(unix, not(target_os = "android")))]
     {
+        // Best available, in order. Piper is what this platform should sound
+        // like; espeak is the floor that guarantees a device is never silent.
+        match voicecast_engine::PiperEngine::discover() {
+            Ok(engine) => return Arc::new(engine),
+            Err(e) => eprintln!("piper unavailable: {e}"),
+        }
         match voicecast_engine::EspeakEngine::new() {
             Ok(engine) => Arc::new(engine),
             Err(e) => {
                 eprintln!("espeak-ng unavailable: {e}");
                 Arc::new(voicecast_engine::SilentEngine::new(
-                    "espeak-ng is not installed on this device",
+                    "no speech engine is installed on this device",
                 ))
             }
         }

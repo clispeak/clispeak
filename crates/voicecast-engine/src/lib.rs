@@ -22,6 +22,12 @@ mod espeak;
 #[cfg(unix)]
 pub use espeak::EspeakEngine;
 
+// Piper is a native binary we spawn, so it belongs wherever espeak does.
+#[cfg(unix)]
+mod piper;
+#[cfg(unix)]
+pub use piper::PiperEngine;
+
 /// A voice offered by an engine.
 #[derive(Debug, Clone)]
 pub struct Voice {

@@ -284,3 +284,28 @@ fn a_non_member_cannot_be_merged_back_in_by_its_own_roster() {
         "a device that left must not treat its old peers as members"
     );
 }
+
+#[test]
+fn a_device_that_rejoins_becomes_visible_again() {
+    // The bug this guards: listings filtered on the mere presence of a
+    // tombstone while everything else compared timestamps. A rejoined device
+    // was addressable, reachable and spoken to, but missing from
+    // `voicecast devices` — visible only as an inconsistency.
+    let alice = device();
+    let bob = device();
+    let bob_id = bob.public().to_string();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob_id, "bob");
+    on_alice.revoke(&bob_id);
+    assert!(!on_alice.allows(&bob.public()), "revoked");
+    assert_eq!(on_alice.members().count(), 1);
+
+    // Bob rejoins: a fresh record, newer than the revocation.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    on_alice.invite(&alice, &bob_id, "bob");
+
+    assert!(on_alice.allows(&bob.public()), "a rejoin must be honoured");
+    assert!(on_alice.by_name("bob").is_some(), "and findable by name");
+    assert_eq!(on_alice.members().count(), 2, "and listed");
+}

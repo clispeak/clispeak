@@ -159,8 +159,23 @@ impl Roster {
 
     /// Whether this endpoint may speak on this device.
     pub fn allows(&self, endpoint_id: &EndpointId) -> bool {
-        let key = endpoint_id.to_string();
-        !self.revoked.contains_key(&key) && self.members.contains_key(&key)
+        self.members
+            .get(&endpoint_id.to_string())
+            .is_some_and(|m| self.is_current(m))
+    }
+
+    /// Whether an entry outlives any tombstone against it.
+    ///
+    /// One rule, used everywhere. Testing merely for the *presence* of a
+    /// tombstone made a rejoin invisible for ever: the device was admitted,
+    /// reachable and addressable by name, yet absent from every listing.
+    /// Rejoining is precisely a join record newer than the revocation, so the
+    /// comparison has to be by time.
+    fn is_current(&self, member: &Member) -> bool {
+        !self
+            .revoked
+            .get(&member.endpoint_id)
+            .is_some_and(|revoked_at| *revoked_at > member.joined_at)
     }
 
     /// Rename a member, leaving its signature valid.
@@ -197,14 +212,14 @@ impl Roster {
 
     /// Look up a member by its local label.
     pub fn by_name(&self, name: &str) -> Option<&Member> {
-        self.members.values().find(|m| m.name == name)
+        self.members
+            .values()
+            .find(|m| m.name == name && self.is_current(m))
     }
 
     /// Every current member.
     pub fn members(&self) -> impl Iterator<Item = &Member> {
-        self.members
-            .values()
-            .filter(|m| !self.revoked.contains_key(&m.endpoint_id))
+        self.members.values().filter(|m| self.is_current(m))
     }
 
     /// Remove a device from the space.
