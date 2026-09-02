@@ -29,14 +29,40 @@ compiles. So:
 | push to `main`, pull request | compile for five targets, fmt, clippy, portability, tests |
 | tag `v*` | the above, then package every platform and attach the artefacts |
 
-**A caution about cost, which we have not measured.** This repository is
-private, so Actions minutes come out of an allowance rather than being free.
-macOS runners bill at **ten times** the rate of Linux and Windows at **two
-times**, and the current matrix runs both on every push. The GitHub timing API
-reported zero billable minutes for our runs when asked, which is not a figure
-worth trusting either way — the usage page in account settings is the thing to
-read. Worth reading it before deciding how much of the current matrix to keep
-on every push.
+**What it actually costs.** This repository is private, so Actions minutes come
+out of an allowance. From the usage page for 2 September 2026 — one day, during
+which three agents pushed to `main` repeatedly:
+
+| | Minutes | Rate | Gross |
+|---|---|---|---|
+| Linux | 501 | $0.006 | $3.01 |
+| Windows | 214 | $0.010 | $2.14 |
+| **macOS** | **171** | **$0.062** | **$10.60** |
+
+Only $0.16 was billed — storage. The minutes were inside the allowance. But
+the shape is the point: **macOS was two thirds of the gross on a fifth of the
+minutes.**
+
+In the units the allowance is actually consumed in, that day cost about
+**2,639 Linux-equivalent minutes** — a whole month of a 3,000-minute plan, in
+roughly one day.
+
+Two things follow, and only one of them is about the matrix.
+
+The Apple targets used to be two jobs on `macos-latest`, each paying its own
+checkout, toolchain install and cache restore on the most expensive runner
+GitHub sells. They are one job now, building both targets. Same coverage,
+half the macOS jobs.
+
+**The larger driver is push frequency, not the matrix.** Forty pushes to `main`
+in a day is forty runs. Work that goes through a branch and a pull request
+costs about the same per run, but there are far fewer of them. That is a
+working-habit lever rather than a configuration one, and it is the bigger of
+the two.
+
+What should *not* be traded away is the five-target rule itself. It is why the
+Windows break was caught after fifteen commits rather than at some point after
+that.
 
 ## Publishing from a closed repository
 
