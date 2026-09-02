@@ -1,9 +1,14 @@
 # Build plan
 
-**Phase 1 targets Linux and Android.** They get real runtime testing. macOS,
-Windows, and iOS are **build-verified from day one but not exercised** — the
-point is that adding them later is a matter of testing, never of untangling
+**Phase 1 targets Linux and Android.** They get real runtime testing. Windows
+and iOS are **build-verified from day one but not exercised** — the point is
+that adding them later is a matter of testing, never of untangling
 architecture.
+
+macOS has since been exercised, and bore that out: it needed a speech engine
+wired up and a packaging story, and no change to a portable crate beyond
+[one bug the abstract-socket assumption had hidden](#m9--macos). Its runtime
+coverage is still a smoke test rather than the full pass Linux gets.
 
 ---
 
@@ -215,6 +220,21 @@ Priority and queue, `stop`/`skip`/`pause`, groups, multiple spaces, quiet
 hours, `--wait`/`--json`, rotation.
 
 *Exit:* `cli.md` is fully implemented.
+
+### M9 — macOS
+
+Piper on a Mac, a bundled `.app` that installs by dragging, and the CLI put
+somewhere a shell — and therefore an agent — will actually find it.
+
+Confirms what the compile-for-five rule was for: the portable crates needed no
+platform conditionals. The one real defect it surfaced was in `voicecast-core`
+and had been latent on every platform, hidden because Linux's abstract sockets
+disappear with the process that held them — a node killed anywhere else left a
+socket file that stopped every later node from starting.
+
+*Exit:* installing the dmg on a Mac with nothing else installed gives a device
+that speaks, and `voicecast` on the PATH. **Done, apart from pairing a Mac with
+another device, and signing.**
 
 ---
 
