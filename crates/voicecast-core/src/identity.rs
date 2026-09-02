@@ -112,9 +112,7 @@ impl FileKeyStore {
 
     /// Store the key in the platform's config directory.
     pub fn default_location() -> Result<Self, IdentityError> {
-        let dirs = directories::ProjectDirs::from("", "", "voicecast")
-            .ok_or_else(|| IdentityError::Store("no config directory".into()))?;
-        Ok(Self::at(dirs.config_dir().join("identity.key")))
+        Ok(Self::at(config_dir()?.join("identity.key")))
     }
 }
 
@@ -143,6 +141,20 @@ impl KeyStore for FileKeyStore {
     fn describe(&self) -> String {
         format!("file {}", self.path.display())
     }
+}
+
+/// Where this device keeps its state.
+///
+/// `VOICECAST_CONFIG_DIR` overrides it so a second node can run alongside the
+/// first with its own identity and roster — the only way to exercise joining
+/// without two machines.
+pub fn config_dir() -> Result<PathBuf, IdentityError> {
+    if let Ok(dir) = std::env::var("VOICECAST_CONFIG_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+    let dirs = directories::ProjectDirs::from("", "", "voicecast")
+        .ok_or_else(|| IdentityError::Store("no config directory".into()))?;
+    Ok(dirs.config_dir().to_path_buf())
 }
 
 /// Write bytes to a file only the owner can read.

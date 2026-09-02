@@ -96,7 +96,19 @@ pub enum Request {
         text: String,
         /// Sender's stated urgency.
         priority: Priority,
+        /// Device label to speak on. `None` means this machine.
+        #[serde(default)]
+        to: Option<String>,
     },
+    /// Mint an invite ticket for another device.
+    Invite,
+    /// Join a space using a ticket from another device.
+    Join {
+        /// The `voicecast://join/...` string.
+        ticket: String,
+    },
+    /// List devices in the space.
+    Devices,
     /// Stop playback and clear the queue.
     Stop,
     /// Report node health.
@@ -116,6 +128,23 @@ pub enum Response {
     Finished {
         /// How it ended.
         status: Status,
+    },
+    /// An invite, ready to hand to another device.
+    Invite {
+        /// The `voicecast://join/...` string.
+        url: String,
+        /// Seconds until it stops being accepted.
+        expires_in: u64,
+    },
+    /// Joined a space.
+    Joined {
+        /// How many devices are now in it.
+        members: usize,
+    },
+    /// Devices in the space.
+    Devices {
+        /// One row per member.
+        devices: Vec<DeviceInfo>,
     },
     /// Node health.
     Status {
@@ -142,4 +171,105 @@ pub enum Response {
         /// Why.
         message: String,
     },
+}
+/// One device's membership of a space.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Member {
+    /// The device's public key, as a string for stable serialisation.
+    pub endpoint_id: String,
+    /// Local label. Never an identity — renaming breaks nothing.
+    pub name: String,
+    /// Who vouched for this device.
+    pub invited_by: String,
+    /// The inviter's signature over the join record.
+    pub signature: Vec<u8>,
+    /// Unix seconds. Used to order a rejoin after a revocation.
+    pub joined_at: u64,
+}
+
+impl Member {
+    /// The bytes an inviter signs, and a verifier re-derives.
+    ///
+    /// Deliberately excludes `name`, so renaming a device does not invalidate
+    /// its membership.
+    pub fn signed_payload(endpoint_id: &str, invited_by: &str, joined_at: u64) -> Vec<u8> {
+        format!("voicecast-join-v1:{endpoint_id}:{invited_by}:{joined_at}").into_bytes()
+    }
+}
+
+/// Messages exchanged between peer devices.
+///
+/// Distinct from [`Request`]/[`Response`], which never leave the machine.
+/// Everything here crosses the network as CBOR over a QUIC stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PeerMessage {
+    /// Opens the long-lived control stream.
+    Hello {
+        /// Highest protocol version this peer speaks.
+        proto_version: u16,
+        /// Sender's public key.
+        endpoint_id: String,
+        /// Sender's local label.
+        display_name: String,
+    },
+    /// A device asking to join a space.
+    JoinRequest {
+        /// The joiner's public key.
+        endpoint_id: String,
+        /// What the joiner wants to be called.
+        display_name: String,
+        /// One-time token from the invite, proving this was intended.
+        token: String,
+    },
+    /// The invite was accepted; here is your record and the roster.
+    JoinAccepted {
+        /// The joiner's signed membership record.
+        member: Member,
+        /// Everyone else in the space.
+        members: Vec<Member>,
+    },
+    /// The invite was refused.
+    JoinRefused {
+        /// Why, in terms the joiner can act on.
+        reason: String,
+    },
+    /// Roster state, exchanged when digests differ.
+    RosterSync {
+        /// Current members.
+        members: Vec<Member>,
+        /// Revoked ids and when, so tombstones propagate.
+        revoked: Vec<(String, u64)>,
+    },
+    /// Opens a message stream. Chunks follow, then [`PeerMessage::SpeakEnd`].
+    SpeakBegin {
+        /// Identifies this message for control commands.
+        msg_id: String,
+        /// Sender's stated urgency.
+        priority: Priority,
+    },
+    /// One sentence-ish unit of text.
+    Chunk {
+        /// Position in the message, from zero.
+        seq: u32,
+        /// The text to speak.
+        text: String,
+    },
+    /// Closes a message stream.
+    SpeakEnd,
+    /// Terminal or in-progress state, sent back on the same stream.
+    Report {
+        /// How it went.
+        status: Status,
+    },
+}
+
+/// A device as shown by `voicecast devices`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    /// Local label.
+    pub name: String,
+    /// Public key.
+    pub endpoint_id: String,
+    /// Whether this row is the device you are asking.
+    pub is_self: bool,
 }

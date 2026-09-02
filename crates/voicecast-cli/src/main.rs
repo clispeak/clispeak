@@ -13,7 +13,7 @@ use interprocess::local_socket::{
     GenericNamespaced, ToNsName,
     tokio::{Stream, prelude::*},
 };
-use voicecast_proto::{Priority, Request, Response};
+use voicecast_proto::{Priority, Request, Response, Status};
 
 mod exit {
     //! Exit codes, as specified in `docs/cli.md`.
@@ -28,6 +28,8 @@ mod exit {
     pub const USAGE: u8 = 1;
     /// The local node could not be reached or started.
     pub const NO_NODE: u8 = 5;
+    /// Every target failed to speak the message.
+    pub const ALL_FAILED: u8 = 4;
     /// Text rejected: markdown or a URL that will not read well aloud.
     pub const REJECTED: u8 = 6;
 }
@@ -39,6 +41,10 @@ mod exit {
     version
 )]
 struct Cli {
+    /// Device to speak on. Defaults to this machine.
+    #[arg(short, long, global = true)]
+    to: Option<String>,
+
     /// Urgency. `high` interrupts whatever is speaking.
     #[arg(short, long, value_enum, default_value = "normal", global = true)]
     priority: Prio,
@@ -92,6 +98,15 @@ enum Command {
     Stop,
     /// Show node health.
     Status,
+    /// Print an invite for another device to join this space.
+    Invite,
+    /// Join a space using an invite from another device.
+    Join {
+        /// The `voicecast://join/...` string.
+        ticket: String,
+    },
+    /// List devices in this space.
+    Devices,
 }
 
 /// Write a line to stdout, tolerating a closed pipe.
@@ -138,6 +153,11 @@ async fn run() -> anyhow::Result<u8> {
     let request = match &cli.command {
         Some(Command::Stop) => Request::Stop,
         Some(Command::Status) => Request::Status,
+        Some(Command::Invite) => Request::Invite,
+        Some(Command::Devices) => Request::Devices,
+        Some(Command::Join { ticket }) => Request::Join {
+            ticket: ticket.clone(),
+        },
         Some(Command::Say { text }) => match build_speak(&cli, text)? {
             Ok(req) => req,
             Err(code) => return Ok(code),
@@ -210,6 +230,7 @@ fn build_speak(cli: &Cli, tokens: &[String]) -> anyhow::Result<Result<Request, u
     Ok(Ok(Request::Speak {
         text,
         priority: cli.priority.into(),
+        to: cli.to.clone(),
     }))
 }
 
@@ -259,6 +280,9 @@ fn read_stdin() -> anyhow::Result<String> {
 
 /// Send one request to the local node and report what came back.
 async fn send(request: Request) -> anyhow::Result<u8> {
+    // Whether a non-spoken outcome counts as failure depends on what was
+    // asked: `Cancelled` is the point of `stop`, but a failure for `speak`.
+    let was_speak = matches!(request, Request::Speak { .. });
     let name = voicecast_core_socket_name().to_ns_name::<GenericNamespaced>()?;
 
     let mut stream = match Stream::connect(name).await {
@@ -280,7 +304,14 @@ async fn send(request: Request) -> anyhow::Result<u8> {
         }
         Response::Finished { status } => {
             out(&format!("{status:?}"));
-            exit::OK
+            // A message that was not spoken is a failure the caller needs to
+            // see. `Rejected` in particular means this device is not in the
+            // target's roster — silently exiting 0 would hide that.
+            match status {
+                _ if !was_speak => exit::OK,
+                Status::Spoken | Status::Queued | Status::Speaking => exit::OK,
+                _ => exit::ALL_FAILED,
+            }
         }
         Response::Status {
             device_id,
@@ -298,6 +329,31 @@ async fn send(request: Request) -> anyhow::Result<u8> {
             out(&format!("queued:  {queued}"));
             exit::OK
         }
+        Response::Invite { url, expires_in } => {
+            out(&url);
+            err(&format!(
+                "\nExpires in {}m {}s. Single use.",
+                expires_in / 60,
+                expires_in % 60
+            ));
+            err("On the other device:  voicecast join <the line above>");
+            exit::OK
+        }
+        Response::Joined { members } => {
+            out(&format!("joined. {members} devices in this space"));
+            exit::OK
+        }
+        Response::Devices { devices } => {
+            for d in devices {
+                out(&format!(
+                    "{:<16} {}{}",
+                    d.name,
+                    &d.endpoint_id[..16.min(d.endpoint_id.len())],
+                    if d.is_self { "  (this device)" } else { "" }
+                ));
+            }
+            exit::OK
+        }
         Response::Error { message } => {
             err(&format!("error: {message}"));
             exit::USAGE
@@ -308,9 +364,12 @@ async fn send(request: Request) -> anyhow::Result<u8> {
 /// Socket name, duplicated rather than depending on `voicecast-core`.
 ///
 /// A handful of bytes of duplication is a fair price for keeping this binary
-/// free of the node's entire dependency graph.
+/// free of the node's entire dependency graph — but it must stay in step with
+/// `voicecast_core::ipc::socket_name`, including the environment override.
+/// Forgetting that here made every command talk to the first node, which
+/// looked like two unrelated bugs.
 fn voicecast_core_socket_name() -> String {
-    "voicecast.sock".to_string()
+    std::env::var("VOICECAST_SOCKET").unwrap_or_else(|_| "voicecast.sock".to_string())
 }
 
 // Frame helpers, mirroring `voicecast_core::ipc` for the same reason.

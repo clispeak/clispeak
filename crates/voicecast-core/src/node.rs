@@ -1,54 +1,88 @@
-//! The node: accepts local requests and speaks them.
+//! The node: accepts local requests, speaks them, and relays them to peers.
 //!
-//! At M3 this is deliberately the smallest thing that works — one machine,
-//! no network, no roster. Transport and membership arrive at M5. What is
-//! already real is the shape: a long-lived process owning the engine and a
-//! queue, with the CLI as a thin client that hands over text and exits.
+//! Two loops run side by side — a local IPC socket for the CLI, and an iroh
+//! endpoint for other devices. The CLI is a thin client that hands over text
+//! and exits; everything durable lives here.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use interprocess::local_socket::{
     GenericNamespaced, ListenerOptions, ToNsName, tokio::Stream, traits::tokio::Listener,
 };
+use tokio::sync::Mutex;
 use voicecast_engine::SpeechEngine;
-
-use crate::Identity;
-use voicecast_proto::{Priority, Request, Response, Status};
+use voicecast_proto::{DeviceInfo, Member, PeerMessage, Priority, Request, Response, Status};
 use voicecast_text::chunk;
 
 use crate::ipc::{read_frame, socket_name, write_frame};
+use crate::transport::{read_msg, write_msg};
+use crate::{Identity, Roster, Ticket, Transport};
 
 /// A speech request waiting its turn.
 struct Job {
-    /// Identifies the message for control commands.
     msg_id: String,
-    /// Sentence-sized pieces, in order.
     chunks: Vec<String>,
+}
+
+/// Shared state both loops need.
+struct Shared {
+    engine: Arc<dyn SpeechEngine>,
+    identity: Identity,
+    name: String,
+    roster: Mutex<Roster>,
+    roster_path: PathBuf,
+    /// The invite currently outstanding, if any. One at a time: an invite is
+    /// a deliberate act, and allowing several open at once would widen the
+    /// window in which a leaked ticket still works.
+    pending: Mutex<Option<Ticket>>,
+    tx: tokio::sync::mpsc::UnboundedSender<Job>,
+    queued: AtomicUsize,
 }
 
 /// The running node.
 pub struct Node {
-    engine: Arc<dyn SpeechEngine>,
-    /// This device's keypair. Reported by `status`, and handed to the
-    /// transport at M5.
-    identity: Identity,
-    /// Jobs are handed to a dedicated blocking thread; speech is serial by
-    /// nature, so a channel is the whole scheduler at this stage.
-    tx: tokio::sync::mpsc::UnboundedSender<Job>,
-    queued: Arc<std::sync::atomic::AtomicUsize>,
+    shared: Arc<Shared>,
+    transport: Arc<Transport>,
 }
 
 impl Node {
-    /// Start a node with the given engine and identity.
-    pub fn new(engine: Arc<dyn SpeechEngine>, identity: Identity) -> Self {
+    /// Start a node with the given engine, identity and transport.
+    pub async fn new(
+        engine: Arc<dyn SpeechEngine>,
+        identity: Identity,
+        transport: Transport,
+        name: String,
+    ) -> Result<Self> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Job>();
-        let queued = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let roster_path = Roster::default_path().context("locating roster")?;
+        let mut roster = Roster::load(&roster_path).context("loading roster")?;
+        // A device is always a member of its own space, even before anyone
+        // else joins — otherwise it could not speak to itself.
+        if roster.members().count() == 0 {
+            roster = Roster::found(identity.secret(), &name);
+            roster.save(&roster_path).context("saving roster")?;
+        }
 
         let worker_engine = Arc::clone(&engine);
-        let worker_queued = Arc::clone(&queued);
-        // Speaking blocks, so it gets its own thread rather than starving the
-        // runtime that is accepting connections.
+        let queued = AtomicUsize::new(0);
+        let shared = Arc::new(Shared {
+            engine,
+            identity,
+            name,
+            roster: Mutex::new(roster),
+            roster_path,
+            pending: Mutex::new(None),
+            tx,
+            queued,
+        });
+
+        let counter = Arc::clone(&shared);
+        // Speaking blocks, so it gets a dedicated thread rather than starving
+        // the runtime that is accepting connections.
         std::thread::spawn(move || {
             while let Some(job) = rx.blocking_recv() {
                 for c in &job.chunks {
@@ -57,101 +91,375 @@ impl Node {
                         break;
                     }
                 }
-                worker_queued.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                counter.queued.fetch_sub(1, Ordering::SeqCst);
             }
         });
 
-        Self {
-            engine,
-            identity,
-            tx,
-            queued,
-        }
+        Ok(Self {
+            shared,
+            transport: Arc::new(transport),
+        })
     }
 
-    /// Listen for CLI connections until cancelled.
+    /// Run both loops until one of them fails.
     pub async fn serve(&self) -> Result<()> {
-        let name = socket_name()
-            .to_ns_name::<GenericNamespaced>()
-            .context("building socket name")?;
+        let name = socket_name().to_ns_name::<GenericNamespaced>()?;
         let listener = ListenerOptions::new()
             .name(name)
             .create_tokio()
             .context("another node may already be running")?;
 
-        eprintln!("voicecast node listening on {}", socket_name());
+        eprintln!(
+            "listening on {} and as {}",
+            socket_name(),
+            self.transport.id()
+        );
 
-        loop {
-            let stream = listener.accept().await.context("accepting connection")?;
-            if let Err(e) = self.handle(stream).await {
-                eprintln!("connection error: {e}");
-            }
-        }
-    }
-
-    /// Serve one CLI connection.
-    ///
-    /// Handled inline rather than spawned: requests are tiny and speech is
-    /// serial anyway, so concurrency here would buy nothing but interleaved
-    /// error output.
-    async fn handle(&self, mut stream: Stream) -> Result<()> {
-        let request: Request = read_frame(&mut stream).await?;
-
-        let response = match request {
-            Request::Speak { text, priority } => self.accept(text, priority),
-            Request::Stop => {
-                self.engine.stop();
-                Response::Finished {
-                    status: Status::Cancelled,
+        let ipc = {
+            let shared = Arc::clone(&self.shared);
+            let transport = Arc::clone(&self.transport);
+            async move {
+                loop {
+                    let stream = listener
+                        .accept()
+                        .await
+                        .context("accepting CLI connection")?;
+                    if let Err(e) = handle_cli(&shared, &transport, stream).await {
+                        eprintln!("cli: {e:#}");
+                    }
                 }
             }
-            Request::Status => Response::Status {
-                device_id: self.identity.id().to_string(),
-                key_store: self.identity.location().to_string(),
-                engine: self
-                    .engine
-                    .voices()
-                    .first()
-                    .map_or("unknown", |v| &v.name)
-                    .to_string(),
-                fallback: self.engine.tier() == voicecast_engine::Tier::Fallback,
-                queued: self.queued.load(std::sync::atomic::Ordering::SeqCst),
-            },
         };
 
-        write_frame(&mut stream, &response).await
+        let peers = {
+            let shared = Arc::clone(&self.shared);
+            let transport = Arc::clone(&self.transport);
+            async move {
+                while let Some(conn) = transport.accept().await {
+                    let shared = Arc::clone(&shared);
+                    match conn {
+                        Ok(conn) => {
+                            tokio::spawn(async move {
+                                if let Err(e) = handle_peer(&shared, conn).await {
+                                    eprintln!("peer: {e:#}");
+                                }
+                            });
+                        }
+                        Err(e) => eprintln!("peer handshake: {e:#}"),
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+        };
+
+        tokio::select! {
+            r = ipc => r,
+            r = peers => r,
+        }
+    }
+}
+
+/// Serve one CLI connection.
+async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Stream) -> Result<()> {
+    let request: Request = read_frame(&mut s).await?;
+    let response = match request {
+        Request::Speak { text, priority, to } => speak(shared, transport, text, priority, to).await,
+        Request::Stop => {
+            shared.engine.stop();
+            Response::Finished {
+                status: Status::Cancelled,
+            }
+        }
+        Request::Invite => invite(shared).await,
+        Request::Join { ticket } => join(shared, transport, &ticket).await,
+        Request::Devices => devices(shared).await,
+        Request::Status => Response::Status {
+            device_id: shared.identity.id().to_string(),
+            key_store: shared.identity.location().to_string(),
+            engine: shared
+                .engine
+                .voices()
+                .first()
+                .map_or("unknown", |v| &v.name)
+                .to_string(),
+            fallback: shared.engine.tier() == voicecast_engine::Tier::Fallback,
+            queued: shared.queued.load(Ordering::SeqCst),
+        },
+    };
+    write_frame(&mut s, &response).await
+}
+
+/// Speak locally, or relay to a named peer.
+async fn speak(
+    shared: &Arc<Shared>,
+    transport: &Arc<Transport>,
+    text: String,
+    priority: Priority,
+    to: Option<String>,
+) -> Response {
+    let chunks = chunk(&text);
+    if chunks.is_empty() {
+        return Response::Error {
+            message: "nothing to say".into(),
+        };
+    }
+    let msg_id = new_msg_id();
+
+    let Some(target) = to else {
+        return enqueue(shared, msg_id, chunks, priority);
+    };
+
+    if target == shared.name || target == "here" {
+        return enqueue(shared, msg_id, chunks, priority);
     }
 
-    /// Queue text for speaking and acknowledge immediately.
-    fn accept(&self, text: String, priority: Priority) -> Response {
-        let chunks = chunk(&text);
-        if chunks.is_empty() {
+    let peer = {
+        let roster = shared.roster.lock().await;
+        match roster.by_name(&target) {
+            Some(m) => m.endpoint_id.clone(),
+            None => {
+                return Response::Error {
+                    message: format!("no device named '{target}' in this space"),
+                };
+            }
+        }
+    };
+
+    match send_to_peer(transport, &peer, &msg_id, &chunks, priority).await {
+        Ok(status) => Response::Finished { status },
+        Err(e) => Response::Error {
+            message: format!("could not reach '{target}': {e:#}"),
+        },
+    }
+}
+
+/// Queue chunks for the local engine.
+fn enqueue(shared: &Arc<Shared>, msg_id: String, chunks: Vec<String>, p: Priority) -> Response {
+    // High priority interrupts. Resuming the interrupted message at its chunk
+    // boundary is M8; for now it is dropped, which is honest but not yet what
+    // docs/cli.md promises.
+    if p == Priority::High {
+        shared.engine.stop();
+    }
+    shared.queued.fetch_add(1, Ordering::SeqCst);
+    match shared.tx.send(Job {
+        msg_id: msg_id.clone(),
+        chunks,
+    }) {
+        Ok(()) => Response::Accepted { msg_id },
+        Err(_) => Response::Error {
+            message: "speech worker has stopped".into(),
+        },
+    }
+}
+
+/// Open a stream to a peer and stream the message down it.
+async fn send_to_peer(
+    transport: &Arc<Transport>,
+    peer_id: &str,
+    msg_id: &str,
+    chunks: &[String],
+    priority: Priority,
+) -> Result<Status> {
+    let peer = peer_id.parse().context("bad endpoint id in roster")?;
+    let conn = transport.connect(peer).await?;
+    let (mut send, mut recv) = conn.open_bi().await.context("opening message stream")?;
+
+    write_msg(
+        &mut send,
+        &PeerMessage::SpeakBegin {
+            msg_id: msg_id.into(),
+            priority,
+        },
+    )
+    .await?;
+    for (seq, text) in chunks.iter().enumerate() {
+        write_msg(
+            &mut send,
+            &PeerMessage::Chunk {
+                seq: seq as u32,
+                text: text.clone(),
+            },
+        )
+        .await?;
+    }
+    write_msg(&mut send, &PeerMessage::SpeakEnd).await?;
+
+    match read_msg(&mut recv).await? {
+        PeerMessage::Report { status } => Ok(status),
+        other => anyhow::bail!("unexpected reply: {other:?}"),
+    }
+}
+
+/// Mint an invite.
+async fn invite(shared: &Arc<Shared>) -> Response {
+    let ticket = Ticket::mint(shared.identity.id().to_string());
+    let url = match ticket.to_url() {
+        Ok(u) => u,
+        Err(e) => {
             return Response::Error {
-                message: "nothing to say".into(),
+                message: e.to_string(),
             };
         }
+    };
+    let expires_in = ticket.remaining();
+    *shared.pending.lock().await = Some(ticket);
+    Response::Invite { url, expires_in }
+}
 
-        let msg_id = new_msg_id();
-
-        // High priority interrupts. Resume-after-interrupt is M8; for now the
-        // interrupted message is simply dropped, which is honest but not yet
-        // what `docs/cli.md` promises.
-        if priority == Priority::High {
-            self.engine.stop();
+/// Join a space using someone else's ticket.
+async fn join(shared: &Arc<Shared>, transport: &Arc<Transport>, raw: &str) -> Response {
+    let ticket = match Ticket::parse(raw) {
+        Ok(t) => t,
+        Err(e) => {
+            return Response::Error {
+                message: format!("{e:#}"),
+            };
         }
+    };
+    match do_join(shared, transport, &ticket).await {
+        Ok(count) => Response::Joined { members: count },
+        Err(e) => Response::Error {
+            message: format!("{e:#}"),
+        },
+    }
+}
 
-        self.queued
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        match self.tx.send(Job {
-            msg_id: msg_id.clone(),
-            chunks,
-        }) {
-            Ok(()) => Response::Accepted { msg_id },
-            Err(_) => Response::Error {
-                message: "speech worker has stopped".into(),
-            },
+async fn do_join(shared: &Arc<Shared>, transport: &Arc<Transport>, t: &Ticket) -> Result<usize> {
+    let peer = t.endpoint_id.parse().context("bad endpoint id in ticket")?;
+    let conn = transport
+        .connect(peer)
+        .await
+        .context("reaching the inviting device")?;
+    let (mut send, mut recv) = conn.open_bi().await?;
+
+    write_msg(
+        &mut send,
+        &PeerMessage::JoinRequest {
+            endpoint_id: shared.identity.id().to_string(),
+            display_name: shared.name.clone(),
+            token: t.token.clone(),
+        },
+    )
+    .await?;
+
+    match read_msg(&mut recv).await? {
+        PeerMessage::JoinAccepted { member, members } => {
+            let mut roster = shared.roster.lock().await;
+            // Replace rather than merge: joining a space means adopting its
+            // membership, not blending it with whatever we had before.
+            let all = members.into_iter().chain(std::iter::once(member));
+            *roster = Roster::adopt(all);
+            roster.save(&shared.roster_path)?;
+            Ok(roster.members().count())
+        }
+        PeerMessage::JoinRefused { reason } => anyhow::bail!("{reason}"),
+        other => anyhow::bail!("unexpected reply: {other:?}"),
+    }
+}
+
+/// List the space's devices.
+async fn devices(shared: &Arc<Shared>) -> Response {
+    let me = shared.identity.id().to_string();
+    let roster = shared.roster.lock().await;
+    Response::Devices {
+        devices: roster
+            .members()
+            .map(|m| DeviceInfo {
+                name: m.name.clone(),
+                endpoint_id: m.endpoint_id.clone(),
+                is_self: m.endpoint_id == me,
+            })
+            .collect(),
+    }
+}
+
+/// Serve one peer connection.
+async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> Result<()> {
+    let remote = conn.remote_id();
+    while let Ok((mut send, mut recv)) = conn.accept_bi().await {
+        match read_msg(&mut recv).await? {
+            PeerMessage::JoinRequest {
+                endpoint_id,
+                display_name,
+                token,
+            } => {
+                let reply = accept_join(shared, &endpoint_id, &display_name, &token).await;
+                write_msg(&mut send, &reply).await?;
+            }
+            PeerMessage::SpeakBegin { msg_id, priority } => {
+                // Authorisation is the roster, and nothing else: an unpaired
+                // device cannot make this one speak.
+                let allowed = shared.roster.lock().await.allows(&remote);
+                if !allowed {
+                    write_msg(
+                        &mut send,
+                        &PeerMessage::Report {
+                            status: Status::Rejected,
+                        },
+                    )
+                    .await?;
+                    continue;
+                }
+                let mut chunks = Vec::new();
+                loop {
+                    match read_msg(&mut recv).await? {
+                        PeerMessage::Chunk { text, .. } => chunks.push(text),
+                        PeerMessage::SpeakEnd => break,
+                        other => anyhow::bail!("unexpected in message stream: {other:?}"),
+                    }
+                }
+                let status = match enqueue(shared, msg_id, chunks, priority) {
+                    Response::Accepted { .. } => Status::Queued,
+                    _ => Status::Dropped,
+                };
+                write_msg(&mut send, &PeerMessage::Report { status }).await?;
+            }
+            PeerMessage::Hello { .. } => {}
+            other => anyhow::bail!("unexpected message: {other:?}"),
         }
     }
+    Ok(())
+}
+
+/// Decide whether to admit a joiner, and sign its record if so.
+async fn accept_join(
+    shared: &Arc<Shared>,
+    endpoint_id: &str,
+    name: &str,
+    token: &str,
+) -> PeerMessage {
+    let mut pending = shared.pending.lock().await;
+    let Some(ticket) = pending.as_ref() else {
+        return PeerMessage::JoinRefused {
+            reason: "no invite is open on this device; run `voicecast invite` first".into(),
+        };
+    };
+    if !ticket.is_valid() {
+        *pending = None;
+        return PeerMessage::JoinRefused {
+            reason: "that invite has expired".into(),
+        };
+    }
+    if ticket.token != token {
+        return PeerMessage::JoinRefused {
+            reason: "that invite is not valid".into(),
+        };
+    }
+    // Single use: consumed here so a ticket seen over a shoulder, or left in
+    // scrollback, cannot be replayed.
+    *pending = None;
+    drop(pending);
+
+    let mut r = shared.roster.lock().await;
+    let member = r.invite(shared.identity.secret(), endpoint_id, name);
+    if let Err(e) = r.save(&shared.roster_path) {
+        return PeerMessage::JoinRefused {
+            reason: format!("could not record membership: {e}"),
+        };
+    }
+    let members: Vec<Member> = r.members().cloned().collect();
+    PeerMessage::JoinAccepted { member, members }
 }
 
 /// A short, unique-enough message id.

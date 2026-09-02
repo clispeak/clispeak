@@ -23,7 +23,15 @@ sudo pacman -S espeak-ng     # Arch;  apt install espeak-ng  on Debian
 ```bash
 voicecastd &                 # the node
 voicecast "hello world"
+
+voicecast invite             # on one device
+voicecast join <ticket>      # on the other
+voicecast devices
+voicecast --to laptop "build finished"
 ```
+
+Two nodes can be run on one machine for testing by overriding
+`VOICECAST_SOCKET` and `VOICECAST_CONFIG_DIR`.
 
 ## Status
 

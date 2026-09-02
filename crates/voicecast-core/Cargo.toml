@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-voicecast-proto.workspace = true
+voicecast-proto = { version = "0.1.0", path = "../voicecast-proto" }
 voicecast-engine.workspace = true
 voicecast-text.workspace = true
 anyhow.workspace = true
@@ -19,6 +19,8 @@ iroh-base = { version = "1.1", features = ["key"] }
 directories = "6.0.0"
 rand = "0.10.2"
 thiserror.workspace = true
+iroh = "1.1"
+data-encoding = "2.11.1"
 
 [lints]
 workspace = true

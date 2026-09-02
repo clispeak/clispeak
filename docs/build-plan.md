@@ -177,7 +177,7 @@ Keypair generation, keyring storage, `voicecast init`, `voicecast status`.
 
 *Exit:* identity survives a restart; the keyring is used, not a bare file.
 
-### M5 — Two Linux machines
+### M5 — Two Linux machines  ✅ DONE
 
 iroh transport, control stream, `Hello`, roster, `SpeakBegin`/`Chunk`/
 `SpeakEnd`, `Status` back. Join by pasted ticket — QR can wait.

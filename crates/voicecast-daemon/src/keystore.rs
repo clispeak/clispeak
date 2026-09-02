@@ -36,11 +36,9 @@ pub struct DesktopKeyStore {
 impl DesktopKeyStore {
     /// Build a store using the platform keyring where possible.
     pub fn new() -> Result<Self, IdentityError> {
-        let dirs = directories::ProjectDirs::from("", "", "voicecast")
-            .ok_or_else(|| IdentityError::Store("no config directory".into()))?;
         Ok(Self {
             fallback: FileKeyStore::default_location()?,
-            marker: dirs.config_dir().join("identity.in-keyring"),
+            marker: voicecast_core::config_dir()?.join("identity.in-keyring"),
         })
     }
 
@@ -64,7 +62,14 @@ impl DesktopKeyStore {
     }
 
     /// An entry handle, or `None` if the keyring is unusable here.
+    ///
+    /// Skipped entirely when `VOICECAST_CONFIG_DIR` is set: a second node on
+    /// the same machine must not share the first one's keyring entry, or both
+    /// would end up with the same identity.
     fn entry() -> Option<Entry> {
+        if std::env::var_os("VOICECAST_CONFIG_DIR").is_some() {
+            return None;
+        }
         Entry::new(SERVICE, ACCOUNT).ok()
     }
 }

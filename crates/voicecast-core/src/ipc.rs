@@ -19,8 +19,11 @@ const MAX_FRAME: u32 = 8 * 1024 * 1024;
 ///
 /// Namespaced rather than a filesystem path, so the OS decides where it
 /// lives and cleanup is not our problem.
+///
+/// `VOICECAST_SOCKET` overrides it, which is how a second node runs
+/// alongside the first — needed to exercise the join flow on one machine.
 pub fn socket_name() -> String {
-    "voicecast.sock".to_string()
+    std::env::var("VOICECAST_SOCKET").unwrap_or_else(|_| "voicecast.sock".to_string())
 }
 
 /// Write one length-prefixed CBOR frame.

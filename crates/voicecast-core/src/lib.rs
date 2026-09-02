@@ -9,9 +9,16 @@
 pub mod identity;
 pub mod ipc;
 mod node;
+pub mod roster;
+pub mod ticket;
+pub mod transport;
 
-pub use identity::{FileKeyStore, Identity, IdentityError, KeyStore};
+pub use identity::{FileKeyStore, Identity, IdentityError, KeyStore, config_dir};
 pub use node::Node;
+pub use roster::{Roster, RosterError, verify};
+pub use ticket::Ticket;
+pub use transport::Transport;
+pub use voicecast_proto::Member;
 
 /// This crate's version, reported by `voicecast status`.
 pub fn version() -> &'static str {
