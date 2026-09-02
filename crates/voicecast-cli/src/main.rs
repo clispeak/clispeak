@@ -188,7 +188,13 @@ enum Command {
         text: Vec<String>,
     },
     /// Stop speaking and clear the queue.
-    Stop,
+    ///
+    /// Acts on this machine unless `--to` names others.
+    Stop {
+        /// Stop one message rather than everything.
+        #[arg(long)]
+        id: Option<String>,
+    },
     /// Show node health.
     Status,
     /// Print an invite for another device to join this space.
@@ -356,7 +362,10 @@ async fn run() -> anyhow::Result<u8> {
     }
 
     let request = match &cli.command {
-        Some(Command::Stop) => Request::Stop,
+        Some(Command::Stop { id }) => Request::Stop {
+            to: target(&cli, &config),
+            msg_id: id.clone(),
+        },
         Some(Command::Status) => Request::Status,
         Some(Command::Invite) => Request::Invite,
         Some(Command::Devices) => Request::Devices,
@@ -383,9 +392,15 @@ async fn run() -> anyhow::Result<u8> {
         },
         Some(Command::Quit) => Request::Quit,
         Some(Command::Rename { name }) => Request::Rename { name: name.clone() },
-        Some(Command::Skip) => Request::Skip,
-        Some(Command::Pause) => Request::Pause,
-        Some(Command::Resume) => Request::Resume,
+        Some(Command::Skip) => Request::Skip {
+            to: target(&cli, &config),
+        },
+        Some(Command::Pause) => Request::Pause {
+            to: target(&cli, &config),
+        },
+        Some(Command::Resume) => Request::Resume {
+            to: target(&cli, &config),
+        },
         Some(Command::Queue) => Request::Queue,
         Some(Command::Mute) => Request::SetMute { muted: true },
         Some(Command::Unmute) => Request::SetMute { muted: false },
@@ -783,6 +798,29 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
                 err("Run `voicecast invite` once per device.");
             }
             exit::OK
+        }
+        Response::Controlled { targets } => {
+            for t in &targets {
+                out(&format!(
+                    "  {:<16} {}{}",
+                    t.device,
+                    label(&t.status),
+                    t.detail
+                        .as_deref()
+                        .map(|d| format!("  ({d})"))
+                        .unwrap_or_default(),
+                ));
+            }
+            // Only a device we could not reach is a failure here.
+            let missed = targets
+                .iter()
+                .filter(|t| matches!(t.status, Status::Unreachable | Status::Rejected))
+                .count();
+            match (missed, targets.len()) {
+                (0, _) => exit::OK,
+                (m, n) if m < n => exit::PARTIAL,
+                _ => exit::ALL_FAILED,
+            }
         }
         Response::Targets { devices } => {
             if json {

@@ -14,7 +14,7 @@ use interprocess::local_socket::{
 use tokio::sync::Mutex;
 use voicecast_engine::SpeechEngine;
 use voicecast_proto::{
-    DeviceInfo, Member, PeerMessage, Priority, Request, Response, Status, TargetResult,
+    Control, DeviceInfo, Member, PeerMessage, Priority, Request, Response, Status, TargetResult,
 };
 use voicecast_text::chunk;
 
@@ -265,7 +265,7 @@ impl Node {
         set_quiet(&self.shared, from, to, high_breaks_through)
     }
 
-    /// Stop whatever is being spoken, and drop the queue behind it.
+    /// Stop whatever is being spoken here, and drop the queue behind it.
     pub fn stop(&self) {
         self.shared.speaker.clear();
     }
@@ -439,26 +439,12 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
             },
             Err(message) => Response::Error { message },
         },
-        Request::Stop => {
-            shared.speaker.clear();
-            Response::Finished {
-                status: Status::Cancelled,
-            }
+        Request::Stop { to, msg_id } => {
+            control(shared, transport, to, Control::Stop { msg_id }).await
         }
-        Request::Skip => {
-            shared.speaker.skip();
-            Response::Finished {
-                status: Status::Cancelled,
-            }
-        }
-        Request::Pause => {
-            shared.speaker.pause();
-            Response::Done
-        }
-        Request::Resume => {
-            shared.speaker.unpause();
-            Response::Done
-        }
+        Request::Skip { to } => control(shared, transport, to, Control::Skip).await,
+        Request::Pause { to } => control(shared, transport, to, Control::Pause).await,
+        Request::Resume { to } => control(shared, transport, to, Control::Resume).await,
         Request::Queue => {
             let snap = shared.speaker.snapshot();
             Response::Queue {
@@ -1027,6 +1013,124 @@ async fn speak_here(
         // The worker went away, or we gave up first. Either way it was
         // accepted, so say that rather than claim a failure.
         _ => (Status::Queued, None, Some("still speaking".into())),
+    }
+}
+
+/// Carry out a control command here, on named devices, or on both.
+///
+/// Resolved through the same selector machinery as speech, so `stop --to all`
+/// means what `--to all` means everywhere else, and reaches every device
+/// concurrently rather than one after another.
+async fn control(
+    shared: &Arc<Shared>,
+    transport: &Arc<Transport>,
+    to: Option<String>,
+    control: Control,
+) -> Response {
+    let targets = match resolve(shared, to.as_deref().unwrap_or("here")).await {
+        Ok(targets) => targets,
+        Err(message) => return Response::Error { message },
+    };
+
+    let mut set = tokio::task::JoinSet::new();
+    for (index, target) in targets.into_iter().enumerate() {
+        let shared = Arc::clone(shared);
+        let transport = Arc::clone(transport);
+        let control = control.clone();
+        set.spawn(async move {
+            let result = match target {
+                Target::Here => TargetResult {
+                    device: shared.name.clone(),
+                    status: apply_control(&shared, &control),
+                    took_ms: None,
+                    detail: None,
+                },
+                Target::Peer { name, id, space } => {
+                    match send_control(&transport, &id, &space, &control).await {
+                        Ok(status) => TargetResult {
+                            device: name,
+                            status,
+                            took_ms: None,
+                            detail: None,
+                        },
+                        Err(e) => TargetResult {
+                            device: name,
+                            status: Status::Unreachable,
+                            took_ms: None,
+                            detail: Some(format!("{e:#}")),
+                        },
+                    }
+                }
+            };
+            (index, result)
+        });
+    }
+
+    let mut done: Vec<(usize, TargetResult)> = Vec::new();
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(pair) => done.push(pair),
+            Err(e) => eprintln!("control task failed: {e}"),
+        }
+    }
+    done.sort_by_key(|(i, _)| *i);
+    Response::Controlled {
+        targets: done.into_iter().map(|(_, r)| r).collect(),
+    }
+}
+
+/// Do it here.
+fn apply_control(shared: &Arc<Shared>, control: &Control) -> Status {
+    match control {
+        Control::Stop { msg_id: Some(id) } => {
+            // Distinguished so `stop --id` on a message that already finished
+            // says so, rather than reporting a cancellation that never was.
+            if shared.speaker.stop_message(id) {
+                Status::Cancelled
+            } else {
+                Status::Dropped
+            }
+        }
+        Control::Stop { msg_id: None } => {
+            shared.speaker.clear();
+            Status::Cancelled
+        }
+        Control::Skip => {
+            shared.speaker.skip();
+            Status::Cancelled
+        }
+        Control::Pause => {
+            shared.speaker.pause();
+            Status::Queued
+        }
+        Control::Resume => {
+            shared.speaker.unpause();
+            Status::Speaking
+        }
+    }
+}
+
+/// Ask a peer to do it.
+async fn send_control(
+    transport: &Arc<Transport>,
+    peer_id: &str,
+    _space: &str,
+    control: &Control,
+) -> Result<Status> {
+    let peer = peer_id.parse().context("bad endpoint id in roster")?;
+    let conn = transport.connect(peer).await?;
+    let (mut send, mut recv) = conn.open_bi().await.context("opening control stream")?;
+    write_msg(
+        &mut send,
+        &PeerMessage::Control {
+            control: control.clone(),
+        },
+    )
+    .await?;
+    send.finish().ok();
+    match read_msg(&mut recv).await? {
+        PeerMessage::Report { status } => Ok(status),
+        other => anyhow::bail!("unexpected reply: {other:?}"),
     }
 }
 
@@ -1758,6 +1862,25 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 };
                 // Best-effort: the peer may already be gone, and that is fine.
                 let _ = write_msg(&mut send, &mine).await;
+            }
+            PeerMessage::Control { control } => {
+                // Same rule as speech: only a device in a space with us may
+                // silence us. Without this anyone reachable could.
+                let allowed = match space_for(shared, None, &remote).await {
+                    Some(id) => shared
+                        .spaces
+                        .lock()
+                        .await
+                        .get(&id)
+                        .is_some_and(|r| r.allows(&remote)),
+                    None => false,
+                };
+                let status = if allowed {
+                    apply_control(shared, &control)
+                } else {
+                    Status::Rejected
+                };
+                write_msg(&mut send, &PeerMessage::Report { status }).await?;
             }
             PeerMessage::Hello { .. } => {}
             other => anyhow::bail!("unexpected message: {other:?}"),

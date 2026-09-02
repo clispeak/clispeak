@@ -175,16 +175,35 @@ pub enum Request {
         /// The new label.
         name: String,
     },
-    /// Stop playback and clear the queue.
-    Stop,
+    /// Stop playback, on this device or on named ones.
+    Stop {
+        /// Which devices. `None` means this machine.
+        #[serde(default)]
+        to: Option<String>,
+        /// One message by id, rather than everything.
+        #[serde(default)]
+        msg_id: Option<String>,
+    },
     /// Report node health.
     Status,
     /// Abandon the current message and carry on with the queue.
-    Skip,
+    Skip {
+        /// Which devices. `None` means this machine.
+        #[serde(default)]
+        to: Option<String>,
+    },
     /// Hold speech without discarding it.
-    Pause,
+    Pause {
+        /// Which devices. `None` means this machine.
+        #[serde(default)]
+        to: Option<String>,
+    },
     /// Start speaking again after a pause.
-    Resume,
+    Resume {
+        /// Which devices. `None` means this machine.
+        #[serde(default)]
+        to: Option<String>,
+    },
     /// Report what is playing and what is waiting.
     Queue,
     /// Report this device's speaking policy.
@@ -281,6 +300,11 @@ pub enum Response {
         #[serde(default)]
         quiet: Option<String>,
     },
+    /// What a control command did on each device.
+    Controlled {
+        /// One entry per target.
+        targets: Vec<TargetResult>,
+    },
     /// The spaces this device belongs to.
     Spaces {
         /// One row per space.
@@ -360,6 +384,28 @@ impl Member {
     pub fn signed_payload(endpoint_id: &str, invited_by: &str, joined_at: u64) -> Vec<u8> {
         format!("voicecast-join-v1:{endpoint_id}:{invited_by}:{joined_at}").into_bytes()
     }
+}
+
+/// A control command, aimed at whichever device is speaking.
+///
+/// Separate from [`Request`] because these travel between devices: stopping a
+/// phone from a laptop is the whole point, and a "stop" that only ever meant
+/// "stop here" would leave a device talking with no way to quiet it but
+/// walking over to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Control {
+    /// Stop speaking and clear the queue, or drop one message by id.
+    Stop {
+        /// One message, rather than everything.
+        #[serde(default)]
+        msg_id: Option<String>,
+    },
+    /// Abandon the current message and carry on with the queue.
+    Skip,
+    /// Hold speech without discarding it.
+    Pause,
+    /// Start speaking again after a pause.
+    Resume,
 }
 
 /// Messages exchanged between peer devices.
@@ -443,6 +489,11 @@ pub enum PeerMessage {
     },
     /// Closes a message stream.
     SpeakEnd,
+    /// Do something to what this device is saying.
+    Control {
+        /// What to do.
+        control: Control,
+    },
     /// Terminal or in-progress state, sent back on the same stream.
     Report {
         /// How it went.

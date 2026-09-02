@@ -171,6 +171,43 @@ impl Speaker {
         self.cut(Cut::Skip);
     }
 
+    /// Drop one message, wherever it is.
+    ///
+    /// Returns whether it was found. A message already spoken is not an
+    /// error, but the caller deserves to know nothing happened rather than
+    /// be told a stale id was acted on.
+    pub fn stop_message(&self, msg_id: &str) -> bool {
+        let (lock, cond) = &*self.inner;
+        let waiting = {
+            let mut inner = lock.lock().expect("queue lock");
+            if inner.speaking.as_deref() == Some(msg_id) {
+                // Skip rather than clear: this asks for one message to stop,
+                // not for the queue behind it to be thrown away.
+                inner.cut = Some(Cut::Skip);
+                cond.notify_all();
+                drop(inner);
+                self.engine.stop();
+                return true;
+            }
+            if let Some(at) = inner.urgent.iter().position(|j| j.msg_id == msg_id) {
+                inner.urgent.remove(at)
+            } else if inner.resume.as_ref().is_some_and(|j| j.msg_id == msg_id) {
+                inner.resume.take()
+            } else if let Some(at) = inner.normal.iter().position(|j| j.msg_id == msg_id) {
+                inner.normal.remove(at)
+            } else {
+                None
+            }
+        };
+        match waiting {
+            Some(job) => {
+                job.finish(Status::Cancelled);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Abandon everything, queue included.
     pub fn clear(&self) {
         let (lock, cond) = &*self.inner;
