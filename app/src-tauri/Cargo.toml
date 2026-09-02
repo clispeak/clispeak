@@ -24,6 +24,7 @@ anyhow.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 voicecast-text = { version = "0.1.0", path = "../../crates/voicecast-text" }
 iroh = "1.1"
+directories = "6.0.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 voicecast-keystore.workspace = true

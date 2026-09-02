@@ -19,8 +19,18 @@ use crate::{EngineError, SpeechEngine, Tier, Voice};
 ///
 /// Under the user's data directory rather than a system path: this is
 /// per-user state, and needs no privileges to install or replace.
-fn install_root() -> Option<PathBuf> {
-    directories::BaseDirs::new().map(|d| d.data_local_dir().join("voicecast"))
+fn install_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    // A user-installed copy wins, so someone can drop in a better voice
+    // without rebuilding anything.
+    if let Some(dirs) = directories::BaseDirs::new() {
+        roots.push(dirs.data_local_dir().join("voicecast"));
+    }
+    // Shipped with the package. Inside a Flatpak this is the only copy, since
+    // the sandbox has no access to a system-wide install.
+    roots.push(PathBuf::from("/app/share/voicecast"));
+    roots.push(PathBuf::from("/usr/share/voicecast"));
+    roots
 }
 
 /// The processes currently producing sound, so `stop` can end them.
@@ -52,24 +62,32 @@ impl PiperEngine {
     /// Errors are written for someone who could install it, since that is the
     /// only way to act on them.
     pub fn discover() -> Result<Self, EngineError> {
-        let root = install_root()
-            .ok_or_else(|| EngineError::Unavailable("no data directory on this system".into()))?;
+        // The binary and the voices may live in different places: a bundled
+        // Piper with a voice the user added themselves is a normal setup.
+        let roots = install_roots();
+        let binary = roots
+            .iter()
+            .map(|r| r.join("piper/piper"))
+            .find(|p| p.exists())
+            .ok_or_else(|| {
+                EngineError::Unavailable(format!(
+                    "Piper is not installed in any of: {}",
+                    roots
+                        .iter()
+                        .map(|r| r.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
 
-        let binary = root.join("piper/piper");
-        if !binary.exists() {
-            return Err(EngineError::Unavailable(format!(
-                "Piper is not installed at {}",
-                binary.display()
-            )));
-        }
-
-        let available = voices_in(&root.join("voices"));
-        let voice = available.first().cloned().ok_or_else(|| {
-            EngineError::Unavailable(format!(
-                "Piper has no voice model in {}",
-                root.join("voices").display()
-            ))
-        })?;
+        let available: Vec<PathBuf> = roots
+            .iter()
+            .flat_map(|r| voices_in(&r.join("voices")))
+            .collect();
+        let voice = available
+            .first()
+            .cloned()
+            .ok_or_else(|| EngineError::Unavailable("Piper has no voice model installed".into()))?;
         let sample_rate = sample_rate_of(&voice).unwrap_or(22_050);
 
         let player = ["paplay", "pw-play", "aplay"]

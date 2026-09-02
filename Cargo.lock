@@ -6402,6 +6402,7 @@ name = "voicecast-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "directories",
  "iroh",
  "serde",
  "tauri",

@@ -1,0 +1,100 @@
+# Flatpak manifest for the voicecast desktop app.
+#
+# The app is packaged; the command-line tool deliberately is not. Entering a
+# Flatpak sandbox costs ~86ms per invocation against the CLI's own 3ms, and
+# that tool exists to be called repeatedly by an agent — exporting it would
+# make it 30x slower and throw away the reason it is a thin client at all.
+# Instead the app offers to install the CLI to ~/.local/bin, where it stays a
+# plain fast binary. The two still find each other: their socket is abstract,
+# so it lives in the network namespace, which is shared with the host.
+#
+# Binaries are taken prebuilt rather than compiled here. flatpak-builder runs
+# offline, so a source build needs vendored crates; that is worth doing before
+# publishing, and is unnecessary noise for installing locally.
+app-id: org.voicecast.App
+# The GNOME runtime, not Freedesktop: Tauri renders in WebKitGTK, which
+# Freedesktop does not ship. Without it the app dies at startup with a missing
+# libwebkit2gtk.
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+command: voicecast-app
+
+finish-args:
+  # iroh needs to reach peers and the relay.
+  - --share=network
+  # Speech has to come out of the speakers.
+  - --socket=pulseaudio
+  # The window itself.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # The device identity, kept in the system keyring like it is off-Flatpak.
+  - --talk-name=org.freedesktop.secrets
+  # The tray icon. An indicator publishes itself as its own bus name and then
+  # tells the watcher about it, and the sandbox permits neither by default —
+  # shipping the library is not enough on its own. The item name carries the
+  # process id, which inside the sandbox is always 2.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.kde.StatusNotifierItem-2-1
+  # Where the app offers to put the command-line tool, so an agent can call it
+  # without paying sandbox startup on every message.
+  - --filesystem=~/.local/bin:create
+  # Somewhere for a user-added voice to live. Piper and one voice are bundled
+  # below, so this is only needed for voices added after install.
+  - --persist=.local/share/voicecast
+
+modules:
+  # The tray icon. The GNOME runtime ships no appindicator library, and
+  # without one the window has no way back once it is closed — closing hides
+  # the window on purpose, because the node has to keep running for peers and
+  # for the CLI. The app survives without this (the tray failure is caught),
+  # but the only way to reopen it would be `voicecast show`.
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+
+  # Piper and one voice, bundled rather than downloaded on first run. The
+  # sandbox has no system speech at all — the GNOME runtime ships no espeak —
+  # so without this the app installs and then cannot say anything, and the
+  # fallback it would report has nothing to fall back to.
+  - name: piper
+    buildsystem: simple
+    build-commands:
+      # The whole directory: the binary loads its ONNX runtime, phonemiser and
+      # espeak-ng data from alongside itself.
+      - mkdir -p /app/share/voicecast
+      - cp -r piper /app/share/voicecast/piper
+      - install -Dm644 en_US-lessac-medium.onnx /app/share/voicecast/voices/en_US-lessac-medium.onnx
+      - install -Dm644 en_US-lessac-medium.onnx.json /app/share/voicecast/voices/en_US-lessac-medium.onnx.json
+    sources:
+      - type: archive
+        url: https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz
+        sha256: a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992
+        strip-components: 0
+      - type: file
+        url: https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+        sha256: 5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f
+      - type: file
+        url: https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+        sha256: efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0
+
+  - name: voicecast
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 voicecast-app /app/bin/voicecast-app
+      # Carried inside the sandbox so the app can copy it to the host path.
+      - install -Dm755 voicecast /app/libexec/voicecast
+      - install -Dm644 icon.png /app/share/icons/hicolor/512x512/apps/org.voicecast.App.png
+      - install -Dm644 org.voicecast.App.desktop /app/share/applications/org.voicecast.App.desktop
+      - install -Dm644 org.voicecast.App.metainfo.xml /app/share/metainfo/org.voicecast.App.metainfo.xml
+    sources:
+      - type: file
+        path: ../../target/release/voicecast-app
+      - type: file
+        path: ../../target/release/voicecast
+      - type: file
+        path: ../../app/src-tauri/icons/icon.png
+      - type: file
+        path: org.voicecast.App.desktop
+      - type: file
+        path: org.voicecast.App.metainfo.xml

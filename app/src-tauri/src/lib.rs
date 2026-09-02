@@ -35,6 +35,108 @@ pub struct NodeStatus {
     pub fallback: bool,
 }
 
+/// Where the command-line tool should live on the host.
+///
+/// `~/.local/bin` because it is on the default PATH and needs no privileges.
+fn cli_destination() -> Option<std::path::PathBuf> {
+    Some(
+        directories::BaseDirs::new()?
+            .home_dir()
+            .join(".local/bin/voicecast"),
+    )
+}
+
+/// Whether the app is running inside a Flatpak sandbox.
+///
+/// Only then is installing a copy of the CLI meaningful: outside one it is
+/// already alongside the app, wherever the package put it.
+fn in_flatpak() -> bool {
+    std::path::Path::new("/.flatpak-info").exists()
+}
+
+/// The copy of the CLI carried inside the sandbox.
+fn bundled_cli() -> &'static std::path::Path {
+    std::path::Path::new("/app/libexec/voicecast")
+}
+
+/// Whether the command-line tool is available to agents on this machine.
+#[tauri::command]
+fn cli_status() -> Option<String> {
+    if !in_flatpak() {
+        return None;
+    }
+    let dest = cli_destination()?;
+    dest.exists().then(|| dest.display().to_string())
+}
+
+/// Whether offering to install the CLI makes sense here.
+#[tauri::command]
+fn cli_installable() -> bool {
+    in_flatpak() && cli_status().is_none()
+}
+
+/// Whether the installed copy still matches the one this app ships.
+///
+/// Compared by content rather than a version string: the two must speak the
+/// same protocol, and "different bytes" is exactly the question. Reading a
+/// few megabytes once at startup is cheaper than diagnosing a mismatch.
+fn cli_is_stale() -> bool {
+    let Some(dest) = cli_destination() else {
+        return false;
+    };
+    if !dest.exists() {
+        return false;
+    }
+    match (std::fs::read(bundled_cli()), std::fs::read(&dest)) {
+        (Ok(bundled), Ok(installed)) => bundled != installed,
+        // If the bundled copy is unreadable there is nothing to update to.
+        _ => false,
+    }
+}
+
+/// Keep the installed CLI in step with the app.
+///
+/// Runs on every launch. A Flatpak update replaces the app but cannot touch a
+/// file already copied to the host, so without this the two drift apart and
+/// the CLI ends up talking a protocol the node no longer speaks — a failure
+/// that looks like a bug rather than a stale install.
+fn refresh_installed_cli() {
+    if !in_flatpak() || !cli_is_stale() {
+        return;
+    }
+    match install_cli() {
+        Ok(path) => eprintln!("updated the command-line tool at {path}"),
+        Err(e) => eprintln!("could not update the command-line tool: {e}"),
+    }
+}
+
+/// Copy the bundled CLI onto the host PATH.
+///
+/// Deliberately *not* exported as a Flatpak command: entering the sandbox
+/// costs around 86ms per invocation against the tool's own 3ms, and it is
+/// called repeatedly by an agent. A plain binary on the host keeps that fast,
+/// and the two still reach each other over an abstract socket.
+#[tauri::command]
+fn install_cli() -> Result<String, String> {
+    let source = bundled_cli();
+    if !source.exists() {
+        return Err("this build does not carry a copy of the command-line tool".into());
+    }
+    let dest = cli_destination().ok_or("no home directory")?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    std::fs::copy(source, &dest).map_err(|e| format!("could not install: {e}"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+    }
+    Ok(dest.display().to_string())
+}
+
 /// How this device's voice is configured.
 #[derive(Serialize)]
 pub struct VoiceConfig {
@@ -356,6 +458,11 @@ async fn start_node() -> anyhow::Result<Node> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // A Flatpak update replaces the app but not a copy already on the
+            // host, so bring it back into step before anything uses it.
+            #[cfg(desktop)]
+            refresh_installed_cli();
+
             // Android has no XDG config directory, so tell the core where its
             // app-private storage is before anything tries to read a key.
             match app.path().app_data_dir() {
@@ -363,8 +470,29 @@ pub fn run() {
                 Err(e) => eprintln!("no app data directory: {e}"),
             }
 
+            // A missing tray must not stop the app. Some environments have no
+            // StatusNotifier host, and the GNOME Flatpak runtime ships no
+            // appindicator library at all — the node is still perfectly
+            // useful without an icon, and `voicecast show` can reach it.
+            // A missing tray must not stop the app. Some environments have no
+            // StatusNotifier host, and the GNOME Flatpak runtime ships no
+            // appindicator library at all — the node is still perfectly
+            // useful without an icon, and `voicecast show` can reach it.
+            //
+            // Wrapped in catch_unwind because the failure is a *panic* inside
+            // the tray crate's dynamic loading, not an error it returns, so
+            // there is nothing to propagate.
             #[cfg(desktop)]
-            build_tray(app.handle())?;
+            {
+                let handle = app.handle().clone();
+                let built =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_tray(&handle)));
+                match built {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => eprintln!("no tray icon: {e}"),
+                    Err(_) => eprintln!("no tray icon: this system has no app indicator library"),
+                }
+            }
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -421,6 +549,9 @@ pub fn run() {
             revoke_device,
             leave_space,
             pending_invite,
+            cli_status,
+            cli_installable,
+            install_cli,
             voice_config,
             set_voice,
             set_rate,
