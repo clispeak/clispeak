@@ -392,7 +392,7 @@ mod tests {
         assert!(spaces.get(&home).is_some(), "the default must be untouched");
         assert_eq!(spaces.default_id(), home, "and must still be the default");
         assert!(spaces.get(&work).is_none(), "the named space is replaced");
-        assert_eq!(spaces.by_label("work").is_some(), true, "keeping its label");
+        assert!(spaces.by_label("work").is_some(), "keeping its label");
         assert_eq!(spaces.by_label("home"), Some(home.clone()));
     }
 
