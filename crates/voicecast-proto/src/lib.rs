@@ -137,6 +137,24 @@ pub enum Request {
     Stop,
     /// Report node health.
     Status,
+    /// Report this device's speaking policy.
+    Policy,
+    /// Silence this device, or let it speak again.
+    SetMute {
+        /// Whether to be silent.
+        muted: bool,
+    },
+    /// Set or clear the daily quiet window.
+    SetQuiet {
+        /// Start as `HH:MM` local time. `None` in either end clears the
+        /// window entirely, which is how quiet hours are turned off.
+        from: Option<String>,
+        /// End as `HH:MM` local time. May be earlier than `from`.
+        to: Option<String>,
+        /// Whether `high` may break through. Off unless asked for.
+        #[serde(default)]
+        high_breaks_through: bool,
+    },
 }
 
 /// What the node tells the CLI.
@@ -203,6 +221,29 @@ pub enum Response {
         fallback: bool,
         /// Messages waiting to be spoken.
         queued: usize,
+        /// Whether this device is silenced.
+        #[serde(default)]
+        muted: bool,
+        /// The quiet window as `HH:MM-HH:MM`, if one is set.
+        ///
+        /// Pre-formatted rather than structured: `status` is read by a
+        /// person, and the machine-readable shape is [`Response::Policy`].
+        #[serde(default)]
+        quiet: Option<String>,
+    },
+    /// This device's speaking policy.
+    Policy {
+        /// Silenced indefinitely.
+        muted: bool,
+        /// Quiet window start, `HH:MM` local, if one is set.
+        #[serde(default)]
+        quiet_from: Option<String>,
+        /// Quiet window end, `HH:MM` local, if one is set.
+        #[serde(default)]
+        quiet_to: Option<String>,
+        /// Whether `high` may break through quiet hours.
+        #[serde(default)]
+        high_breaks_through: bool,
     },
     /// The node could not do it.
     Error {

@@ -17,6 +17,10 @@ ciborium = "0.2.2"
 serde.workspace = true
 iroh-base = { version = "1.1", features = ["key"] }
 directories = "6.0.0"
+serde_json = "1.0.151"
+# Quiet hours are about when someone is asleep, so they need the *local*
+# clock. `clock` pulls the platform's timezone on every target we build for.
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 rand = "0.10.2"
 thiserror.workspace = true
 iroh = "1.1"

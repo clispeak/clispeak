@@ -154,6 +154,72 @@ fn install_cli() -> Result<String, String> {
     Ok(dest.display().to_string())
 }
 
+/// Whether this device will speak, and when.
+#[derive(Serialize)]
+pub struct PolicyView {
+    /// Silenced indefinitely.
+    pub muted: bool,
+    /// Quiet window start as `HH:MM`, if one is set.
+    pub from: Option<String>,
+    /// Quiet window end as `HH:MM`, if one is set.
+    pub to: Option<String>,
+    /// Whether `high` may break through the window.
+    pub high_breaks_through: bool,
+}
+
+impl From<Response> for PolicyView {
+    fn from(r: Response) -> Self {
+        match r {
+            Response::Policy {
+                muted,
+                quiet_from,
+                quiet_to,
+                high_breaks_through,
+            } => Self {
+                muted,
+                from: quiet_from,
+                to: quiet_to,
+                high_breaks_through,
+            },
+            // Any other reply means the write failed. Reporting "not muted"
+            // would be a lie the interface then shows as settled state, so
+            // report the safe reading: nothing configured.
+            _ => Self {
+                muted: false,
+                from: None,
+                to: None,
+                high_breaks_through: false,
+            },
+        }
+    }
+}
+
+/// This device's speaking policy.
+#[tauri::command]
+fn policy(state: State<'_, AppState>) -> PolicyView {
+    state.node.policy().into()
+}
+
+/// Silence this device, or let it speak again.
+#[tauri::command]
+fn set_mute(state: State<'_, AppState>, muted: bool) -> PolicyView {
+    state.node.set_mute(muted).into()
+}
+
+/// Set or clear the daily quiet window.
+#[tauri::command]
+fn set_quiet(
+    state: State<'_, AppState>,
+    from: Option<String>,
+    to: Option<String>,
+    high_breaks_through: bool,
+) -> Result<PolicyView, String> {
+    match state.node.set_quiet(from, to, high_breaks_through) {
+        Response::Error { message } => Err(message),
+        other => Ok(other.into()),
+    }
+}
+
 /// How this device's voice is configured.
 #[derive(Serialize)]
 pub struct VoiceConfig {
@@ -571,6 +637,9 @@ pub fn run() {
             cli_installable,
             cli_expected_path,
             install_cli,
+            policy,
+            set_mute,
+            set_quiet,
             voice_config,
             set_voice,
             set_rate,

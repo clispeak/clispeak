@@ -136,6 +136,25 @@ enum Command {
         /// The new name.
         name: String,
     },
+    /// Silence this device until it is unmuted.
+    ///
+    /// Local to the device it is run on: one device cannot mute another. A
+    /// sender states urgency, the device that makes the noise decides whether
+    /// noise is welcome.
+    Mute,
+    /// Let this device speak again.
+    Unmute,
+    /// Show, set, or clear this device's quiet hours.
+    Quiet {
+        /// `22:00-07:00`, or `off`. Omit to show the current window.
+        window: Option<String>,
+        /// Let `high` messages break through the window.
+        ///
+        /// Off unless asked for: "urgent" stops meaning anything the first
+        /// time an agent marks every message urgent.
+        #[arg(long)]
+        high: bool,
+    },
 }
 
 /// Write a line to stdout, tolerating a closed pipe.
@@ -189,6 +208,12 @@ async fn run() -> anyhow::Result<u8> {
         Some(Command::Leave) => Request::Leave,
         Some(Command::Quit) => Request::Quit,
         Some(Command::Rename { name }) => Request::Rename { name: name.clone() },
+        Some(Command::Mute) => Request::SetMute { muted: true },
+        Some(Command::Unmute) => Request::SetMute { muted: false },
+        Some(Command::Quiet { window, high }) => match quiet_request(window.as_deref(), *high) {
+            Ok(req) => req,
+            Err(code) => return Ok(code),
+        },
         Some(Command::Join { ticket }) => Request::Join {
             ticket: ticket.clone(),
         },
@@ -210,6 +235,36 @@ async fn run() -> anyhow::Result<u8> {
     };
 
     send(request, cli.json).await
+}
+
+/// Turn a `22:00-07:00` argument into a request, or explain what went wrong.
+///
+/// No argument means "show me", which is a plain read rather than a write of
+/// the current value — asking a question should never change the answer.
+fn quiet_request(window: Option<&str>, high: bool) -> Result<Request, u8> {
+    let Some(window) = window else {
+        return Ok(Request::Policy);
+    };
+    if window.eq_ignore_ascii_case("off") || window.eq_ignore_ascii_case("none") {
+        return Ok(Request::SetQuiet {
+            from: None,
+            to: None,
+            high_breaks_through: false,
+        });
+    }
+    let Some((from, to)) = window.split_once('-') else {
+        err(&format!("error: '{window}' is not a time range"));
+        err("");
+        err("Write it as a range, or turn it off:");
+        err("  voicecast quiet 22:00-07:00");
+        err("  voicecast quiet off");
+        return Err(exit::USAGE);
+    };
+    Ok(Request::SetQuiet {
+        from: Some(from.trim().to_string()),
+        to: Some(to.trim().to_string()),
+        high_breaks_through: high,
+    })
 }
 
 /// Reject text that is almost certainly a mistyped flag.
@@ -340,7 +395,7 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
             exit::OK
         }
         Response::Finished { status } => {
-            out(&format!("{status:?}"));
+            out(label(&status));
             // A message that was not spoken is a failure the caller needs to
             // see. `Rejected` in particular means this device is not in the
             // target's roster — silently exiting 0 would hide that.
@@ -356,6 +411,8 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
             engine,
             fallback,
             queued,
+            muted,
+            quiet,
         } => {
             out(&format!("device:  {device_id}"));
             out(&format!("keys:    {key_store}"));
@@ -364,6 +421,14 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
                 if fallback { "  (fallback)" } else { "" }
             ));
             out(&format!("queued:  {queued}"));
+            // Shown only when set. A device that will speak normally should
+            // not have to be read carefully to establish that.
+            if muted {
+                out("muted:   yes");
+            }
+            if let Some(window) = quiet {
+                out(&format!("quiet:   {window}"));
+            }
             exit::OK
         }
         Response::Invite { url, expires_in } => {
@@ -398,11 +463,52 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
             }
             exit::OK
         }
+        Response::Policy {
+            muted,
+            quiet_from,
+            quiet_to,
+            high_breaks_through,
+        } => {
+            out(&format!("muted:   {}", if muted { "yes" } else { "no" }));
+            match (quiet_from, quiet_to) {
+                (Some(from), Some(to)) => {
+                    out(&format!(
+                        "quiet:   {from}-{to}{}",
+                        if high_breaks_through {
+                            "  (high breaks through)"
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                _ => out("quiet:   off"),
+            }
+            exit::OK
+        }
         Response::Error { message } => {
             err(&format!("error: {message}"));
             exit::USAGE
         }
     })
+}
+
+/// A status as a person would say it.
+///
+/// `{:?}` lowercased gives "quiethours", which reads as a typo. This is
+/// display text; the machine-readable spelling stays in `--json`.
+fn label(status: &Status) -> &'static str {
+    match status {
+        Status::Queued => "queued",
+        Status::Speaking => "speaking",
+        Status::Spoken => "spoken",
+        Status::Muted => "muted",
+        Status::QuietHours => "quiet hours",
+        Status::NoEngine => "no engine",
+        Status::Unreachable => "unreachable",
+        Status::Rejected => "rejected",
+        Status::Cancelled => "cancelled",
+        Status::Dropped => "dropped",
+    }
 }
 
 /// Show what happened on each device, and pick an exit code to match.
@@ -437,7 +543,7 @@ fn report(msg_id: &str, targets: &[voicecast_proto::TargetResult], json: bool) -
             out(&format!(
                 "  {:<16} {:<12} {}{}",
                 t.device,
-                format!("{:?}", t.status).to_lowercase(),
+                label(&t.status),
                 took.unwrap_or_default(),
                 t.detail
                     .as_deref()

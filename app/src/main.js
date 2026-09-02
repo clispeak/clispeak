@@ -149,6 +149,7 @@ async function refresh() {
   }
 
   await refreshVoice();
+  await refreshPolicy();
 
   const devices = await invoke("list_devices").catch(() => null);
   if (!devices) return;
@@ -163,6 +164,88 @@ async function refresh() {
           }),
         ]),
   );
+}
+
+/** Minutes past midnight for an `HH:MM` string, or null if it is not one. */
+function minutesOf(text) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(text ?? "");
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  return h > 23 || min > 59 ? null : h * 60 + min;
+}
+
+/**
+ * Whether `minute` falls inside a window that may cross midnight.
+ *
+ * Mirrors `QuietHours::contains` in the node, including treating a window
+ * whose ends are equal as empty. The two answers have to agree, or the
+ * interface says one thing while the device does another.
+ */
+function insideWindow(from, to, minute) {
+  if (from === to) return false;
+  return from < to ? minute >= from && minute < to : minute >= from || minute < to;
+}
+
+/**
+ * Show whether this device will speak, and why not when it will not.
+ *
+ * The banner is the point of the section. Both controls can be set to
+ * something reasonable and the device still be silent right now, and a person
+ * wondering why nothing is coming out deserves to be told rather than left to
+ * work it out from a clock and two time fields.
+ */
+async function refreshPolicy() {
+  let policy;
+  try {
+    policy = await invoke("policy");
+  } catch {
+    return;
+  }
+
+  if (document.activeElement !== $("mute")) $("mute").checked = policy.muted;
+
+  const hasWindow = policy.from != null && policy.to != null;
+  if (document.activeElement !== $("quiet-on")) $("quiet-on").checked = hasWindow;
+  $("quiet-controls").hidden = !$("quiet-on").checked;
+  if (hasWindow) {
+    if (document.activeElement !== $("quiet-from")) $("quiet-from").value = policy.from;
+    if (document.activeElement !== $("quiet-to")) $("quiet-to").value = policy.to;
+  }
+  if (document.activeElement !== $("quiet-high")) {
+    $("quiet-high").checked = policy.high_breaks_through;
+  }
+
+  const now = new Date();
+  const minute = now.getHours() * 60 + now.getMinutes();
+  const from = minutesOf(policy.from);
+  const to = minutesOf(policy.to);
+  const quietNow = from != null && to != null && insideWindow(from, to, minute);
+
+  const banner = $("silent-banner");
+  if (policy.muted) {
+    banner.textContent = "This device is muted. Nothing will be spoken.";
+    banner.hidden = false;
+  } else if (quietNow && policy.high_breaks_through) {
+    banner.textContent = "Quiet hours — only urgent messages will be spoken.";
+    banner.hidden = false;
+  } else if (quietNow) {
+    banner.textContent = `Quiet hours until ${policy.to}. Nothing will be spoken.`;
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+}
+
+/** Send the quiet window as the controls currently read. */
+async function saveQuiet() {
+  const on = $("quiet-on").checked;
+  await call("set_quiet", {
+    from: on ? $("quiet-from").value : null,
+    to: on ? $("quiet-to").value : null,
+    highBreaksThrough: $("quiet-high").checked,
+  });
+  await refreshPolicy();
 }
 
 /**
@@ -203,6 +286,24 @@ async function refreshVoice() {
   }
   $("rate-value").textContent = `${Number(config.rate).toFixed(2)}×`;
 }
+
+$("mute").onchange = async () => {
+  await call("set_mute", { muted: $("mute").checked });
+  say($("mute").checked ? "muted" : "unmuted");
+  await refreshPolicy();
+};
+
+$("quiet-on").onchange = async () => {
+  $("quiet-controls").hidden = !$("quiet-on").checked;
+  await saveQuiet();
+  say($("quiet-on").checked ? "quiet hours set" : "quiet hours off");
+};
+
+// `change` rather than `input`: a time field fires while it is being typed
+// into, and saving a half-entered "0:" would clear the window.
+$("quiet-from").onchange = saveQuiet;
+$("quiet-to").onchange = saveQuiet;
+$("quiet-high").onchange = saveQuiet;
 
 $("voice-picker").onchange = async () => {
   await call("set_voice", { id: $("voice-picker").value });

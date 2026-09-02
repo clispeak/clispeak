@@ -20,6 +20,7 @@ use voicecast_proto::{
 use voicecast_text::chunk;
 
 use crate::ipc::{read_frame, socket_name, write_frame};
+use crate::policy::{self, Policy};
 use crate::transport::{read_msg, write_msg};
 use crate::{Identity, Roster, Ticket, Transport};
 
@@ -59,6 +60,11 @@ struct Shared {
     /// every sync and every message already proves reachability, so a device
     /// that is being used needs no extra traffic to look alive.
     last_seen: Mutex<std::collections::HashMap<String, u64>>,
+    /// Whether this device is willing to speak right now.
+    ///
+    /// A plain mutex, not the async one: it is consulted from the synchronous
+    /// enqueue path, and holding it spans a copy of a handful of bytes.
+    policy: std::sync::Mutex<Policy>,
     on_show: Mutex<Option<WindowHook>>,
     on_quit: Mutex<Option<WindowHook>>,
 }
@@ -116,6 +122,7 @@ impl Node {
             tx,
             queued,
             last_seen: Mutex::new(std::collections::HashMap::new()),
+            policy: std::sync::Mutex::new(policy::load()),
             on_show: Mutex::new(None),
             on_quit: Mutex::new(None),
         });
@@ -205,6 +212,26 @@ impl Node {
     /// This device's local label.
     pub fn name(&self) -> &str {
         &self.shared.name
+    }
+
+    /// This device's speaking policy.
+    pub fn policy(&self) -> Response {
+        policy_response(&self.shared)
+    }
+
+    /// Silence this device, or let it speak again.
+    pub fn set_mute(&self, muted: bool) -> Response {
+        set_mute(&self.shared, muted)
+    }
+
+    /// Set or clear the daily quiet window.
+    pub fn set_quiet(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        high_breaks_through: bool,
+    ) -> Response {
+        set_quiet(&self.shared, from, to, high_breaks_through)
     }
 
     /// Stop whatever is being spoken.
@@ -385,13 +412,14 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
                 }
             }
         }
-        Request::Status => Response::Status {
-            device_id: shared.identity.id().to_string(),
-            key_store: shared.identity.location().to_string(),
-            engine: current_voice_name(&shared.engine),
-            fallback: shared.engine.tier() == voicecast_engine::Tier::Fallback,
-            queued: shared.queued.load(Ordering::SeqCst),
-        },
+        Request::Policy => policy_response(shared),
+        Request::SetMute { muted } => set_mute(shared, muted),
+        Request::SetQuiet {
+            from,
+            to,
+            high_breaks_through,
+        } => set_quiet(shared, from, to, high_breaks_through),
+        Request::Status => status(shared),
     };
     write_frame(&mut s, &response).await
 }
@@ -423,17 +451,26 @@ fn current_voice_name(engine: &Arc<dyn SpeechEngine>) -> String {
 
 /// This node's health.
 fn status(shared: &Arc<Shared>) -> Response {
+    let policy = *shared.policy.lock().expect("policy lock");
     Response::Status {
         device_id: shared.identity.id().to_string(),
         key_store: shared.identity.location().to_string(),
-        engine: shared
-            .engine
-            .voices()
-            .first()
-            .map_or("unknown", |v| &v.name)
-            .to_string(),
+        engine: current_voice_name(&shared.engine),
         fallback: shared.engine.tier() == voicecast_engine::Tier::Fallback,
         queued: shared.queued.load(Ordering::SeqCst),
+        muted: policy.muted,
+        quiet: policy.quiet.map(|q| {
+            format!(
+                "{}-{}{}",
+                policy::format_time(q.from),
+                policy::format_time(q.to),
+                if q.high_breaks_through {
+                    " (high breaks through)"
+                } else {
+                    ""
+                }
+            )
+        }),
     }
 }
 
@@ -577,6 +614,20 @@ fn enqueue_inner(
     p: Priority,
     done: Option<tokio::sync::oneshot::Sender<Status>>,
 ) -> Response {
+    // Policy comes first. A muted device has no business reporting a broken
+    // engine: the sender needs to hear the reason that actually applies, and
+    // "muted" is both truer and more actionable than "no engine".
+    let refusal = {
+        let policy = shared.policy.lock().expect("policy lock");
+        policy.verdict(
+            p,
+            policy::local_minute(),
+            shared.queued.load(Ordering::SeqCst),
+        )
+    };
+    if let Some(status) = refusal {
+        return Response::Finished { status };
+    }
     // Refuse before accepting, so the sender is told rather than the failure
     // being buried in this device's log.
     if let Err(e) = shared.engine.ready() {
@@ -584,9 +635,6 @@ fn enqueue_inner(
             message: e.to_string(),
         };
     }
-    // High priority interrupts. Resuming the interrupted message at its chunk
-    // boundary is M8; for now it is dropped, which is honest but not yet what
-    // docs/cli.md promises.
     if p == Priority::High {
         shared.engine.stop();
     }
@@ -619,6 +667,12 @@ async fn speak_here(
         return match enqueue(shared, msg_id.to_string(), chunks, p) {
             Response::Accepted { .. } => (Status::Queued, None, None),
             Response::Error { message } => (Status::NoEngine, None, Some(message)),
+            // A policy refusal — muted, quiet hours, or dropped chatter. It
+            // is a terminal answer, so it travels back to the sender as is.
+            Response::Finished { status } => {
+                let why = refusal_detail(&status);
+                (status, None, why)
+            }
             _ => (Status::Dropped, None, None),
         };
     }
@@ -627,6 +681,10 @@ async fn speak_here(
     match enqueue_inner(shared, msg_id.to_string(), chunks, p, Some(tx)) {
         Response::Accepted { .. } => {}
         Response::Error { message } => return (Status::NoEngine, None, Some(message)),
+        Response::Finished { status } => {
+            let why = refusal_detail(&status);
+            return (status, None, why);
+        }
         _ => return (Status::Dropped, None, None),
     }
 
@@ -636,6 +694,85 @@ async fn speak_here(
         // The worker went away, or we gave up first. Either way it was
         // accepted, so say that rather than claim a failure.
         _ => (Status::Queued, None, Some("still speaking".into())),
+    }
+}
+
+/// This device's policy, in the shape the CLI and the app read.
+fn policy_response(shared: &Arc<Shared>) -> Response {
+    let p = *shared.policy.lock().expect("policy lock");
+    Response::Policy {
+        muted: p.muted,
+        quiet_from: p.quiet.map(|q| policy::format_time(q.from)),
+        quiet_to: p.quiet.map(|q| policy::format_time(q.to)),
+        high_breaks_through: p.quiet.is_some_and(|q| q.high_breaks_through),
+    }
+}
+
+/// Silence this device, or let it speak again.
+///
+/// Muting stops what is being said now as well as what comes next. Letting
+/// the current message run to the end would be a strange reading of "quiet".
+fn set_mute(shared: &Arc<Shared>, muted: bool) -> Response {
+    {
+        let mut p = shared.policy.lock().expect("policy lock");
+        p.muted = muted;
+        if let Err(e) = policy::save(&p) {
+            return Response::Error {
+                message: format!("could not save the policy: {e}"),
+            };
+        }
+    }
+    if muted {
+        shared.engine.stop();
+    }
+    policy_response(shared)
+}
+
+/// Set or clear the daily quiet window.
+fn set_quiet(
+    shared: &Arc<Shared>,
+    from: Option<String>,
+    to: Option<String>,
+    high_breaks_through: bool,
+) -> Response {
+    let quiet = match (from, to) {
+        (Some(f), Some(t)) => {
+            let (Some(from), Some(to)) = (policy::parse_time(&f), policy::parse_time(&t)) else {
+                return Response::Error {
+                    message: format!("times must look like 22:00, got '{f}' and '{t}'"),
+                };
+            };
+            Some(crate::QuietHours {
+                from,
+                to,
+                high_breaks_through,
+            })
+        }
+        // Either end missing clears the window. Half a window has no meaning,
+        // and guessing the other end would silence a device by accident.
+        _ => None,
+    };
+    let mut p = shared.policy.lock().expect("policy lock");
+    p.quiet = quiet;
+    if let Err(e) = policy::save(&p) {
+        return Response::Error {
+            message: format!("could not save the policy: {e}"),
+        };
+    }
+    drop(p);
+    policy_response(shared)
+}
+
+/// Say in words why a device stayed silent.
+///
+/// The status alone reads as a failure at the sending end; naming the policy
+/// makes it clear the message arrived and the device chose not to speak it.
+fn refusal_detail(status: &Status) -> Option<String> {
+    match status {
+        Status::Muted => Some("device is muted".into()),
+        Status::QuietHours => Some("quiet hours are active on that device".into()),
+        Status::Dropped => Some("low priority, and the queue is already deep".into()),
+        _ => None,
     }
 }
 
