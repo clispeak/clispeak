@@ -6422,10 +6422,12 @@ dependencies = [
  "anyhow",
  "ciborium",
  "clap",
+ "directories",
  "interprocess",
  "serde",
  "serde_json",
  "tokio",
+ "toml 0.9.12+spec-1.1.0",
  "voicecast-proto",
  "voicecast-text",
 ]

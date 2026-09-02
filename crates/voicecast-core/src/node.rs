@@ -494,53 +494,38 @@ async fn speak(
         };
     }
     let msg_id = new_msg_id();
-    let target = to.as_deref().unwrap_or("here");
 
-    let targets = if target == "all" {
-        everywhere(shared, transport, &msg_id, &chunks, priority, wait).await
-    } else if target == "here" || target == shared.name {
-        let (status, took_ms, detail) = speak_here(shared, &msg_id, chunks, priority, wait).await;
-        vec![TargetResult {
-            device: shared.name.clone(),
-            status,
-            took_ms,
-            detail,
-        }]
-    } else {
-        let peer = {
-            let roster = shared.roster.lock().await;
-            roster.by_name(target).map(|m| m.endpoint_id.clone())
-        };
-        let Some(peer) = peer else {
-            return Response::Error {
-                message: format!("no device named '{target}' in this space"),
-            };
-        };
-        vec![
-            to_peer(
-                shared, transport, target, &peer, &msg_id, &chunks, priority, wait,
-            )
-            .await,
-        ]
+    let targets = match resolve(shared, to.as_deref().unwrap_or("here")).await {
+        Ok(targets) => targets,
+        Err(message) => return Response::Error { message },
     };
 
+    let targets = deliver(shared, transport, &msg_id, &chunks, priority, wait, targets).await;
     Response::Report { msg_id, targets }
 }
 
-/// Speak on every device in the space, this one included.
+/// One resolved destination for a message.
+#[derive(Clone, PartialEq, Eq)]
+enum Target {
+    /// This device.
+    Here,
+    /// A peer, by label and public key.
+    Peer { name: String, id: String },
+}
+
+/// Turn a selector into the devices it names.
 ///
-/// One unreachable device must not stop the others, so failures are collected
-/// rather than returned.
-async fn everywhere(
-    shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
-    msg_id: &str,
-    chunks: &[String],
-    priority: Priority,
-    wait: bool,
-) -> Vec<TargetResult> {
+/// Accepts a comma-separated list, so `--to desk,pixel` reaches both. Each
+/// element is a device label, `all`, or `here`; duplicates collapse, because
+/// `--to all,pixel` should not make the phone say it twice.
+///
+/// An unknown name is an error naming every name that *is* known, rather than
+/// a message that quietly reaches fewer devices than asked for. Partial
+/// delivery from a typo is the failure worth preventing here: it looks like
+/// it worked.
+async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, String> {
     let me = shared.identity.id().to_string();
-    let peers: Vec<(String, String)> = {
+    let members: Vec<(String, String)> = {
         let roster = shared.roster.lock().await;
         roster
             .members()
@@ -549,24 +534,123 @@ async fn everywhere(
             .collect()
     };
 
-    let (status, took_ms, detail) =
-        speak_here(shared, msg_id, chunks.to_vec(), priority, wait).await;
-    let mut results = vec![TargetResult {
-        device: shared.name.clone(),
-        status,
-        took_ms,
-        detail,
-    }];
+    let mut targets: Vec<Target> = Vec::new();
+    let mut unknown: Vec<String> = Vec::new();
+    let push = |t: Target, targets: &mut Vec<Target>| {
+        if !targets.contains(&t) {
+            targets.push(t);
+        }
+    };
 
-    for (name, peer) in peers {
-        results.push(
-            to_peer(
-                shared, transport, &name, &peer, msg_id, chunks, priority, wait,
-            )
-            .await,
-        );
+    for raw in selector.split(',') {
+        let name = raw.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if name.eq_ignore_ascii_case("all") {
+            push(Target::Here, &mut targets);
+            for (n, id) in &members {
+                push(
+                    Target::Peer {
+                        name: n.clone(),
+                        id: id.clone(),
+                    },
+                    &mut targets,
+                );
+            }
+        } else if name.eq_ignore_ascii_case("here") || name == shared.name {
+            push(Target::Here, &mut targets);
+        } else if let Some((n, id)) = members.iter().find(|(n, _)| n == name) {
+            push(
+                Target::Peer {
+                    name: n.clone(),
+                    id: id.clone(),
+                },
+                &mut targets,
+            );
+        } else {
+            unknown.push(name.to_string());
+        }
     }
-    results
+
+    if !unknown.is_empty() {
+        let mut known: Vec<&str> = members.iter().map(|(n, _)| n.as_str()).collect();
+        known.push(&shared.name);
+        known.sort_unstable();
+        return Err(format!(
+            "no device named {} in this space. Known: {}",
+            unknown
+                .iter()
+                .map(|u| format!("'{u}'"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            known.join(", "),
+        ));
+    }
+    if targets.is_empty() {
+        return Err(format!("'{selector}' names no devices"));
+    }
+    Ok(targets)
+}
+
+/// Speak on every resolved target at once.
+///
+/// Concurrent, not sequential: with `--wait` a serial loop would not even
+/// *send* to the second device until the first had finished speaking, so
+/// three devices meant three messages one after another when the caller
+/// asked for one message on three devices.
+///
+/// Results come back in the order the targets were resolved, not the order
+/// they happened to finish, so repeated runs read the same way.
+#[allow(clippy::too_many_arguments)]
+async fn deliver(
+    shared: &Arc<Shared>,
+    transport: &Arc<Transport>,
+    msg_id: &str,
+    chunks: &[String],
+    priority: Priority,
+    wait: bool,
+    targets: Vec<Target>,
+) -> Vec<TargetResult> {
+    let mut set = tokio::task::JoinSet::new();
+    for (index, target) in targets.into_iter().enumerate() {
+        let shared = Arc::clone(shared);
+        let transport = Arc::clone(transport);
+        let msg_id = msg_id.to_string();
+        let chunks = chunks.to_vec();
+        set.spawn(async move {
+            let result = match target {
+                Target::Here => {
+                    let (status, took_ms, detail) =
+                        speak_here(&shared, &msg_id, chunks, priority, wait).await;
+                    TargetResult {
+                        device: shared.name.clone(),
+                        status,
+                        took_ms,
+                        detail,
+                    }
+                }
+                Target::Peer { name, id } => {
+                    to_peer(
+                        &shared, &transport, &name, &id, &msg_id, &chunks, priority, wait,
+                    )
+                    .await
+                }
+            };
+            (index, result)
+        });
+    }
+
+    let mut done: Vec<(usize, TargetResult)> = Vec::new();
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(pair) => done.push(pair),
+            // A panicked task must not silently shrink the report.
+            Err(e) => eprintln!("delivery task failed: {e}"),
+        }
+    }
+    done.sort_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, r)| r).collect()
 }
 
 /// Send to one peer and turn the outcome into a result row.

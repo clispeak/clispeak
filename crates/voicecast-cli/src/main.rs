@@ -43,13 +43,19 @@ mod exit {
     version
 )]
 struct Cli {
-    /// Device to speak on. Defaults to this machine.
+    /// Device to speak on. A name, a group, `all`, `here`, or a
+    /// comma-separated list of those.
+    ///
+    /// Defaults to `default_target` from the config, then this machine.
     #[arg(short, long, global = true)]
     to: Option<String>,
 
     /// Urgency. `high` interrupts whatever is speaking.
-    #[arg(short, long, value_enum, default_value = "normal", global = true)]
-    priority: Prio,
+    ///
+    /// Left unset rather than defaulted here so the config can supply it —
+    /// clap cannot otherwise tell "not given" from "given as normal".
+    #[arg(short, long, value_enum, global = true)]
+    priority: Option<Prio>,
 
     /// Convert markdown to speakable text instead of rejecting it.
     #[arg(long, global = true)]
@@ -80,6 +86,25 @@ struct Cli {
     /// unknown flags.
     #[arg(allow_hyphen_values = true)]
     text: Vec<String>,
+}
+
+/// What to do to the group list.
+#[derive(Subcommand)]
+enum GroupAction {
+    /// Define or replace a group.
+    Set {
+        /// The group's name.
+        name: String,
+        /// Comma-separated device names.
+        devices: String,
+    },
+    /// Delete a group.
+    Rm {
+        /// The group's name.
+        name: String,
+    },
+    /// List the groups defined on this machine.
+    List,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -144,6 +169,17 @@ enum Command {
     Mute,
     /// Let this device speak again.
     Unmute,
+    /// Name a set of devices, so `--to phones` reaches all of them.
+    ///
+    /// Local to this machine: groups expand to device names before anything
+    /// is sent, so they never appear in the protocol and two devices need
+    /// not agree on what a group means.
+    Group {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
+    /// List the groups defined on this machine.
+    Groups,
     /// Show, set, or clear this device's quiet hours.
     Quiet {
         /// `22:00-07:00`, or `off`. Omit to show the current window.
@@ -198,6 +234,22 @@ async fn run() -> anyhow::Result<u8> {
         }
     };
 
+    let config = config::load();
+
+    // Group commands never reach the node: groups are this machine's own
+    // shorthand, so editing them is a local file operation and answering
+    // "what groups exist" needs nothing running.
+    match &cli.command {
+        Some(Command::Groups)
+        | Some(Command::Group {
+            action: GroupAction::List,
+        }) => {
+            return Ok(list_groups(&config));
+        }
+        Some(Command::Group { action }) => return Ok(edit_groups(config, action)),
+        _ => {}
+    }
+
     let request = match &cli.command {
         Some(Command::Stop) => Request::Stop,
         Some(Command::Status) => Request::Status,
@@ -217,7 +269,9 @@ async fn run() -> anyhow::Result<u8> {
         Some(Command::Join { ticket }) => Request::Join {
             ticket: ticket.clone(),
         },
-        Some(Command::Say { text }) => match build_speak(&cli, text)? {
+        // Handled above, before the node is contacted.
+        Some(Command::Group { .. }) | Some(Command::Groups) => unreachable!("local commands"),
+        Some(Command::Say { text }) => match build_speak(&cli, &config, text)? {
             Ok(req) => req,
             Err(code) => return Ok(code),
         },
@@ -227,7 +281,7 @@ async fn run() -> anyhow::Result<u8> {
             } else {
                 cli.text.clone()
             };
-            match build_speak(&cli, &tokens)? {
+            match build_speak(&cli, &config, &tokens)? {
                 Ok(req) => req,
                 Err(code) => return Ok(code),
             }
@@ -235,6 +289,52 @@ async fn run() -> anyhow::Result<u8> {
     };
 
     send(request, cli.json).await
+}
+
+/// Show the groups defined on this machine.
+fn list_groups(config: &config::Config) -> u8 {
+    if config.groups.is_empty() {
+        err("no groups defined");
+        err("");
+        err("Define one with:  voicecast group set phones pixel,iphone");
+        return exit::OK;
+    }
+    for (name, devices) in &config.groups {
+        out(&format!("{:<16} {}", name, devices.join(", ")));
+    }
+    exit::OK
+}
+
+/// Add or remove a group, then say what the list looks like now.
+fn edit_groups(mut config: config::Config, action: &GroupAction) -> u8 {
+    match action {
+        GroupAction::Set { name, devices } => {
+            let members: Vec<String> = devices
+                .split(',')
+                .map(|d| d.trim().to_string())
+                .filter(|d| !d.is_empty())
+                .collect();
+            if members.is_empty() {
+                err("error: a group needs at least one device");
+                return exit::USAGE;
+            }
+            config.groups.insert(name.clone(), members);
+        }
+        GroupAction::Rm { name } => {
+            if config.groups.remove(name).is_none() {
+                err(&format!("error: no group named '{name}'"));
+                return exit::USAGE;
+            }
+        }
+        GroupAction::List => unreachable!("handled before the node is contacted"),
+    }
+    match config::write_groups(&config.groups) {
+        Ok(_) => list_groups(&config),
+        Err(e) => {
+            err(&format!("error: could not save the config: {e}"));
+            exit::USAGE
+        }
+    }
 }
 
 /// Turn a `22:00-07:00` argument into a request, or explain what went wrong.
@@ -287,7 +387,11 @@ fn flaglike_token(tokens: &[String]) -> Option<String> {
 }
 
 /// Validate and wrap text, or print a rejection and return its exit code.
-fn build_speak(cli: &Cli, tokens: &[String]) -> anyhow::Result<Result<Request, u8>> {
+fn build_speak(
+    cli: &Cli,
+    config: &config::Config,
+    tokens: &[String],
+) -> anyhow::Result<Result<Request, u8>> {
     if let Some(flag) = flaglike_token(tokens) {
         err(&format!("error: unknown option '{flag}'"));
         err("");
@@ -316,10 +420,28 @@ fn build_speak(cli: &Cli, tokens: &[String]) -> anyhow::Result<Result<Request, u
         }
     };
 
+    // Resolution order for both: the flag, then the config, then the
+    // built-in default. Groups expand here rather than in the node, so what
+    // crosses the socket is only ever device names.
+    let to = cli
+        .to
+        .clone()
+        .or_else(|| config.default_target.clone())
+        .map(|sel| config::expand(&sel, &config.groups));
+
+    let priority = match cli.priority {
+        Some(p) => p.into(),
+        None => match config.default_priority.as_deref() {
+            Some("low") => Priority::Low,
+            Some("high") => Priority::High,
+            _ => Priority::Normal,
+        },
+    };
+
     Ok(Ok(Request::Speak {
         text,
-        priority: cli.priority.into(),
-        to: cli.to.clone(),
+        priority,
+        to,
         // JSON output exists to be consumed, and a report of "queued" tells a
         // consumer nothing — so asking for it implies waiting.
         wait: cli.wait || cli.json,
@@ -570,6 +692,8 @@ fn report(msg_id: &str, targets: &[voicecast_proto::TargetResult], json: bool) -
 fn voicecast_core_socket_name() -> String {
     std::env::var("VOICECAST_SOCKET").unwrap_or_else(|_| "voicecast.sock".to_string())
 }
+
+mod config;
 
 // Frame helpers, mirroring `voicecast_core::ipc` for the same reason.
 mod frame;
