@@ -239,3 +239,48 @@ fn an_older_label_does_not_overwrite_a_newer_one() {
         "newer label must win"
     );
 }
+
+#[test]
+fn leaving_produces_a_roster_that_only_contains_this_device() {
+    let alice = device();
+    let bob = device();
+    let mut on_bob = Roster::found(&bob, "bob");
+    on_bob.invite(&bob, &alice.public().to_string(), "alice");
+    assert_eq!(on_bob.members().count(), 2);
+
+    let after = Roster::leave(&bob, "bob");
+    assert_eq!(
+        after.members().count(),
+        1,
+        "leaving should keep only this device"
+    );
+    assert!(
+        after.allows(&bob.public()),
+        "a device must still allow itself"
+    );
+    assert!(!after.allows(&alice.public()), "the old peer must be gone");
+}
+
+#[test]
+fn a_non_member_cannot_be_merged_back_in_by_its_own_roster() {
+    // The bug this guards: after leaving, the old peer still listed us and
+    // pushed its roster on the next sync — putting us straight back into the
+    // space we had just left. The node refuses a sync from a non-member, and
+    // this pins the property the refusal relies on: nothing in a stranger's
+    // roster makes them a member of ours.
+    let alice = device();
+    let bob = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob.public().to_string(), "bob");
+
+    // Bob leaves.
+    let on_bob = Roster::leave(&bob, "bob");
+    assert!(!on_bob.allows(&alice.public()));
+
+    // Alice, who has not noticed, is not a member as far as Bob is concerned.
+    assert!(
+        !on_bob.allows(&alice.public()),
+        "a device that left must not treat its old peers as members"
+    );
+}

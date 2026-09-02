@@ -530,8 +530,14 @@ async fn sync_roster(shared: &Arc<Shared>, conn: &iroh::endpoint::Connection) ->
     write_msg(&mut send, &mine).await?;
     send.finish().ok();
 
-    if let PeerMessage::RosterSync { members, revoked } = read_msg(&mut recv).await? {
-        merge_from_peer(shared, members, revoked).await?;
+    match read_msg(&mut recv).await? {
+        PeerMessage::RosterSync { members, revoked } => {
+            merge_from_peer(shared, members, revoked).await?;
+        }
+        // The peer no longer counts us as a member — most likely it left, or
+        // removed us. Not an error worth shouting about.
+        PeerMessage::JoinRefused { .. } => {}
+        other => anyhow::bail!("unexpected reply to roster sync: {other:?}"),
     }
     mark_seen(shared, &conn.remote_id().to_string()).await;
     Ok(())
@@ -867,6 +873,20 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 write_msg(&mut send, &PeerMessage::Report { status }).await?;
             }
             PeerMessage::RosterSync { members, revoked } => {
+                // Only members may change our roster. Without this any device
+                // that can reach us could inject entries — and, more visibly,
+                // a device we just left would push us straight back into the
+                // space it still thinks we are in.
+                if !shared.roster.lock().await.allows(&remote) {
+                    write_msg(
+                        &mut send,
+                        &PeerMessage::JoinRefused {
+                            reason: "not a member of this space".into(),
+                        },
+                    )
+                    .await?;
+                    continue;
+                }
                 let mine = {
                     let roster = shared.roster.lock().await;
                     PeerMessage::RosterSync {
