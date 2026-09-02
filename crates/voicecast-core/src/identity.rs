@@ -9,7 +9,7 @@
 //! behind [`KeyStore`] rather than being decided here. This crate ships the
 //! portable file-backed implementation; desktop binaries supply a keyring.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use iroh_base::{EndpointId, SecretKey};
 
@@ -175,6 +175,80 @@ pub fn config_dir() -> Result<PathBuf, IdentityError> {
     Ok(dirs.config_dir().to_path_buf())
 }
 
+/// Everything this device keeps beside its identity.
+///
+/// An allowlist rather than "move the directory", because the app's data
+/// directory also holds a web view's caches and databases, which are its own
+/// business and would be nonsense in a config directory.
+const STATE_FILES: &[&str] = &[
+    "identity.key",
+    "identity.in-keyring",
+    "name",
+    "voice",
+    "roster.cbor",
+    "spaces.cbor",
+    "policy.json",
+    "history.json",
+    "invite.json",
+    "skill-destination",
+];
+
+/// Move state written under an older location into the current one.
+///
+/// The app used to tell the core to keep its files in the app's own data
+/// directory, which mobile genuinely needs and desktop does not — and on
+/// desktop `voicecastd` was already using the ordinary config directory. One
+/// device ended up with two rosters, two histories and two mute settings
+/// hanging off a single identity, because the identity lives in the keyring
+/// and was the only thing they shared.
+///
+/// Returns the files it moved, so the caller can say so rather than doing it
+/// silently. Idempotent: a moved file is gone from the old place, so a second
+/// run finds nothing.
+///
+/// A file already present at the destination is renamed aside rather than
+/// overwritten or skipped. Skipping would let a stale copy — such as one a
+/// daemon wrote before the app existed — win over the state someone has
+/// actually been using, and overwriting would destroy the evidence either
+/// way. Being wrong here costs someone every device pairing they have.
+pub fn migrate_from(old: &Path) -> Result<Vec<String>, IdentityError> {
+    migrate_between(old, &config_dir()?)
+}
+
+/// The move itself, with both ends named.
+///
+/// Split out because `config_dir` is settled once per process and cannot be
+/// changed between tests — so a test that had to set it could only ever
+/// exercise this once, and the second case would silently run against the
+/// first one's directory.
+fn migrate_between(old: &Path, current: &Path) -> Result<Vec<String>, IdentityError> {
+    if old == current || !old.exists() {
+        return Ok(Vec::new());
+    }
+    std::fs::create_dir_all(current).map_err(|e| IdentityError::Store(e.to_string()))?;
+
+    let mut moved = Vec::new();
+    for name in STATE_FILES {
+        let from = old.join(name);
+        if !from.exists() {
+            continue;
+        }
+        let to = current.join(name);
+        if to.exists() {
+            let aside = current.join(format!("{name}.superseded"));
+            let _ = std::fs::rename(&to, &aside);
+        }
+        // Rename first: it is atomic within a filesystem, which these two
+        // normally share. Copy only if they do not.
+        if std::fs::rename(&from, &to).is_err() {
+            std::fs::copy(&from, &to).map_err(|e| IdentityError::Store(e.to_string()))?;
+            std::fs::remove_file(&from).map_err(|e| IdentityError::Store(e.to_string()))?;
+        }
+        moved.push((*name).to_string());
+    }
+    Ok(moved)
+}
+
 /// This device's local label.
 ///
 /// A convenience for humans, never an identity — it is deliberately excluded
@@ -270,3 +344,75 @@ fn set_owner_only(opts: &mut std::fs::OpenOptions) {
 
 #[cfg(not(unix))]
 fn set_owner_only(_opts: &mut std::fs::OpenOptions) {}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    /// A scratch directory unique to this test.
+    fn scratch(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("voicecast-migrate-{}-{label}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        dir
+    }
+
+    #[test]
+    fn state_moves_across_and_leaves_the_web_view_behind() {
+        let root = scratch("move");
+        let old = root.join("old");
+        let new = root.join("new");
+        std::fs::create_dir_all(&old).expect("old");
+
+        std::fs::write(old.join("spaces.cbor"), b"roster").expect("write");
+        std::fs::write(old.join("history.json"), b"[]").expect("write");
+        // The app's data directory also holds a web view's caches. They are
+        // not ours and must not follow.
+        std::fs::write(old.join("hsts-storage.sqlite"), b"x").expect("write");
+
+        let moved = migrate_between(&old, &new).expect("migrate");
+        assert!(moved.contains(&"spaces.cbor".to_string()));
+        assert!(moved.contains(&"history.json".to_string()));
+        assert!(!moved.contains(&"hsts-storage.sqlite".to_string()));
+
+        assert_eq!(std::fs::read(new.join("spaces.cbor")).unwrap(), b"roster");
+        assert!(
+            !old.join("spaces.cbor").exists(),
+            "the old copy must be gone"
+        );
+        assert!(old.join("hsts-storage.sqlite").exists(), "not ours to move");
+
+        // Running again finds nothing, because the first run emptied it.
+        assert!(migrate_between(&old, &new).expect("second").is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_already_there_is_set_aside_rather_than_left_to_win() {
+        // The case on the machine that found this: a stale roster written by
+        // a daemon before the app existed, sitting where the live one is
+        // about to land. Skipping would let the stale copy win and cost every
+        // device pairing; overwriting would destroy the evidence.
+        let root = scratch("clash");
+        let old = root.join("old");
+        let new = root.join("new");
+        std::fs::create_dir_all(&old).expect("old");
+        std::fs::create_dir_all(&new).expect("new");
+
+        std::fs::write(old.join("spaces.cbor"), b"live").expect("write");
+        std::fs::write(new.join("spaces.cbor"), b"stale").expect("write");
+
+        migrate_between(&old, &new).expect("migrate");
+
+        assert_eq!(std::fs::read(new.join("spaces.cbor")).unwrap(), b"live");
+        assert_eq!(
+            std::fs::read(new.join("spaces.cbor.superseded")).unwrap(),
+            b"stale",
+            "the displaced copy has to survive somewhere"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

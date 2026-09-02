@@ -18,6 +18,7 @@ pub mod ticket;
 pub mod transport;
 
 pub use history::{Entry, History};
+pub use identity::migrate_from;
 pub use identity::{
     FileKeyStore, Identity, IdentityError, KeyStore, config_dir, device_name, load_voice_settings,
     save_voice_settings, set_config_dir, set_device_name,

@@ -974,6 +974,34 @@ async fn start_node() -> anyhow::Result<Node> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // Where this device's state lives has to be settled first:
+            // everything below reads it.
+            //
+            // Mobile has no XDG config directory, so the core has to be told
+            // about app-private storage. Desktop has one, and `voicecastd`
+            // was already using it — overriding it here gave a single device
+            // two rosters, two histories and two mute settings, sharing only
+            // the identity that lives in the keyring.
+            #[cfg(mobile)]
+            match app.path().app_data_dir() {
+                Ok(dir) => voicecast_core::set_config_dir(dir),
+                Err(e) => eprintln!("no app data directory: {e}"),
+            }
+
+            // Bring across anything an older build left in the app's own
+            // directory. Said out loud rather than done quietly: it moves
+            // the file that holds every device pairing.
+            #[cfg(desktop)]
+            if let Ok(old) = app.path().app_data_dir() {
+                match voicecast_core::migrate_from(&old) {
+                    Ok(moved) if !moved.is_empty() => {
+                        eprintln!("moved {} into the config directory", moved.join(", "));
+                    }
+                    Ok(_) => {}
+                    Err(e) => eprintln!("could not move state out of the app directory: {e}"),
+                }
+            }
+
             // The CLI lives on the host, not in the sandbox. Put it there on
             // first launch, and rewrite it when a Flatpak update has moved
             // the app on without it.
@@ -984,17 +1012,6 @@ pub fn run() {
             #[cfg(desktop)]
             refresh_installed_skill();
 
-            // Android has no XDG config directory, so tell the core where its
-            // app-private storage is before anything tries to read a key.
-            match app.path().app_data_dir() {
-                Ok(dir) => voicecast_core::set_config_dir(dir),
-                Err(e) => eprintln!("no app data directory: {e}"),
-            }
-
-            // A missing tray must not stop the app. Some environments have no
-            // StatusNotifier host, and the GNOME Flatpak runtime ships no
-            // appindicator library at all — the node is still perfectly
-            // useful without an icon, and `voicecast show` can reach it.
             // A missing tray must not stop the app. Some environments have no
             // StatusNotifier host, and the GNOME Flatpak runtime ships no
             // appindicator library at all — the node is still perfectly
