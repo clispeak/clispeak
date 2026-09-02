@@ -37,6 +37,11 @@ that does and does not tell us.
 
 > **If it doesn't compile for all five targets, it doesn't merge.**
 
+**Local gates are not this gate.** `cargo test`, `cargo clippy` and
+`cargo fmt` only ever exercise the machine they run on, so passing them says
+nothing about four of the five targets. Windows was broken for fifteen commits
+while local checks reported green every time — see issue #5.
+
 CI enforces this from the first commit, even though three targets are never
 run. The failure mode this prevents is well known: six months of Linux-shaped
 assumptions quietly accumulating in shared code, discovered the week someone
@@ -214,12 +219,16 @@ fallback UI on both platforms, `Presence` reporting.
 *Exit:* a fresh Linux install speaks via espeak immediately, shows *why* it is
 in fallback, and upgrades to Piper without a restart.
 
-### M8 — The rest of the CLI  🟡 IN PROGRESS
+### M8 — The rest of the CLI  🟢 ALL BUT ONE ITEM
 
 Priority and queue, `stop`/`skip`/`pause`, groups, multiple spaces, quiet
-hours, `--wait`/`--json`, rotation.
+hours, `--wait`/`--json`, rotation. All built and exercised between a Linux
+laptop and an Android phone, plus message history, which was not in the
+original plan.
 
-*Exit:* `cli.md` is fully implemented.
+*Exit:* `cli.md` is fully implemented. **Not yet:** per-space receiver
+settings — separate mute, quiet hours and volume for each space. Policy is per
+device. Tracked as an issue.
 
 ### M9 — macOS
 
@@ -233,8 +242,12 @@ disappear with the process that held them — a node killed anywhere else left a
 socket file that stopped every later node from starting.
 
 *Exit:* installing the dmg on a Mac with nothing else installed gives a device
-that speaks, and `voicecast` on the PATH. **Done, apart from pairing a Mac with
-another device, and signing.**
+that speaks, and `voicecast` on the PATH. **Done, apart from signing.**
+
+A Mac has since joined a space — its signed entry is in the phone's roster,
+invited by the phone — so pairing works. It has not yet been *reached*: every
+attempt from the laptop has timed out with that machine offline, so speech to
+a Mac over the network remains unproven.
 
 ---
 
