@@ -144,6 +144,32 @@ pub enum Request {
     },
     /// Leave the space, keeping this device's identity.
     Leave,
+    /// Replace this space with a fresh one, locking every other device out.
+    Rotate,
+    /// List the spaces this device belongs to.
+    Spaces,
+    /// Found a new space from this device and make it the default.
+    NewSpace {
+        /// What to call it locally.
+        label: String,
+    },
+    /// Drop one space, keeping the others.
+    LeaveSpace {
+        /// The space's local name.
+        label: String,
+    },
+    /// Choose which space bare device names resolve in.
+    DefaultSpace {
+        /// The space's local name.
+        label: String,
+    },
+    /// Rename a space locally.
+    RenameSpace {
+        /// Its current local name.
+        label: String,
+        /// What to call it instead.
+        to: String,
+    },
     /// Change this device's local label.
     Rename {
         /// The new label.
@@ -255,6 +281,16 @@ pub enum Response {
         #[serde(default)]
         quiet: Option<String>,
     },
+    /// The spaces this device belongs to.
+    Spaces {
+        /// One row per space.
+        spaces: Vec<SpaceRow>,
+    },
+    /// The space was replaced.
+    Rotated {
+        /// Devices that were in the old space, so they can be re-invited.
+        devices: Vec<String>,
+    },
     /// The devices a selector names.
     Targets {
         /// Their labels, in the order a message would reach them.
@@ -356,6 +392,9 @@ pub enum PeerMessage {
         member: Member,
         /// Everyone else in the space.
         members: Vec<Member>,
+        /// Which space was joined, so both sides agree on its id.
+        #[serde(default)]
+        space: Option<String>,
     },
     /// The invite was refused.
     JoinRefused {
@@ -368,6 +407,13 @@ pub enum PeerMessage {
         members: Vec<Member>,
         /// Revoked ids and when, so tombstones propagate.
         revoked: Vec<(String, u64)>,
+        /// Which space this roster is for.
+        ///
+        /// Defaulted so a peer that predates several spaces still syncs: with
+        /// no id the receiver works out which of its spaces the sender is in,
+        /// which is unambiguous whenever they share only one.
+        #[serde(default)]
+        space: Option<String>,
     },
     /// Opens a message stream. Chunks follow, then [`PeerMessage::SpeakEnd`].
     SpeakBegin {
@@ -382,6 +428,11 @@ pub enum PeerMessage {
         /// A voice the sender would like, if this device has it.
         #[serde(default)]
         voice: Option<String>,
+        /// Which space this was sent in, selecting the receiver's policy.
+        ///
+        /// Defaulted for the same reason as on [`PeerMessage::RosterSync`].
+        #[serde(default)]
+        space: Option<String>,
     },
     /// One sentence-ish unit of text.
     Chunk {
@@ -414,6 +465,19 @@ pub struct TargetResult {
     pub detail: Option<String>,
 }
 
+/// One space, as shown by `voicecast space list`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceRow {
+    /// This device's own name for it. Local, like a device label.
+    pub label: String,
+    /// How many devices are in it.
+    pub devices: usize,
+    /// Whether bare device names resolve here.
+    pub is_default: bool,
+    /// Whether this device founded it.
+    pub founded_here: bool,
+}
+
 /// A device as shown by `voicecast devices`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInfo {
@@ -429,4 +493,10 @@ pub struct DeviceInfo {
     /// contact since. Absence of news is genuinely different from bad news.
     #[serde(default)]
     pub last_seen_secs: Option<u64>,
+    /// Which space it is in, when this device belongs to more than one.
+    ///
+    /// `None` when there is only one space, so the common case shows no
+    /// column that would always read the same.
+    #[serde(default)]
+    pub space: Option<String>,
 }

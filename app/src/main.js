@@ -150,6 +150,7 @@ async function refresh() {
 
   await refreshVoice();
   await refreshPolicy();
+  await refreshSpaces();
 
   const devices = await invoke("list_devices").catch(() => null);
   if (!devices) return;
@@ -164,6 +165,77 @@ async function refresh() {
           }),
         ]),
   );
+}
+
+/** One row in the spaces list. */
+function spaceRow(space, several) {
+  const li = document.createElement("li");
+  li.className = "flex items-center gap-3 px-4 py-3";
+
+  const text = document.createElement("div");
+  text.className = "min-w-0 flex-1";
+  const name = document.createElement("p");
+  name.className = "truncate text-sm font-medium";
+  name.textContent = space.label;
+  const detail = document.createElement("p");
+  detail.className = "text-xs text-neutral-500 dark:text-neutral-400";
+  detail.textContent =
+    `${space.devices} device${space.devices === 1 ? "" : "s"}` +
+    (space.is_default ? " · default" : "");
+  text.append(name, detail);
+  li.append(text);
+
+  // Only offered where it would do something. A single space is always the
+  // default and cannot be dropped, so both controls would be dead.
+  if (!space.is_default) {
+    const useIt = document.createElement("button");
+    useIt.className =
+      "shrink-0 rounded-lg border border-neutral-300 px-3 py-1 text-xs transition " +
+      "hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800";
+    useIt.textContent = "Use";
+    useIt.onclick = () =>
+      withButton(useIt, "…", async () => {
+        await call("default_space", { label: space.label });
+        say(`bare names now mean ${space.label}`);
+        await refresh();
+      });
+    li.append(useIt);
+  }
+  if (several) {
+    const drop = document.createElement("button");
+    drop.className =
+      "shrink-0 rounded-lg px-2 py-1 text-xs text-red-600 transition " +
+      "hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10";
+    drop.textContent = "Drop";
+    drop.onclick = () =>
+      withButton(drop, "…", async () => {
+        if (!confirm(`Drop the space "${space.label}"?`)) return;
+        await call("drop_space", { label: space.label });
+        say(`dropped ${space.label}`);
+        await refresh();
+      });
+    li.append(drop);
+  }
+  return li;
+}
+
+/**
+ * Show the spaces this device belongs to.
+ *
+ * Always shown, even for the single space most devices have: this is where a
+ * second one is created, and hiding the section until there are two made that
+ * impossible to reach.
+ */
+async function refreshSpaces() {
+  let spaces;
+  try {
+    spaces = await invoke("list_spaces");
+  } catch {
+    return;
+  }
+  $("spaces-section").hidden = false;
+  const several = spaces.length > 1;
+  $("spaces").replaceChildren(...spaces.map((s) => spaceRow(s, several)));
 }
 
 /** Minutes past midnight for an `HH:MM` string, or null if it is not one. */
@@ -387,6 +459,34 @@ $("leave").onclick = () =>
   withButton($("leave"), "…", async () => {
     if (!confirm("Leave this space? Other devices will stop reaching this one.")) return;
     say(await call("leave_space"));
+    await refresh();
+  });
+
+$("new-space-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const label = $("new-space").value.trim();
+  if (!label) return;
+  await call("new_space", { label });
+  $("new-space").value = "";
+  say(`created ${label}`);
+  await refresh();
+};
+
+$("rotate").onclick = () =>
+  withButton($("rotate"), "…", async () => {
+    if (
+      !confirm(
+        "Replace this space? Every other device is locked out immediately " +
+          "and has to be invited again.",
+      )
+    )
+      return;
+    const left = await call("rotate_space");
+    say(
+      left.length
+        ? `space replaced — re-invite ${left.join(", ")}`
+        : "space replaced",
+    );
     await refresh();
   });
 

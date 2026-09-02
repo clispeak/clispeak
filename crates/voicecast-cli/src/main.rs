@@ -112,6 +112,37 @@ struct Cli {
     text: Vec<String>,
 }
 
+/// What to do with spaces.
+#[derive(Subcommand)]
+enum SpaceAction {
+    /// List the spaces this device belongs to.
+    List,
+    /// Found a new space from this device, and make it the default.
+    New {
+        /// What to call it on this device.
+        name: String,
+    },
+    /// Drop one space, keeping the others.
+    Leave {
+        /// The space's name on this device.
+        name: String,
+    },
+    /// Choose which space bare device names resolve in.
+    Default {
+        /// The space's name on this device.
+        name: String,
+    },
+    /// Rename a space. Local to this device, like a device label.
+    Rename {
+        /// Its current name.
+        name: String,
+        /// What to call it instead.
+        to: String,
+    },
+    /// Replace the default space, locking every other device out.
+    Rotate,
+}
+
 /// What to do to the group list.
 #[derive(Subcommand)]
 enum GroupAction {
@@ -180,6 +211,22 @@ enum Command {
     },
     /// Leave the space, keeping this device's identity.
     Leave,
+    /// Work with the spaces this device belongs to.
+    ///
+    /// A space is a set of your own devices, kept fully separate from the
+    /// others. Bare device names resolve in the default space; qualify with
+    /// `work/laptop` to reach anywhere else.
+    Space {
+        #[command(subcommand)]
+        action: SpaceAction,
+    },
+    /// Replace this space with a fresh one, locking every other device out.
+    ///
+    /// For a device that was stolen rather than sold. Revoking is eventually
+    /// consistent, so a device that has been offline since the revoke still
+    /// honours it until it syncs; a rotated space never contained the
+    /// excluded device at all. Every other device has to be re-invited.
+    Rotate,
     /// Change this device's name.
     Rename {
         /// The new name.
@@ -316,6 +363,24 @@ async fn run() -> anyhow::Result<u8> {
         Some(Command::Show) => Request::Show,
         Some(Command::Revoke { name }) => Request::Revoke { name: name.clone() },
         Some(Command::Leave) => Request::Leave,
+        Some(Command::Rotate) => Request::Rotate,
+        Some(Command::Space { action }) => match action {
+            SpaceAction::List => Request::Spaces,
+            SpaceAction::New { name } => Request::NewSpace {
+                label: name.clone(),
+            },
+            SpaceAction::Leave { name } => Request::LeaveSpace {
+                label: name.clone(),
+            },
+            SpaceAction::Default { name } => Request::DefaultSpace {
+                label: name.clone(),
+            },
+            SpaceAction::Rename { name, to } => Request::RenameSpace {
+                label: name.clone(),
+                to: to.clone(),
+            },
+            SpaceAction::Rotate => Request::Rotate,
+        },
         Some(Command::Quit) => Request::Quit,
         Some(Command::Rename { name }) => Request::Rename { name: name.clone() },
         Some(Command::Skip) => Request::Skip,
@@ -662,10 +727,26 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
         Response::Devices { devices } => {
             for d in devices {
                 out(&format!(
-                    "{:<16} {}{}",
+                    "{:<16} {}{}{}",
                     d.name,
                     &d.endpoint_id[..16.min(d.endpoint_id.len())],
+                    d.space
+                        .as_deref()
+                        .map(|s| format!("  [{s}]"))
+                        .unwrap_or_default(),
                     if d.is_self { "  (this device)" } else { "" }
+                ));
+            }
+            exit::OK
+        }
+        Response::Spaces { spaces } => {
+            for s in spaces {
+                out(&format!(
+                    "{:<16} {:<3} devices{}{}",
+                    s.label,
+                    s.devices,
+                    if s.is_default { "  (default)" } else { "" },
+                    if s.founded_here { "  founded here" } else { "" },
                 ));
             }
             exit::OK
@@ -689,6 +770,17 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
                     ));
                 }
                 _ => out("quiet:   off"),
+            }
+            exit::OK
+        }
+        Response::Rotated { devices } => {
+            out("this space has been replaced");
+            if devices.is_empty() {
+                err("No other devices were in it.");
+            } else {
+                err("");
+                err(&format!("Re-invite:  {}", devices.join(", ")));
+                err("Run `voicecast invite` once per device.");
             }
             exit::OK
         }

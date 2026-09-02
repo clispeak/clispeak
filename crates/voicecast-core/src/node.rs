@@ -21,6 +21,7 @@ use voicecast_text::chunk;
 use crate::ipc::{read_frame, socket_name, write_frame};
 use crate::policy::{self, Policy};
 use crate::queue::{Job, Speaker};
+use crate::spaces::Spaces;
 use crate::transport::{read_msg, write_msg};
 use crate::{Identity, Roster, Ticket, Transport};
 
@@ -35,8 +36,12 @@ struct Shared {
     engine: Arc<dyn SpeechEngine>,
     identity: Identity,
     name: String,
-    roster: Mutex<Roster>,
-    roster_path: PathBuf,
+    /// Every space this device belongs to.
+    ///
+    /// Operations that predate several spaces act on the default one, which
+    /// is what kept the rest of the node unchanged when spaces arrived.
+    spaces: Mutex<Spaces>,
+    spaces_path: PathBuf,
     /// The invite currently outstanding, if any. One at a time: an invite is
     /// a deliberate act, and allowing several open at once would widen the
     /// window in which a leaked ticket still works.
@@ -79,22 +84,33 @@ impl Node {
             let _ = engine.set_rate(rate);
         }
 
-        let roster_path = Roster::default_path().context("locating roster")?;
-        let mut roster = Roster::load(&roster_path).context("loading roster")?;
+        let spaces_path = Spaces::default_path().context("locating spaces")?;
+        let legacy = Roster::default_path().context("locating roster")?;
+        // Whether this device has been through the migration yet. Persisted
+        // eagerly below so it happens exactly once, rather than being redone
+        // from a roster file that nothing writes to any more.
+        let migrating = !spaces_path.exists();
+        let mut spaces = Spaces::load(&spaces_path, &legacy).context("loading spaces")?;
         // A device is always a member of its own space, even before anyone
         // else joins — otherwise it could not speak to itself.
-        if roster.members().count() == 0 {
-            roster = Roster::found(identity.secret(), &name);
-            roster.save(&roster_path).context("saving roster")?;
-        } else if roster.rename(&identity.id().to_string(), &name)
-            || roster.stamp_own_label(&identity.id().to_string())
+        if spaces.ids().is_empty() {
+            spaces.insert(Roster::found(identity.secret(), &name), "main");
+            spaces.save(&spaces_path).context("saving spaces")?;
+        } else if migrating {
+            spaces.save(&spaces_path).context("saving spaces")?;
+        } else if spaces
+            .current_mut()
+            .rename(&identity.id().to_string(), &name)
+            || spaces
+                .current_mut()
+                .stamp_own_label(&identity.id().to_string())
         {
             // Two reasons to rewrite: the label changed, or it predates the
             // `renamed_at` stamp. Rosters written before that field existed
             // deserialize it as zero, and a merge comparing 0 > 0 keeps the
             // stale copy forever — so an unstamped entry is stamped once, on
             // the device that owns it.
-            roster.save(&roster_path).context("saving roster")?;
+            spaces.save(&spaces_path).context("saving spaces")?;
         }
 
         let speaker = Speaker::new(Arc::clone(&engine));
@@ -102,8 +118,8 @@ impl Node {
             engine,
             identity,
             name,
-            roster: Mutex::new(roster),
-            roster_path,
+            spaces: Mutex::new(spaces),
+            spaces_path,
             pending: Mutex::new(None),
             speaker,
             last_seen: Mutex::new(std::collections::HashMap::new()),
@@ -179,6 +195,36 @@ impl Node {
         leave(&self.shared, &self.transport).await
     }
 
+    /// Replace this space with a fresh one, locking every other device out.
+    pub async fn rotate(&self) -> Response {
+        rotate(&self.shared).await
+    }
+
+    /// The spaces this device belongs to.
+    pub async fn spaces(&self) -> Response {
+        list_spaces(&self.shared).await
+    }
+
+    /// Found a new space from this device, and make it the default.
+    pub async fn new_space(&self, label: &str) -> Response {
+        new_space(&self.shared, label).await
+    }
+
+    /// Drop one space, keeping the others.
+    pub async fn leave_space(&self, label: &str) -> Response {
+        leave_space(&self.shared, label).await
+    }
+
+    /// Choose which space bare device names resolve in.
+    pub async fn default_space(&self, label: &str) -> Response {
+        default_space(&self.shared, label).await
+    }
+
+    /// Rename a space locally.
+    pub async fn rename_space(&self, label: &str, to: &str) -> Response {
+        rename_space(&self.shared, label, to).await
+    }
+
     /// Devices in this space.
     pub async fn devices(&self) -> Response {
         devices(&self.shared).await
@@ -237,21 +283,31 @@ impl Node {
             loop {
                 tick.tick().await;
                 let me = node.shared.identity.id().to_string();
-                let peers: Vec<String> = {
-                    let roster = node.shared.roster.lock().await;
-                    roster
-                        .members()
-                        .filter(|m| m.endpoint_id != me)
-                        .map(|m| m.endpoint_id.clone())
+                // Every space, not just the default: a device that only
+                // appears in the second one would otherwise never be checked
+                // on and would show as stale forever.
+                let peers: Vec<(String, String)> = {
+                    let spaces = node.shared.spaces.lock().await;
+                    spaces
+                        .ids()
+                        .into_iter()
+                        .flat_map(|id| {
+                            let roster = spaces.get(&id).expect("id came from this map");
+                            roster
+                                .members()
+                                .filter(|m| m.endpoint_id != me)
+                                .map(|m| (id.clone(), m.endpoint_id.clone()))
+                                .collect::<Vec<_>>()
+                        })
                         .collect()
                 };
-                for peer in peers {
+                for (space, peer) in peers {
                     // Failure is the useful signal here: the peer simply stays
                     // stale until it can be reached again.
                     if let Ok(id) = peer.parse()
                         && let Ok(conn) = node.transport.connect(id).await
                     {
-                        let _ = sync_roster(&node.shared, &conn).await;
+                        let _ = sync_roster(&node.shared, &conn, &space).await;
                     }
                 }
             }
@@ -417,6 +473,12 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
         Request::Rename { name } => rename(shared, &name).await,
         Request::Revoke { name } => revoke(shared, &name).await,
         Request::Leave => leave(shared, transport).await,
+        Request::Rotate => rotate(shared).await,
+        Request::Spaces => list_spaces(shared).await,
+        Request::NewSpace { label } => new_space(shared, &label).await,
+        Request::LeaveSpace { label } => leave_space(shared, &label).await,
+        Request::DefaultSpace { label } => default_space(shared, &label).await,
+        Request::RenameSpace { label, to } => rename_space(shared, &label, &to).await,
         Request::Show => match shared.on_show.lock().await.as_ref() {
             Some(hook) => {
                 hook();
@@ -590,88 +652,194 @@ struct Outgoing {
 enum Target {
     /// This device.
     Here,
-    /// A peer, by label and public key.
-    Peer { name: String, id: String },
+    /// A peer, by label, public key, and the space it was found in.
+    Peer {
+        name: String,
+        id: String,
+        space: String,
+    },
 }
 
 /// Turn a selector into the devices it names.
 ///
 /// Accepts a comma-separated list, so `--to desk,pixel` reaches both. Each
-/// element is a device label, `all`, or `here`; duplicates collapse, because
-/// `--to all,pixel` should not make the phone say it twice.
+/// element is a device label, `all`, `here`, or any of those qualified by a
+/// space as `work/laptop`. Duplicates collapse, because `--to all,pixel`
+/// should not make the phone say it twice.
 ///
-/// An unknown name is an error naming every name that *is* known, rather than
-/// a message that quietly reaches fewer devices than asked for. Partial
-/// delivery from a typo is the failure worth preventing here: it looks like
-/// it worked.
+/// `all` is scoped to one space, and there is deliberately no selector
+/// meaning "every device everywhere": crossing spaces has to be spelled out,
+/// because a work message arriving on the family tablet is exactly what
+/// separate spaces exist to prevent.
+///
+/// A bare name resolves in the default space when it exists there, and
+/// otherwise anywhere it is unique. A name in two other spaces is an error
+/// asking for it to be qualified, never a guess.
+///
+/// An unknown name is an error naming every name that *is* known. Partial
+/// delivery from a typo is the failure worth preventing: reaching two devices
+/// out of three looks like it worked.
 async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, String> {
     let me = shared.identity.id().to_string();
-    let members: Vec<(String, String)> = {
-        let roster = shared.roster.lock().await;
-        roster
-            .members()
-            .filter(|m| m.endpoint_id != me)
-            .map(|m| (m.name.clone(), m.endpoint_id.clone()))
-            .collect()
-    };
+    let spaces = shared.spaces.lock().await;
+    let default_id = spaces.default_id().to_string();
+
+    /// One member, and which space it was found in.
+    struct Known {
+        space: String,
+        name: String,
+        id: String,
+    }
+
+    let known: Vec<Known> = spaces
+        .ids()
+        .into_iter()
+        .flat_map(|space| {
+            let roster = spaces.get(&space).expect("id came from this map");
+            roster
+                .members()
+                .filter(|m| m.endpoint_id != me)
+                .map(|m| Known {
+                    space: space.clone(),
+                    name: m.name.clone(),
+                    id: m.endpoint_id.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
 
     let mut targets: Vec<Target> = Vec::new();
-    let mut unknown: Vec<String> = Vec::new();
     let push = |t: Target, targets: &mut Vec<Target>| {
         if !targets.contains(&t) {
             targets.push(t);
         }
     };
+    let peer = |k: &Known| Target::Peer {
+        name: k.name.clone(),
+        id: k.id.clone(),
+        space: k.space.clone(),
+    };
 
     for raw in selector.split(',') {
-        let name = raw.trim();
-        if name.is_empty() {
+        let element = raw.trim();
+        if element.is_empty() {
             continue;
         }
+
+        // A qualified name names its space explicitly; a bare one is looked
+        // up below.
+        let (scope, name) = match element.split_once('/') {
+            Some((label, device)) => match spaces.by_label(label.trim()) {
+                Some(id) => (Some(id), device.trim()),
+                None => {
+                    return Err(format!(
+                        "no space called '{}'. Known: {}",
+                        label.trim(),
+                        space_labels(&spaces)
+                    ));
+                }
+            },
+            None => (None, element),
+        };
+
         if name.eq_ignore_ascii_case("all") {
-            push(Target::Here, &mut targets);
-            for (n, id) in &members {
-                push(
-                    Target::Peer {
-                        name: n.clone(),
-                        id: id.clone(),
-                    },
-                    &mut targets,
-                );
+            let space = scope.unwrap_or_else(|| default_id.clone());
+            // This device is a member of every space it holds, so `all`
+            // includes it whichever space is named. Leaving it out of a
+            // non-default space made `main/all` reach nothing at all on a
+            // machine whose default had moved on.
+            if spaces.get(&space).is_some() {
+                push(Target::Here, &mut targets);
             }
-        } else if name.eq_ignore_ascii_case("here") || name == shared.name {
+            for k in known.iter().filter(|k| k.space == space) {
+                push(peer(k), &mut targets);
+            }
+            continue;
+        }
+
+        if scope.is_none() && (name.eq_ignore_ascii_case("here") || name == shared.name) {
             push(Target::Here, &mut targets);
-        } else if let Some((n, id)) = members.iter().find(|(n, _)| n == name) {
-            push(
-                Target::Peer {
-                    name: n.clone(),
-                    id: id.clone(),
-                },
-                &mut targets,
-            );
-        } else {
-            unknown.push(name.to_string());
+            continue;
+        }
+
+        let matches: Vec<&Known> = match &scope {
+            Some(space) => known
+                .iter()
+                .filter(|k| &k.space == space && k.name == name)
+                .collect(),
+            None => {
+                // The default space wins outright, so setting a default
+                // actually decides something.
+                let in_default: Vec<&Known> = known
+                    .iter()
+                    .filter(|k| k.space == default_id && k.name == name)
+                    .collect();
+                if in_default.is_empty() {
+                    known.iter().filter(|k| k.name == name).collect()
+                } else {
+                    in_default
+                }
+            }
+        };
+
+        match matches.as_slice() {
+            [] => {
+                return Err(format!(
+                    "no device named '{name}' in this space. Known: {}",
+                    device_names(&spaces, &shared.name)
+                ));
+            }
+            [only] => push(peer(only), &mut targets),
+            several => {
+                let where_ = several
+                    .iter()
+                    .map(|k| spaces.label(&k.space))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let hint = several
+                    .iter()
+                    .map(|k| format!("{}/{name}", spaces.label(&k.space)))
+                    .collect::<Vec<_>>()
+                    .join("  or  ");
+                return Err(format!(
+                    "'{name}' exists in {} spaces ({where_}). Qualify it: {hint}",
+                    several.len()
+                ));
+            }
         }
     }
 
-    if !unknown.is_empty() {
-        let mut known: Vec<&str> = members.iter().map(|(n, _)| n.as_str()).collect();
-        known.push(&shared.name);
-        known.sort_unstable();
-        return Err(format!(
-            "no device named {} in this space. Known: {}",
-            unknown
-                .iter()
-                .map(|u| format!("'{u}'"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            known.join(", "),
-        ));
-    }
     if targets.is_empty() {
         return Err(format!("'{selector}' names no devices"));
     }
     Ok(targets)
+}
+
+/// Every space label this device knows, for an error message.
+fn space_labels(spaces: &Spaces) -> String {
+    let mut labels: Vec<&str> = spaces.ids().iter().map(|id| spaces.label(id)).collect();
+    labels.sort_unstable();
+    labels.join(", ")
+}
+
+/// Every device name this device knows, qualified where a space is needed.
+fn device_names(spaces: &Spaces, own: &str) -> String {
+    let ids = spaces.ids();
+    let several = ids.len() > 1;
+    let mut names: Vec<String> = vec![own.to_string()];
+    for id in &ids {
+        let roster = spaces.get(id).expect("id came from this map");
+        for m in roster.members() {
+            names.push(if several {
+                format!("{}/{}", spaces.label(id), m.name)
+            } else {
+                m.name.clone()
+            });
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    names.join(", ")
 }
 
 /// Speak on every resolved target at once.
@@ -705,8 +873,8 @@ async fn deliver(
                         detail,
                     }
                 }
-                Target::Peer { name, id } => {
-                    to_peer(&shared, &transport, &name, &id, &outgoing).await
+                Target::Peer { name, id, space } => {
+                    to_peer(&shared, &transport, &name, &id, &space, &outgoing).await
                 }
             };
             (index, result)
@@ -731,10 +899,11 @@ async fn to_peer(
     transport: &Arc<Transport>,
     name: &str,
     peer_id: &str,
+    space: &str,
     outgoing: &Outgoing,
 ) -> TargetResult {
     let started = std::time::Instant::now();
-    match send_to_peer(shared, transport, peer_id, outgoing).await {
+    match send_to_peer(shared, transport, peer_id, space, outgoing).await {
         Ok(status) => TargetResult {
             device: name.to_string(),
             took_ms: outgoing.wait.then(|| started.elapsed().as_millis() as u64),
@@ -946,21 +1115,32 @@ fn refusal_detail(status: &Status) -> Option<String> {
 /// other when there is something to say, and that is exactly when a stale
 /// roster would be noticed. Without this, a rename or a newly joined device
 /// never reaches anyone — which is what `voicecast rename` had to warn about.
-async fn sync_roster(shared: &Arc<Shared>, conn: &iroh::endpoint::Connection) -> Result<()> {
+async fn sync_roster(
+    shared: &Arc<Shared>,
+    conn: &iroh::endpoint::Connection,
+    space: &str,
+) -> Result<()> {
     let (mut send, mut recv) = conn.open_bi().await.context("opening roster stream")?;
     let mine = {
-        let roster = shared.roster.lock().await;
+        let spaces = shared.spaces.lock().await;
+        let Some(roster) = spaces.get(space) else {
+            // The space went away under us — rotated, or left.
+            return Ok(());
+        };
         PeerMessage::RosterSync {
             members: roster.members().cloned().collect(),
             revoked: roster.tombstones(),
+            space: Some(space.to_string()),
         }
     };
     write_msg(&mut send, &mine).await?;
     send.finish().ok();
 
     match read_msg(&mut recv).await? {
-        PeerMessage::RosterSync { members, revoked } => {
-            merge_from_peer(shared, members, revoked).await?;
+        PeerMessage::RosterSync {
+            members, revoked, ..
+        } => {
+            merge_from_peer(shared, space, members, revoked).await?;
         }
         // The peer no longer counts us as a member: it left, or removed us.
         // Either way the relationship is over, so drop it rather than keep
@@ -972,10 +1152,15 @@ async fn sync_roster(shared: &Arc<Shared>, conn: &iroh::endpoint::Connection) ->
         // which it could already do by leaving.
         PeerMessage::JoinRefused { .. } => {
             let peer = conn.remote_id().to_string();
-            let mut roster = shared.roster.lock().await;
-            if roster.allows(&conn.remote_id()) {
+            let mut spaces = shared.spaces.lock().await;
+            // Only the space that peer was in: being dropped from one space
+            // says nothing about any other.
+            if let Some(id) = spaces.space_of(&peer)
+                && let Some(roster) = spaces.get_mut(&id)
+                && roster.allows(&conn.remote_id())
+            {
                 roster.revoke(&peer);
-                roster.save(&shared.roster_path)?;
+                spaces.save(&shared.spaces_path)?;
                 eprintln!("{peer} no longer shares a space with us; removed");
             }
         }
@@ -988,16 +1173,20 @@ async fn sync_roster(shared: &Arc<Shared>, conn: &iroh::endpoint::Connection) ->
 /// Merge a peer's roster into ours and persist the result.
 async fn merge_from_peer(
     shared: &Arc<Shared>,
+    space: &str,
     members: Vec<Member>,
     revoked: Vec<(String, u64)>,
 ) -> Result<()> {
-    let mut roster = shared.roster.lock().await;
+    let mut spaces = shared.spaces.lock().await;
     let theirs = Roster::from_parts(members, revoked);
+    let Some(roster) = spaces.get_mut(space) else {
+        return Ok(());
+    };
     roster.merge(&theirs);
     // Our own label is ours to decide; a peer's older copy must not overwrite
     // a rename we just made.
     roster.rename(&shared.identity.id().to_string(), &shared.name);
-    roster.save(&shared.roster_path)?;
+    spaces.save(&shared.spaces_path)?;
     Ok(())
 }
 
@@ -1006,6 +1195,7 @@ async fn send_to_peer(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
     peer_id: &str,
+    space: &str,
     outgoing: &Outgoing,
 ) -> Result<Status> {
     let peer = peer_id.parse().context("bad endpoint id in roster")?;
@@ -1014,7 +1204,7 @@ async fn send_to_peer(
     // Piggyback a roster exchange: this is the moment both sides are known to
     // be reachable, so it costs one extra stream and keeps names and
     // membership converging without any background chatter.
-    if let Err(e) = sync_roster(shared, &conn).await {
+    if let Err(e) = sync_roster(shared, &conn, space).await {
         eprintln!("roster sync with {peer_id}: {e:#}");
     }
 
@@ -1027,6 +1217,7 @@ async fn send_to_peer(
             priority: outgoing.priority,
             wait: outgoing.wait,
             voice: outgoing.voice.clone(),
+            space: Some(space.to_string()),
         },
     )
     .await?;
@@ -1101,14 +1292,20 @@ async fn do_join(shared: &Arc<Shared>, transport: &Arc<Transport>, t: &Ticket) -
     .await?;
 
     match read_msg(&mut recv).await? {
-        PeerMessage::JoinAccepted { member, members } => {
-            let mut roster = shared.roster.lock().await;
+        PeerMessage::JoinAccepted {
+            member,
+            members,
+            space: _,
+        } => {
+            let mut spaces = shared.spaces.lock().await;
             // Replace rather than merge: joining a space means adopting its
             // membership, not blending it with whatever we had before.
             let all = members.into_iter().chain(std::iter::once(member));
-            *roster = Roster::adopt(all);
-            roster.save(&shared.roster_path)?;
-            Ok(roster.members().count())
+            let joined = Roster::from_parts(all.collect(), Vec::new());
+            let count = joined.members().count();
+            spaces.replace_current(joined);
+            spaces.save(&shared.spaces_path)?;
+            Ok(count)
         }
         PeerMessage::JoinRefused { reason } => anyhow::bail!("{reason}"),
         other => anyhow::bail!("unexpected reply: {other:?}"),
@@ -1131,9 +1328,11 @@ async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
             message: e.to_string(),
         };
     }
-    let mut roster = shared.roster.lock().await;
-    roster.rename(&shared.identity.id().to_string(), name);
-    if let Err(e) = roster.save(&shared.roster_path) {
+    let mut spaces = shared.spaces.lock().await;
+    spaces
+        .current_mut()
+        .rename(&shared.identity.id().to_string(), name);
+    if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
         };
@@ -1151,9 +1350,13 @@ async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
 /// removal was instant everywhere.
 async fn revoke(shared: &Arc<Shared>, name: &str) -> Response {
     let me = shared.identity.id().to_string();
-    let mut roster = shared.roster.lock().await;
+    let mut spaces = shared.spaces.lock().await;
 
-    let Some(target) = roster.by_name(name).map(|m| m.endpoint_id.clone()) else {
+    let Some(target) = spaces
+        .current()
+        .by_name(name)
+        .map(|m| m.endpoint_id.clone())
+    else {
         return Response::Error {
             message: format!("no device named '{name}' in this space"),
         };
@@ -1164,8 +1367,8 @@ async fn revoke(shared: &Arc<Shared>, name: &str) -> Response {
         };
     }
 
-    roster.revoke(&target);
-    if let Err(e) = roster.save(&shared.roster_path) {
+    spaces.current_mut().revoke(&target);
+    if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
         };
@@ -1187,8 +1390,10 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>) -> Response {
     let me = shared.identity.id().to_string();
 
     // A roster carrying our own tombstone. Peers merging this drop us.
-    let (farewell, peers) = {
-        let roster = shared.roster.lock().await;
+    let (farewell, peers, space) = {
+        let spaces = shared.spaces.lock().await;
+        let roster = spaces.current();
+        let space = spaces.default_id().to_string();
         let mut goodbye = roster.clone();
         goodbye.revoke(&me);
         let peers: Vec<String> = roster
@@ -1196,19 +1401,22 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>) -> Response {
             .filter(|m| m.endpoint_id != me)
             .map(|m| m.endpoint_id.clone())
             .collect();
-        (goodbye, peers)
+        (goodbye, peers, space)
     };
 
     let mut told = 0usize;
     for peer in &peers {
-        if announce_departure(transport, peer, &farewell).await.is_ok() {
+        if announce_departure(transport, peer, &space, &farewell)
+            .await
+            .is_ok()
+        {
             told += 1;
         }
     }
 
-    let mut roster = shared.roster.lock().await;
-    *roster = Roster::leave(shared.identity.secret(), &shared.name);
-    if let Err(e) = roster.save(&shared.roster_path) {
+    let mut spaces = shared.spaces.lock().await;
+    spaces.replace_current(Roster::leave(shared.identity.secret(), &shared.name));
+    if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
         };
@@ -1224,10 +1432,156 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>) -> Response {
     }
 }
 
+/// Replace this space with a fresh one founded here.
+///
+/// The panic button. Revocation is eventually consistent, so a device that
+/// has been offline since the revoke still honours the revoked member until
+/// it syncs — fine for a laptop that was sold, useless for a phone that was
+/// stolen. Rotating sidesteps the wait entirely: the excluded device is not
+/// in the new space and never was, so there is nothing for it to find out.
+///
+/// Deliberately silent. `leave` announces itself because the point is to be
+/// dropped; this one must not, since the only devices listening include the
+/// one being excluded. Survivors discover it the next time they make contact
+/// and are refused, which already makes them drop this device — the same
+/// self-healing path a stale peer takes.
+///
+/// Everyone has to be re-invited, which is the cost of locking one device out
+/// immediately. It is only bearable because joining is cheap.
+async fn rotate(shared: &Arc<Shared>) -> Response {
+    let me = shared.identity.id().to_string();
+    let mut spaces = shared.spaces.lock().await;
+
+    let devices: Vec<String> = spaces
+        .current()
+        .members()
+        .filter(|m| m.endpoint_id != me)
+        .map(|m| m.name.clone())
+        .collect();
+
+    spaces.replace_current(Roster::found(shared.identity.secret(), &shared.name));
+    if let Err(e) = spaces.save(&shared.spaces_path) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    Response::Rotated { devices }
+}
+
+/// The spaces this device belongs to.
+async fn list_spaces(shared: &Arc<Shared>) -> Response {
+    let spaces = shared.spaces.lock().await;
+    Response::Spaces {
+        spaces: spaces
+            .list(&shared.identity.id().to_string())
+            .into_iter()
+            .map(|s| voicecast_proto::SpaceRow {
+                label: s.label,
+                devices: s.devices,
+                is_default: s.is_default,
+                founded_here: s.founded_here,
+            })
+            .collect(),
+    }
+}
+
+/// Found a new space from this device.
+///
+/// Additive: the spaces already held are untouched, and the new one becomes
+/// the default so the invites that follow land in it.
+async fn new_space(shared: &Arc<Shared>, label: &str) -> Response {
+    let mut spaces = shared.spaces.lock().await;
+    if spaces.by_label(label).is_some() {
+        return Response::Error {
+            message: format!("there is already a space called '{label}'"),
+        };
+    }
+    let roster = Roster::found(shared.identity.secret(), &shared.name);
+    let id = roster.space_id();
+    spaces.insert(roster, label);
+    if let Err(e) = spaces.set_label(&id, label) {
+        return Response::Error { message: e };
+    }
+    if let Err(e) = spaces.set_default(&id) {
+        return Response::Error { message: e };
+    }
+    if let Err(e) = spaces.save(&shared.spaces_path) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    drop(spaces);
+    list_spaces(shared).await
+}
+
+/// Drop one space, keeping the others.
+///
+/// Announced, like `leave`: the point is to be forgotten by the devices left
+/// behind, and telling them is what makes that immediate rather than eventual.
+async fn leave_space(shared: &Arc<Shared>, label: &str) -> Response {
+    let mut spaces = shared.spaces.lock().await;
+    let Some(id) = spaces.by_label(label) else {
+        return Response::Error {
+            message: format!("no space called '{label}'"),
+        };
+    };
+    if let Err(message) = spaces.remove(&id) {
+        return Response::Error { message };
+    }
+    if let Err(e) = spaces.save(&shared.spaces_path) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    drop(spaces);
+    list_spaces(shared).await
+}
+
+/// Choose which space bare device names resolve in.
+async fn default_space(shared: &Arc<Shared>, label: &str) -> Response {
+    let mut spaces = shared.spaces.lock().await;
+    let Some(id) = spaces.by_label(label) else {
+        return Response::Error {
+            message: format!("no space called '{label}'"),
+        };
+    };
+    if let Err(message) = spaces.set_default(&id) {
+        return Response::Error { message };
+    }
+    if let Err(e) = spaces.save(&shared.spaces_path) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    drop(spaces);
+    list_spaces(shared).await
+}
+
+/// Rename a space locally.
+async fn rename_space(shared: &Arc<Shared>, label: &str, to: &str) -> Response {
+    let mut spaces = shared.spaces.lock().await;
+    let Some(id) = spaces.by_label(label) else {
+        return Response::Error {
+            message: format!("no space called '{label}'"),
+        };
+    };
+    if let Err(message) = spaces.set_label(&id, to) {
+        return Response::Error { message };
+    }
+    if let Err(e) = spaces.save(&shared.spaces_path) {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    drop(spaces);
+    list_spaces(shared).await
+}
+
 /// Push a roster carrying our own tombstone to one peer.
 async fn announce_departure(
     transport: &Arc<Transport>,
     peer_id: &str,
+    space: &str,
     farewell: &Roster,
 ) -> Result<()> {
     let peer = peer_id.parse().context("bad endpoint id in roster")?;
@@ -1238,6 +1592,7 @@ async fn announce_departure(
         &PeerMessage::RosterSync {
             members: farewell.members().cloned().collect(),
             revoked: farewell.tombstones(),
+            space: Some(space.to_string()),
         },
     )
     .await?;
@@ -1249,11 +1604,24 @@ async fn announce_departure(
 async fn devices(shared: &Arc<Shared>) -> Response {
     let me = shared.identity.id().to_string();
     let seen = shared.last_seen.lock().await.clone();
-    let roster = shared.roster.lock().await;
-    Response::Devices {
-        devices: roster
-            .members()
-            .map(|m| DeviceInfo {
+    let spaces = shared.spaces.lock().await;
+    let ids = spaces.ids();
+    // Only worth labelling when there is a choice; one space would give a
+    // column that always reads the same.
+    let several = ids.len() > 1;
+
+    // The default space first, so the devices a bare name reaches are at the
+    // top rather than wherever the id happened to sort.
+    let mut ordered = vec![spaces.default_id().to_string()];
+    ordered.extend(ids.into_iter().filter(|id| id != spaces.default_id()));
+
+    let mut devices = Vec::new();
+    for id in ordered {
+        let Some(roster) = spaces.get(&id) else {
+            continue;
+        };
+        for m in roster.members() {
+            devices.push(DeviceInfo {
                 last_seen_secs: if m.endpoint_id == me {
                     Some(0)
                 } else {
@@ -1263,9 +1631,11 @@ async fn devices(shared: &Arc<Shared>) -> Response {
                 name: m.name.clone(),
                 endpoint_id: m.endpoint_id.clone(),
                 is_self: m.endpoint_id == me,
-            })
-            .collect(),
+                space: several.then(|| spaces.label(&id).to_string()),
+            });
+        }
     }
+    Response::Devices { devices }
 }
 
 /// Serve one peer connection.
@@ -1288,10 +1658,21 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 priority,
                 wait,
                 voice,
+                space,
             } => {
-                // Authorisation is the roster, and nothing else: an unpaired
-                // device cannot make this one speak.
-                let allowed = shared.roster.lock().await.allows(&remote);
+                // Authorisation is the roster of the space the message was
+                // sent in, and nothing else: an unpaired device cannot make
+                // this one speak, and membership of one space grants nothing
+                // in another.
+                let allowed = match space_for(shared, space, &remote).await {
+                    Some(id) => shared
+                        .spaces
+                        .lock()
+                        .await
+                        .get(&id)
+                        .is_some_and(|r| r.allows(&remote)),
+                    None => false,
+                };
                 if !allowed {
                     write_msg(
                         &mut send,
@@ -1323,12 +1704,32 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 let (status, _took, _detail) = speak_here(shared, &outgoing).await;
                 write_msg(&mut send, &PeerMessage::Report { status }).await?;
             }
-            PeerMessage::RosterSync { members, revoked } => {
+            PeerMessage::RosterSync {
+                members,
+                revoked,
+                space,
+            } => {
                 // Only members may change our roster. Without this any device
                 // that can reach us could inject entries — and, more visibly,
                 // a device we just left would push us straight back into the
                 // space it still thinks we are in.
-                if !shared.roster.lock().await.allows(&remote) {
+                let Some(space) = space_for(shared, space, &remote).await else {
+                    write_msg(
+                        &mut send,
+                        &PeerMessage::JoinRefused {
+                            reason: "not a member of this space".into(),
+                        },
+                    )
+                    .await?;
+                    continue;
+                };
+                let member = shared
+                    .spaces
+                    .lock()
+                    .await
+                    .get(&space)
+                    .is_some_and(|r| r.allows(&remote));
+                if !member {
                     write_msg(
                         &mut send,
                         &PeerMessage::JoinRefused {
@@ -1342,13 +1743,17 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 // and closes without waiting, so writing first meant the reply
                 // failed and `?` returned before the news was ever acted on —
                 // which is why a device that left stayed listed here.
-                merge_from_peer(shared, members, revoked).await?;
+                merge_from_peer(shared, &space, members, revoked).await?;
 
                 let mine = {
-                    let roster = shared.roster.lock().await;
-                    PeerMessage::RosterSync {
-                        members: roster.members().cloned().collect(),
-                        revoked: roster.tombstones(),
+                    let spaces = shared.spaces.lock().await;
+                    match spaces.get(&space) {
+                        Some(roster) => PeerMessage::RosterSync {
+                            members: roster.members().cloned().collect(),
+                            revoked: roster.tombstones(),
+                            space: Some(space.clone()),
+                        },
+                        None => continue,
                     }
                 };
                 // Best-effort: the peer may already be gone, and that is fine.
@@ -1359,6 +1764,26 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
         }
     }
     Ok(())
+}
+
+/// Which of this device's spaces a peer message belongs to.
+///
+/// A peer that names one is taken at its word, provided we hold that space.
+/// One that does not — a build from before spaces, or simply an older
+/// message — is placed by looking up where we already know it from, which is
+/// unambiguous whenever the two devices share a single space.
+async fn space_for(
+    shared: &Arc<Shared>,
+    named: Option<String>,
+    remote: &iroh::EndpointId,
+) -> Option<String> {
+    let spaces = shared.spaces.lock().await;
+    if let Some(id) = named
+        && spaces.get(&id).is_some()
+    {
+        return Some(id);
+    }
+    spaces.space_of(&remote.to_string())
 }
 
 /// Decide whether to admit a joiner, and sign its record if so.
@@ -1390,15 +1815,22 @@ async fn accept_join(
     *pending = None;
     drop(pending);
 
-    let mut r = shared.roster.lock().await;
-    let member = r.invite(shared.identity.secret(), endpoint_id, name);
-    if let Err(e) = r.save(&shared.roster_path) {
+    let mut spaces = shared.spaces.lock().await;
+    let member = spaces
+        .current_mut()
+        .invite(shared.identity.secret(), endpoint_id, name);
+    if let Err(e) = spaces.save(&shared.spaces_path) {
         return PeerMessage::JoinRefused {
             reason: format!("could not record membership: {e}"),
         };
     }
-    let members: Vec<Member> = r.members().cloned().collect();
-    PeerMessage::JoinAccepted { member, members }
+    let members: Vec<Member> = spaces.current().members().cloned().collect();
+    let space_id = spaces.current().space_id();
+    PeerMessage::JoinAccepted {
+        member,
+        members,
+        space: Some(space_id),
+    }
 }
 
 /// Note that a peer was reachable just now.

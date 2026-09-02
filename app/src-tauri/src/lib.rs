@@ -287,6 +287,66 @@ async fn list_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, Str
     }
 }
 
+/// The spaces this device belongs to.
+#[tauri::command]
+async fn list_spaces(state: State<'_, AppState>) -> Result<Vec<voicecast_proto::SpaceRow>, String> {
+    match state.node.spaces().await {
+        Response::Spaces { spaces } => Ok(spaces),
+        other => Err(describe(other)),
+    }
+}
+
+/// Found a new space from this device, and make it the default.
+#[tauri::command]
+async fn new_space(state: State<'_, AppState>, label: String) -> Result<(), String> {
+    match state.node.new_space(&label).await {
+        Response::Spaces { .. } => Ok(()),
+        other => Err(describe(other)),
+    }
+}
+
+/// Drop one space, keeping the others.
+///
+/// Distinct from `leave_space`, which leaves the space this device is
+/// currently using; this one names which of several to drop.
+#[tauri::command]
+async fn drop_space(state: State<'_, AppState>, label: String) -> Result<(), String> {
+    match state.node.leave_space(&label).await {
+        Response::Spaces { .. } => Ok(()),
+        other => Err(describe(other)),
+    }
+}
+
+/// Choose which space bare device names resolve in.
+#[tauri::command]
+async fn default_space(state: State<'_, AppState>, label: String) -> Result<(), String> {
+    match state.node.default_space(&label).await {
+        Response::Spaces { .. } => Ok(()),
+        other => Err(describe(other)),
+    }
+}
+
+/// Rename a space locally.
+#[tauri::command]
+async fn rename_space(state: State<'_, AppState>, label: String, to: String) -> Result<(), String> {
+    match state.node.rename_space(&label, &to).await {
+        Response::Spaces { .. } => Ok(()),
+        other => Err(describe(other)),
+    }
+}
+
+/// Replace the default space, locking every other device out at once.
+///
+/// Returns the devices that were in it, so the interface can say who has to
+/// be re-invited rather than leaving the user to remember.
+#[tauri::command]
+async fn rotate_space(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    match state.node.rotate().await {
+        Response::Rotated { devices } => Ok(devices),
+        other => Err(describe(other)),
+    }
+}
+
 #[tauri::command]
 async fn make_invite(state: State<'_, AppState>) -> Result<Invite, String> {
     match state.node.invite().await {
@@ -637,6 +697,12 @@ pub fn run() {
             cli_installable,
             cli_expected_path,
             install_cli,
+            list_spaces,
+            new_space,
+            drop_space,
+            default_space,
+            rename_space,
+            rotate_space,
             policy,
             set_mute,
             set_quiet,

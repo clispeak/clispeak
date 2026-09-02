@@ -87,7 +87,7 @@ $ voicecast groups
 | `-w, --wait` | off | Block until every target reaches a terminal state |
 | `--timeout <secs>` | `120` | With `--wait` |
 | `--json` | off | Machine-readable result on stdout |
-| `-q, --quiet` | off | Suppress output; exit code only |
+| `-q, --quiet` | off | Suppress normal output. Errors still go to stderr — a failure nobody can explain is worse than a quiet success |
 | `--strip` | off | Convert markdown to speakable text instead of rejecting |
 | `--raw` | off | Speak exactly as given; skip validation entirely |
 | `--dry-run` | off | Resolve targets and print them; speak nothing |
@@ -191,7 +191,7 @@ $ voicecast invite                     # QR + ticket to add a device
 $ voicecast invite --print-only        # ticket only, for pasting over SSH
 $ voicecast join <ticket>              # join a space from this device
 $ voicecast revoke <name>
-$ voicecast rename <old> <new>
+$ voicecast rename <new>                 # this device's own label
 $ voicecast status                     # this node: identity, connections, queue
 $ voicecast init                       # first run: identity + new space
 ```
@@ -212,6 +212,7 @@ $ voicecast space leave work         # drop the roster + gossip a self-revocatio
 $ voicecast space default home       # which space bare target names resolve in
 $ voicecast space rename work team   # local label only
 $ voicecast space rotate             # new space, re-invite survivors (see below)
+                               # also spelled `voicecast rotate`
 ```
 
 Leaving works offline: the local roster is dropped immediately, and the signed
@@ -246,7 +247,8 @@ $ voicecast --to work/all "..."         # every device in one space
 $ voicecast --to work/all,home/all      # both, spelled out
 ```
 
-Ambiguity is an error, never a guess:
+A bare name resolves in the default space when it exists there, and otherwise
+anywhere it is unique. Ambiguity is an error, never a guess:
 
 ```
 $ voicecast --to laptop "..."
@@ -258,6 +260,9 @@ $ voicecast --to laptop "..."
 `--to all` is scoped to one space. Crossing spaces requires naming them,
 because the failure it prevents — a work message arriving on the family
 tablet — is exactly what separate spaces are for.
+
+Groups expand one level: a group naming another group is left alone rather
+than followed. Nesting buys little and a cycle would hang the tool.
 
 Groups may span spaces, since they're local config:
 

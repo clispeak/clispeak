@@ -12,6 +12,7 @@ mod node;
 pub mod policy;
 mod queue;
 pub mod roster;
+pub mod spaces;
 pub mod ticket;
 pub mod transport;
 
@@ -22,6 +23,7 @@ pub use identity::{
 pub use node::{Node, WindowHook};
 pub use policy::{Policy, QuietHours};
 pub use roster::{Roster, RosterError, verify};
+pub use spaces::{SpaceInfo, Spaces};
 pub use ticket::{Ticket, qr_svg};
 pub use transport::Transport;
 pub use voicecast_proto::Member;

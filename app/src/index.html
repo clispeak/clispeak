@@ -61,6 +61,42 @@
              focus-visible:outline-2 focus-visible:outline-offset-2">
       Leave this space
     </button>
+
+    <button id="rotate"
+      class="mt-1 w-full rounded-lg px-4 text-sm text-red-600 transition
+             hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10
+             focus-visible:outline-2 focus-visible:outline-offset-2">
+      Replace this space (lost or stolen device)
+    </button>
+  </section>
+
+  <!-- Spaces --------------------------------------------------------------- -->
+  <section id="spaces-section" hidden>
+    <!-- Revealed once the node answers, so it does not flash in empty. -->
+    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+      Spaces
+    </h2>
+    <ul id="spaces" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
+                           border border-neutral-200 bg-white
+                           dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900"></ul>
+    <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+      Separate sets of your own devices. Names without a space go to the
+      default one.
+    </p>
+    <form id="new-space-form" class="mt-2 flex gap-2">
+      <label for="new-space" class="sr-only">Name for a new space</label>
+      <input id="new-space" type="text" autocomplete="off" placeholder="New space name"
+        class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
+               placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+               focus:ring-2 focus:ring-accent-500/30
+               dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
+      <button type="submit"
+        class="shrink-0 rounded-lg border border-neutral-300 px-4 text-sm font-medium transition
+               hover:bg-neutral-100 active:scale-[0.99]
+               dark:border-neutral-700 dark:hover:bg-neutral-800">
+        Add
+      </button>
+    </form>
   </section>
 
   <!-- Speak ---------------------------------------------------------------- -->

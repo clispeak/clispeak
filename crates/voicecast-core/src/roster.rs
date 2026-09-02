@@ -58,6 +58,13 @@ pub struct Roster {
     members: BTreeMap<String, Member>,
     /// Endpoint ids that have been revoked. Tombstones win over entries.
     revoked: BTreeMap<String, u64>,
+    /// Which space this is, so a device in several can tell them apart.
+    ///
+    /// Defaulted because rosters written before spaces existed have none.
+    /// [`Roster::space_id`] derives one for those, in a way every member
+    /// derives identically — see there.
+    #[serde(default)]
+    id: String,
 }
 
 impl Roster {
@@ -74,7 +81,52 @@ impl Roster {
         let mut roster = Self::new();
         let me = secret.public().to_string();
         roster.insert_self_signed(secret, &me, name);
+        roster.id = roster.derived_id();
         roster
+    }
+
+    /// Which space this is.
+    ///
+    /// Every member has to agree on this without being told, so it is derived
+    /// from the founder rather than invented: the founder is the one member
+    /// whose entry vouches for itself, and its join time distinguishes two
+    /// spaces founded by the same device — which is exactly what rotating
+    /// produces.
+    ///
+    /// Derived on demand for rosters that predate the field, so an existing
+    /// pair of devices agrees on an id without either being upgraded first.
+    pub fn space_id(&self) -> String {
+        if !self.id.is_empty() {
+            return self.id.clone();
+        }
+        self.derived_id()
+    }
+
+    /// Adopt an id agreed elsewhere, if this roster has none yet.
+    ///
+    /// Returns whether anything changed, so the caller knows to save.
+    pub fn adopt_id(&mut self, id: &str) -> bool {
+        if self.id.is_empty() && !id.is_empty() {
+            self.id = id.to_string();
+            return true;
+        }
+        false
+    }
+
+    /// The id implied by the founder's own entry.
+    ///
+    /// Falls back to this roster's first member when no entry is self-signed,
+    /// which can only happen once a founder has left. Better a stable id that
+    /// every remaining member computes the same way than none at all.
+    fn derived_id(&self) -> String {
+        let founder = self
+            .members
+            .values()
+            .find(|m| m.invited_by == m.endpoint_id)
+            .or_else(|| self.members.values().next());
+        founder.map_or_else(String::new, |m| {
+            format!("{}:{}", m.endpoint_id, m.joined_at)
+        })
     }
 
     /// Sign and insert an entry for `endpoint_id`, vouched for by us.
@@ -105,6 +157,8 @@ impl Roster {
     /// would be impossible. Trust for the whole set comes from the invite
     /// ticket that led here, not from each record individually.
     pub fn adopt(members: impl IntoIterator<Item = Member>) -> Self {
+        // The id is derived by the caller once members are in place: it is a
+        // function of the founder's entry, which does not exist yet here.
         let mut roster = Self::new();
         for member in members {
             if verify(&member).is_ok() {
@@ -126,6 +180,7 @@ impl Roster {
     /// Rebuild a roster from a peer's snapshot, verifying every signature.
     pub fn from_parts(members: Vec<Member>, revoked: Vec<(String, u64)>) -> Self {
         let mut roster = Self::adopt(members);
+        roster.id = roster.derived_id();
         for (id, at) in revoked {
             roster.revoked.insert(id, at);
         }
