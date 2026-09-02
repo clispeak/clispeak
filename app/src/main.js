@@ -67,6 +67,46 @@ async function call(cmd, args) {
   }
 }
 
+/**
+ * Ask before doing something destructive. Resolves true if confirmed.
+ *
+ * Not `window.confirm`. WKWebView shows a script dialog only if the host
+ * implements a `WKUIDelegate` for it, and wry implements none — so on macOS
+ * `confirm()` displayed nothing and returned false, and every action behind
+ * one silently did nothing while reporting success. An in-page dialog behaves
+ * the same on all five targets, which a native one never did.
+ *
+ * Escape and the backdrop cancel, because the safe answer should be the
+ * easiest one to give.
+ */
+function ask(question) {
+  const box = $("ask");
+  $("ask-text").textContent = question;
+  box.hidden = false;
+  $("ask-yes").focus();
+
+  return new Promise((resolve) => {
+    const done = (answer) => {
+      box.hidden = true;
+      $("ask-yes").onclick = null;
+      $("ask-no").onclick = null;
+      box.onclick = null;
+      document.removeEventListener("keydown", onKey);
+      resolve(answer);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") done(false);
+    };
+    $("ask-yes").onclick = () => done(true);
+    $("ask-no").onclick = () => done(false);
+    // Only the backdrop itself, so a click inside the panel does not cancel.
+    box.onclick = (e) => {
+      if (e.target === box) done(false);
+    };
+    document.addEventListener("keydown", onKey);
+  });
+}
+
 /** Run an async action with the button disabled, so it cannot double-fire. */
 async function withButton(button, label, action) {
   const original = button.textContent;
@@ -141,7 +181,7 @@ function deviceRow(device) {
     remove.textContent = "Remove";
     remove.onclick = () =>
       withButton(remove, "…", async () => {
-        if (!confirm(`Remove ${device.name} from this space?`)) return;
+        if (!(await ask(`Remove ${device.name} from this space?`))) return;
         say(await call("revoke_device", { name: device.name }));
         await refresh();
       });
@@ -443,7 +483,7 @@ function spaceRow(space, several) {
     drop.textContent = "Drop";
     drop.onclick = () =>
       withButton(drop, "…", async () => {
-        if (!confirm(`Drop the space "${space.label}"?`)) return;
+        if (!(await ask(`Drop the space "${space.label}"?`))) return;
         await call("drop_space", { label: space.label });
         say(`dropped ${space.label}`);
         await refresh();
@@ -691,7 +731,10 @@ $("rename-form").onsubmit = async (e) => {
 
 $("leave").onclick = () =>
   withButton($("leave"), "…", async () => {
-    if (!confirm("Leave this space? Other devices will stop reaching this one.")) return;
+    if (
+      !(await ask("Leave this space? Other devices will stop reaching this one."))
+    )
+      return;
     say(await call("leave_space"));
     await refresh();
   });
@@ -730,7 +773,7 @@ $("history-unheard").onchange = refreshHistory;
 
 $("history-clear").onclick = () =>
   withButton($("history-clear"), "…", async () => {
-    if (!confirm("Forget every message in the history?")) return;
+    if (!(await ask("Forget every message in the history?"))) return;
     await call("clear_history");
     await refreshHistory();
   });
@@ -748,10 +791,10 @@ $("new-space-form").onsubmit = async (e) => {
 $("rotate").onclick = () =>
   withButton($("rotate"), "…", async () => {
     if (
-      !confirm(
+      !(await ask(
         "Replace this space? Every other device is locked out immediately " +
           "and has to be invited again.",
-      )
+      ))
     )
       return;
     const left = await call("rotate_space");

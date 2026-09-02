@@ -66,7 +66,64 @@ fn portability() -> anyhow::Result<()> {
         anyhow::bail!("platform code belongs in voicecast-engine or the Tauri shell");
     }
 
+    frontend_dialogs()?;
+
     println!("portability ok: {} crates clean", PORTABLE.len());
+    Ok(())
+}
+
+/// Fail if the frontend calls a blocking dialog the webview may not have.
+///
+/// The same rule as above, one layer up. `window.confirm`, `alert` and
+/// `prompt` are not portable: WebKitGTK and WebView2 show them, WKWebView
+/// shows one only if the host implements a `WKUIDelegate` for it, and wry
+/// implements none. On macOS `confirm()` therefore displayed nothing and
+/// returned false, so five destructive actions — clearing the history,
+/// removing a device, dropping, leaving and rotating a space — silently did
+/// nothing while appearing to succeed.
+///
+/// Worth a mechanical gate rather than a note, because the symptom is a
+/// button that looks like it worked. Use `ask()` in `main.js`, which behaves
+/// the same on all five targets.
+///
+/// Comments are skipped, so the explanation of the rule cannot trip it.
+fn frontend_dialogs() -> anyhow::Result<()> {
+    let file = PathBuf::from("app/src/main.js");
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        // Not a checkout with a frontend in it; nothing to say.
+        return Ok(());
+    };
+
+    let mut findings = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") || trimmed.starts_with("*") || trimmed.starts_with("/*") {
+            continue;
+        }
+        for call in ["confirm(", "alert(", "prompt("] {
+            // `window.` prefixed or bare, but not `ask(` or a longer name
+            // that merely ends in one of these.
+            let found = line.match_indices(call).any(|(at, _)| {
+                line[..at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_' && c != '.')
+                    || line[..at].ends_with("window.")
+            });
+            if found {
+                findings.push(format!("  {}:{}: {}", file.display(), i + 1, trimmed));
+                break;
+            }
+        }
+    }
+
+    if !findings.is_empty() {
+        eprintln!("the frontend must not use a webview's blocking dialogs:");
+        for f in &findings {
+            eprintln!("{f}");
+        }
+        anyhow::bail!("use ask() in main.js — WKWebView shows none of these");
+    }
     Ok(())
 }
 
