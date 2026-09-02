@@ -244,10 +244,11 @@ socket file that stopped every later node from starting.
 *Exit:* installing the dmg on a Mac with nothing else installed gives a device
 that speaks, and `voicecast` on the PATH. **Done, apart from signing.**
 
-A Mac has since joined a space — its signed entry is in the phone's roster,
-invited by the phone — so pairing works. It has not yet been *reached*: every
-attempt from the laptop has timed out with that machine offline, so speech to
-a Mac over the network remains unproven.
+A Mac has since joined a space and been spoken to from the laptop, so both
+legs are proven. The earlier timeouts were that machine being offline — and
+worth knowing, an ad-hoc signed bundle is a new identity to macOS on every
+rebuild, so the keychain prompt blocks node startup until someone clicks it.
+A Mac waiting on that dialog is indistinguishable from one that is off.
 
 ---
 
