@@ -130,6 +130,7 @@ fn cli_on_path() -> bool {
 ///
 /// Checked before writing anything, so a line someone wrote themselves is
 /// never duplicated — including the one this app may have written before.
+#[cfg(target_os = "macos")]
 const PROFILES: &[&str] = &[
     ".zshenv",
     ".zprofile",
@@ -144,6 +145,7 @@ const PROFILES: &[&str] = &[
 /// `.zprofile` because zsh is the login shell on every macOS since Catalina,
 /// and because it is read *after* `/etc/zprofile` runs `path_helper` — which
 /// rebuilds PATH from `/etc/paths` and would otherwise reorder the entry away.
+#[cfg(target_os = "macos")]
 const PROFILE: &str = ".zprofile";
 
 /// Put the CLI's directory on the PATH for future shells.
