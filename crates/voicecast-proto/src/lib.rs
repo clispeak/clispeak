@@ -109,6 +109,10 @@ pub enum Request {
     },
     /// List devices in the space.
     Devices,
+    /// Bring the app's window back from the tray.
+    Show,
+    /// Shut the node down.
+    Quit,
     /// Change this device's local label.
     Rename {
         /// The new label.
@@ -146,6 +150,8 @@ pub enum Response {
         /// How many devices are now in it.
         members: usize,
     },
+    /// The request was carried out but has nothing to report.
+    Done,
     /// The device was renamed.
     Renamed {
         /// Its new label.

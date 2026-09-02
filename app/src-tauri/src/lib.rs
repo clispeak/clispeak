@@ -161,6 +161,18 @@ pub fn run() {
                         handle.manage(AppState {
                             node: Arc::clone(&node),
                         });
+
+                        // Give the CLI a way to reach a window it cannot see.
+                        // This matters most where the tray icon fails to
+                        // appear: without it, closing the window leaves a
+                        // running node with no way back and no way out.
+                        let show_handle = handle.clone();
+                        let quit_handle = handle.clone();
+                        node.set_window_hooks(
+                            Arc::new(move || reveal(&show_handle)),
+                            Arc::new(move || quit_handle.exit(0)),
+                        )
+                        .await;
                         // On desktop the app is the node the CLI talks to:
                         // install it, open it, and `voicecast --to phone ...`
                         // works with no separate daemon. A phone has no CLI,
@@ -206,6 +218,13 @@ pub fn run() {
 /// an obvious way to quit. On Linux this needs the desktop shell to provide a
 /// StatusNotifierItem host, which not every compositor does — the app still
 /// works without one, it is just harder to notice.
+///
+/// Worth knowing when it seems not to work: `libayatana-appindicator`
+/// registers under its unique D-Bus connection name plus an object path,
+/// not the `org.freedesktop.StatusNotifierItem-PID-N` well-known name, so
+/// grepping for the latter finds nothing even on success. Ask the watcher
+/// for `RegisteredStatusNotifierItems` instead. Some bars — Omarchy's
+/// included — then collapse third-party icons behind a drawer.
 #[cfg(desktop)]
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show voicecast", true, None::<&str>)?;

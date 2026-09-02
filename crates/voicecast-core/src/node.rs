@@ -28,6 +28,12 @@ struct Job {
 }
 
 /// Shared state both loops need.
+/// What to do when the CLI asks for the window or for shutdown.
+///
+/// The node owns no UI, so the app installs these. Without an app — a headless
+/// `voicecastd` — `show` has nothing to do and `quit` still works.
+pub type WindowHook = Arc<dyn Fn() + Send + Sync>;
+
 struct Shared {
     engine: Arc<dyn SpeechEngine>,
     identity: Identity,
@@ -40,6 +46,8 @@ struct Shared {
     pending: Mutex<Option<Ticket>>,
     tx: tokio::sync::mpsc::UnboundedSender<Job>,
     queued: AtomicUsize,
+    on_show: Mutex<Option<WindowHook>>,
+    on_quit: Mutex<Option<WindowHook>>,
 }
 
 /// The running node.
@@ -82,6 +90,8 @@ impl Node {
             pending: Mutex::new(None),
             tx,
             queued,
+            on_show: Mutex::new(None),
+            on_quit: Mutex::new(None),
         });
 
         let counter = Arc::clone(&shared);
@@ -103,6 +113,16 @@ impl Node {
             shared,
             transport: Arc::new(transport),
         })
+    }
+
+    /// Install what `voicecast show` and `voicecast quit` should do.
+    ///
+    /// Called by the app so the CLI can reach a window it cannot see — which
+    /// matters most where the tray icon fails to appear, leaving no other way
+    /// back to a hidden app.
+    pub async fn set_window_hooks(&self, on_show: WindowHook, on_quit: WindowHook) {
+        *self.shared.on_show.lock().await = Some(on_show);
+        *self.shared.on_quit.lock().await = Some(on_quit);
     }
 
     /// Speak text here, or on a named peer.
@@ -242,6 +262,36 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
         Request::Join { ticket } => join(shared, transport, &ticket).await,
         Request::Devices => devices(shared).await,
         Request::Rename { name } => rename(shared, &name).await,
+        Request::Show => match shared.on_show.lock().await.as_ref() {
+            Some(hook) => {
+                hook();
+                Response::Done
+            }
+            None => Response::Error {
+                message: "this node has no window".into(),
+            },
+        },
+        Request::Quit => {
+            let hook = shared.on_quit.lock().await.clone();
+            // Reply before exiting, or the CLI sees a closed socket instead of
+            // an acknowledgement.
+            match hook {
+                Some(hook) => {
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                        hook();
+                    });
+                    Response::Done
+                }
+                None => {
+                    tokio::spawn(async {
+                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                        std::process::exit(0);
+                    });
+                    Response::Done
+                }
+            }
+        }
         Request::Status => Response::Status {
             device_id: shared.identity.id().to_string(),
             key_store: shared.identity.location().to_string(),

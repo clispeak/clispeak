@@ -107,6 +107,10 @@ enum Command {
     },
     /// List devices in this space.
     Devices,
+    /// Bring the app window back into view.
+    Show,
+    /// Shut the local node down.
+    Quit,
     /// Change this device's name.
     Rename {
         /// The new name.
@@ -160,6 +164,8 @@ async fn run() -> anyhow::Result<u8> {
         Some(Command::Status) => Request::Status,
         Some(Command::Invite) => Request::Invite,
         Some(Command::Devices) => Request::Devices,
+        Some(Command::Show) => Request::Show,
+        Some(Command::Quit) => Request::Quit,
         Some(Command::Rename { name }) => Request::Rename { name: name.clone() },
         Some(Command::Join { ticket }) => Request::Join {
             ticket: ticket.clone(),
@@ -345,6 +351,7 @@ async fn send(request: Request) -> anyhow::Result<u8> {
             err("On the other device:  voicecast join <the line above>");
             exit::OK
         }
+        Response::Done => exit::OK,
         Response::Renamed { name } => {
             out(&format!("renamed to {name}"));
             err("Other devices keep the old name until they sync.");
