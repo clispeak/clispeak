@@ -76,6 +76,30 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Read the text to speak from a file.
+    #[arg(short, long, global = true)]
+    file: Option<std::path::PathBuf>,
+
+    /// Ask the receiver for a particular voice.
+    ///
+    /// A request, not an instruction: a device that does not have it speaks
+    /// in its own rather than refusing.
+    #[arg(short = 'v', long, global = true)]
+    voice: Option<String>,
+
+    /// Seconds to wait with --wait before reporting "still speaking".
+    #[arg(long, global = true)]
+    timeout: Option<u64>,
+
+    /// Suppress normal output. Errors still go to stderr, and the exit code
+    /// still says what happened.
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
+    /// Resolve the targets and print them without speaking anything.
+    #[arg(long, global = true)]
+    dry_run: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 
@@ -161,6 +185,14 @@ enum Command {
         /// The new name.
         name: String,
     },
+    /// Abandon the current message and carry on with the queue.
+    Skip,
+    /// Hold speech without discarding it.
+    Pause,
+    /// Start speaking again after a pause.
+    Resume,
+    /// Show what is being spoken and what is waiting.
+    Queue,
     /// Silence this device until it is unmuted.
     ///
     /// Local to the device it is run on: one device cannot mute another. A
@@ -193,6 +225,13 @@ enum Command {
     },
 }
 
+/// Whether `--quiet` was given.
+///
+/// A global rather than a parameter because every printing site would
+/// otherwise have to carry it, including ones several calls deep that have no
+/// other reason to know about the command line.
+static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Write a line to stdout, tolerating a closed pipe.
 ///
 /// `println!` panics on EPIPE, so `voicecast ... | head -1` exited 101 —
@@ -200,6 +239,9 @@ enum Command {
 /// An agent piping our output should still get 6 for "bad text".
 fn out(s: &str) {
     use std::io::Write;
+    if QUIET.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let _ = writeln!(std::io::stdout(), "{s}");
 }
 
@@ -234,6 +276,9 @@ async fn run() -> anyhow::Result<u8> {
         }
     };
 
+    if cli.quiet {
+        QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let config = config::load();
 
     // Group commands never reach the node: groups are this machine's own
@@ -250,6 +295,19 @@ async fn run() -> anyhow::Result<u8> {
         _ => {}
     }
 
+    // Answered before any text is read: the point of a dry run is to check
+    // where a message *would* go, and demanding the message first would make
+    // it useless for exactly that.
+    if cli.dry_run {
+        return send(
+            Request::Resolve {
+                to: target(&cli, &config),
+            },
+            cli.json,
+        )
+        .await;
+    }
+
     let request = match &cli.command {
         Some(Command::Stop) => Request::Stop,
         Some(Command::Status) => Request::Status,
@@ -260,6 +318,10 @@ async fn run() -> anyhow::Result<u8> {
         Some(Command::Leave) => Request::Leave,
         Some(Command::Quit) => Request::Quit,
         Some(Command::Rename { name }) => Request::Rename { name: name.clone() },
+        Some(Command::Skip) => Request::Skip,
+        Some(Command::Pause) => Request::Pause,
+        Some(Command::Resume) => Request::Resume,
+        Some(Command::Queue) => Request::Queue,
         Some(Command::Mute) => Request::SetMute { muted: true },
         Some(Command::Unmute) => Request::SetMute { muted: false },
         Some(Command::Quiet { window, high }) => match quiet_request(window.as_deref(), *high) {
@@ -276,10 +338,10 @@ async fn run() -> anyhow::Result<u8> {
             Err(code) => return Ok(code),
         },
         None => {
-            let tokens = if cli.text.is_empty() {
-                vec![read_stdin()?]
-            } else {
+            let tokens = if cli.file.is_some() || !cli.text.is_empty() {
                 cli.text.clone()
+            } else {
+                vec![read_stdin()?]
             };
             match build_speak(&cli, &config, &tokens)? {
                 Ok(req) => req,
@@ -289,6 +351,16 @@ async fn run() -> anyhow::Result<u8> {
     };
 
     send(request, cli.json).await
+}
+
+/// Which devices to send to, with any group expanded.
+///
+/// `None` means the node's own default, which is the machine it runs on.
+fn target(cli: &Cli, config: &config::Config) -> Option<String> {
+    cli.to
+        .clone()
+        .or_else(|| config.default_target.clone())
+        .map(|sel| config::expand(&sel, &config.groups))
 }
 
 /// Show the groups defined on this machine.
@@ -400,7 +472,22 @@ fn build_speak(
         return Ok(Err(exit::USAGE));
     }
 
-    let text = tokens.join(" ").trim().to_string();
+    let text = match &cli.file {
+        Some(path) => {
+            if !tokens.is_empty() {
+                err("error: give text or --file, not both");
+                return Ok(Err(exit::USAGE));
+            }
+            match std::fs::read_to_string(path) {
+                Ok(text) => text.trim().to_string(),
+                Err(e) => {
+                    err(&format!("error: could not read {}: {e}", path.display()));
+                    return Ok(Err(exit::USAGE));
+                }
+            }
+        }
+        None => tokens.join(" ").trim().to_string(),
+    };
     if text.is_empty() {
         err("error: nothing to say");
         return Ok(Err(exit::USAGE));
@@ -420,14 +507,10 @@ fn build_speak(
         }
     };
 
-    // Resolution order for both: the flag, then the config, then the
+    // Resolution order for all of these: the flag, then the config, then the
     // built-in default. Groups expand here rather than in the node, so what
     // crosses the socket is only ever device names.
-    let to = cli
-        .to
-        .clone()
-        .or_else(|| config.default_target.clone())
-        .map(|sel| config::expand(&sel, &config.groups));
+    let to = target(cli, config);
 
     let priority = match cli.priority {
         Some(p) => p.into(),
@@ -442,6 +525,8 @@ fn build_speak(
         text,
         priority,
         to,
+        voice: cli.voice.clone(),
+        timeout_secs: cli.timeout,
         // JSON output exists to be consumed, and a report of "queued" tells a
         // consumer nothing — so asking for it implies waiting.
         wait: cli.wait || cli.json,
@@ -604,6 +689,34 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
                     ));
                 }
                 _ => out("quiet:   off"),
+            }
+            exit::OK
+        }
+        Response::Targets { devices } => {
+            if json {
+                out(&serde_json::to_string_pretty(&devices).unwrap_or_else(|_| "[]".into()));
+            } else {
+                for d in &devices {
+                    out(d);
+                }
+            }
+            exit::OK
+        }
+        Response::Queue {
+            speaking,
+            pending,
+            paused,
+        } => {
+            if paused {
+                out("paused");
+            }
+            match &speaking {
+                Some(id) => out(&format!("speaking  {id}")),
+                None if !paused => out("nothing is being spoken"),
+                None => {}
+            }
+            for id in &pending {
+                out(&format!("waiting   {id}"));
             }
             exit::OK
         }

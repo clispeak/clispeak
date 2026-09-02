@@ -6,7 +6,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use interprocess::local_socket::{
@@ -21,19 +20,9 @@ use voicecast_text::chunk;
 
 use crate::ipc::{read_frame, socket_name, write_frame};
 use crate::policy::{self, Policy};
+use crate::queue::{Job, Speaker};
 use crate::transport::{read_msg, write_msg};
 use crate::{Identity, Roster, Ticket, Transport};
-
-/// A speech request waiting its turn.
-struct Job {
-    msg_id: String,
-    chunks: Vec<String>,
-    /// Signalled when speaking ends, for callers that asked to wait.
-    ///
-    /// Optional because the common case is fire-and-forget: an agent firing
-    /// notifications should not pay for machinery it is not using.
-    done: Option<tokio::sync::oneshot::Sender<Status>>,
-}
 
 /// Shared state both loops need.
 /// What to do when the CLI asks for the window or for shutdown.
@@ -52,8 +41,8 @@ struct Shared {
     /// a deliberate act, and allowing several open at once would widen the
     /// window in which a leaked ticket still works.
     pending: Mutex<Option<Ticket>>,
-    tx: tokio::sync::mpsc::UnboundedSender<Job>,
-    queued: AtomicUsize,
+    /// The speaking thread and everything waiting for it.
+    speaker: Speaker,
     /// When each peer was last reached, as unix seconds.
     ///
     /// Recorded from real contact rather than a separate heartbeat protocol:
@@ -83,8 +72,6 @@ impl Node {
         transport: Transport,
         name: String,
     ) -> Result<Self> {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Job>();
-
         // Apply a remembered voice before anything can be spoken with the
         // wrong one.
         if let Some((voice, rate)) = crate::load_voice_settings() {
@@ -110,8 +97,7 @@ impl Node {
             roster.save(&roster_path).context("saving roster")?;
         }
 
-        let worker_engine = Arc::clone(&engine);
-        let queued = AtomicUsize::new(0);
+        let speaker = Speaker::new(Arc::clone(&engine));
         let shared = Arc::new(Shared {
             engine,
             identity,
@@ -119,39 +105,26 @@ impl Node {
             roster: Mutex::new(roster),
             roster_path,
             pending: Mutex::new(None),
-            tx,
-            queued,
+            speaker,
             last_seen: Mutex::new(std::collections::HashMap::new()),
             policy: std::sync::Mutex::new(policy::load()),
             on_show: Mutex::new(None),
             on_quit: Mutex::new(None),
         });
 
-        let counter = Arc::clone(&shared);
-        // Speaking blocks, so it gets a dedicated thread rather than starving
-        // the runtime that is accepting connections.
-        std::thread::spawn(move || {
-            while let Some(job) = rx.blocking_recv() {
-                let mut outcome = Status::Spoken;
-                for c in &job.chunks {
-                    if let Err(e) = worker_engine.speak(c) {
-                        eprintln!("[{}] speech failed: {e}", job.msg_id);
-                        outcome = Status::NoEngine;
-                        break;
-                    }
-                }
-                counter.queued.fetch_sub(1, Ordering::SeqCst);
-                // Ignored deliberately: the caller may have stopped waiting.
-                if let Some(done) = job.done {
-                    let _ = done.send(outcome);
-                }
-            }
-        });
-
         Ok(Self {
             shared,
             transport: Arc::new(transport),
         })
+    }
+
+    /// Stop the speaking thread when the node goes away.
+    ///
+    /// The thread parks on a condvar rather than a channel, so nothing ends
+    /// it implicitly — without this a dropped node leaves a thread waiting
+    /// forever, which tests creating several nodes would accumulate.
+    pub fn shutdown(&self) {
+        self.shared.speaker.shutdown();
     }
 
     /// Install what `voicecast show` and `voicecast quit` should do.
@@ -166,7 +139,19 @@ impl Node {
 
     /// Speak text here, or on a named peer.
     pub async fn speak(&self, text: String, priority: Priority, to: Option<String>) -> Response {
-        speak(&self.shared, &self.transport, text, priority, to, false).await
+        speak(
+            &self.shared,
+            &self.transport,
+            SpeakRequest {
+                text,
+                priority,
+                to,
+                wait: false,
+                voice: None,
+                timeout_secs: None,
+            },
+        )
+        .await
     }
 
     /// Mint an invite for another device.
@@ -234,9 +219,9 @@ impl Node {
         set_quiet(&self.shared, from, to, high_breaks_through)
     }
 
-    /// Stop whatever is being spoken.
+    /// Stop whatever is being spoken, and drop the queue behind it.
     pub fn stop(&self) {
-        self.shared.engine.stop();
+        self.shared.speaker.clear();
     }
 
     /// Check in with every peer on a timer, so presence stays current.
@@ -369,11 +354,61 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
             priority,
             to,
             wait,
-        } => speak(shared, transport, text, priority, to, wait).await,
+            voice,
+            timeout_secs,
+        } => {
+            speak(
+                shared,
+                transport,
+                SpeakRequest {
+                    text,
+                    priority,
+                    to,
+                    wait,
+                    voice,
+                    timeout_secs,
+                },
+            )
+            .await
+        }
+        Request::Resolve { to } => match resolve(shared, to.as_deref().unwrap_or("here")).await {
+            Ok(targets) => Response::Targets {
+                devices: targets
+                    .into_iter()
+                    .map(|t| match t {
+                        Target::Here => shared.name.clone(),
+                        Target::Peer { name, .. } => name,
+                    })
+                    .collect(),
+            },
+            Err(message) => Response::Error { message },
+        },
         Request::Stop => {
-            shared.engine.stop();
+            shared.speaker.clear();
             Response::Finished {
                 status: Status::Cancelled,
+            }
+        }
+        Request::Skip => {
+            shared.speaker.skip();
+            Response::Finished {
+                status: Status::Cancelled,
+            }
+        }
+        Request::Pause => {
+            shared.speaker.pause();
+            Response::Done
+        }
+        Request::Resume => {
+            shared.speaker.unpause();
+            Response::Done
+        }
+        Request::Queue => {
+            let snap = shared.speaker.snapshot();
+            Response::Queue {
+                speaking: snap.speaking,
+                pending: snap.pending,
+                paused: snap.paused,
             }
         }
         Request::Invite => invite(shared).await,
@@ -457,7 +492,7 @@ fn status(shared: &Arc<Shared>) -> Response {
         key_store: shared.identity.location().to_string(),
         engine: current_voice_name(&shared.engine),
         fallback: shared.engine.tier() == voicecast_engine::Tier::Fallback,
-        queued: shared.queued.load(Ordering::SeqCst),
+        queued: shared.speaker.depth(),
         muted: policy.muted,
         quiet: policy.quiet.map(|q| {
             format!(
@@ -479,29 +514,75 @@ fn status(shared: &Arc<Shared>) -> Response {
 /// Always answers with a per-target report. Without `wait` those say `queued`
 /// — accepted, not yet spoken — which is the honest thing to claim when the
 /// sound has not happened yet.
-async fn speak(
-    shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
-    text: String,
-    priority: Priority,
-    to: Option<String>,
-    wait: bool,
-) -> Response {
+async fn speak(shared: &Arc<Shared>, transport: &Arc<Transport>, ask: SpeakRequest) -> Response {
+    let SpeakRequest {
+        text,
+        priority,
+        to,
+        wait,
+        voice,
+        timeout_secs,
+    } = ask;
     let chunks = chunk(&text);
     if chunks.is_empty() {
         return Response::Error {
             message: "nothing to say".into(),
         };
     }
-    let msg_id = new_msg_id();
 
     let targets = match resolve(shared, to.as_deref().unwrap_or("here")).await {
         Ok(targets) => targets,
         Err(message) => return Response::Error { message },
     };
 
-    let targets = deliver(shared, transport, &msg_id, &chunks, priority, wait, targets).await;
+    let outgoing = Outgoing {
+        msg_id: new_msg_id(),
+        chunks,
+        priority,
+        wait,
+        voice,
+        timeout: std::time::Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)),
+    };
+    let msg_id = outgoing.msg_id.clone();
+    let targets = deliver(shared, transport, &outgoing, targets).await;
     Response::Report { msg_id, targets }
+}
+
+/// How long `--wait` waits when the caller does not say.
+///
+/// Matches the documented default in `docs/cli.md`. A device speaking a long
+/// document should not hold a caller open indefinitely.
+const DEFAULT_TIMEOUT_SECS: u64 = 120;
+
+/// What a caller asked to have spoken.
+///
+/// The fields of [`Request::Speak`], gathered so the layers below take one
+/// value rather than a parameter list that grew every time the CLI did.
+struct SpeakRequest {
+    text: String,
+    priority: Priority,
+    to: Option<String>,
+    wait: bool,
+    voice: Option<String>,
+    timeout_secs: Option<u64>,
+}
+
+/// A message on its way somewhere, minus the destination.
+///
+/// Introduced because every layer between `speak` and the wire took the same
+/// six values and passed them straight down; adding a seventh meant editing
+/// five signatures and their `too_many_arguments` waivers.
+#[derive(Clone)]
+struct Outgoing {
+    msg_id: String,
+    chunks: Vec<String>,
+    priority: Priority,
+    /// Whether the caller is waiting for a terminal state.
+    wait: bool,
+    /// A voice the sender would like, if the receiver has it.
+    voice: Option<String>,
+    /// How long to wait before answering "still speaking".
+    timeout: std::time::Duration,
 }
 
 /// One resolved destination for a message.
@@ -602,27 +683,21 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
 ///
 /// Results come back in the order the targets were resolved, not the order
 /// they happened to finish, so repeated runs read the same way.
-#[allow(clippy::too_many_arguments)]
 async fn deliver(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
-    msg_id: &str,
-    chunks: &[String],
-    priority: Priority,
-    wait: bool,
+    outgoing: &Outgoing,
     targets: Vec<Target>,
 ) -> Vec<TargetResult> {
     let mut set = tokio::task::JoinSet::new();
     for (index, target) in targets.into_iter().enumerate() {
         let shared = Arc::clone(shared);
         let transport = Arc::clone(transport);
-        let msg_id = msg_id.to_string();
-        let chunks = chunks.to_vec();
+        let outgoing = outgoing.clone();
         set.spawn(async move {
             let result = match target {
                 Target::Here => {
-                    let (status, took_ms, detail) =
-                        speak_here(&shared, &msg_id, chunks, priority, wait).await;
+                    let (status, took_ms, detail) = speak_here(&shared, &outgoing).await;
                     TargetResult {
                         device: shared.name.clone(),
                         status,
@@ -631,10 +706,7 @@ async fn deliver(
                     }
                 }
                 Target::Peer { name, id } => {
-                    to_peer(
-                        &shared, &transport, &name, &id, &msg_id, &chunks, priority, wait,
-                    )
-                    .await
+                    to_peer(&shared, &transport, &name, &id, &outgoing).await
                 }
             };
             (index, result)
@@ -654,22 +726,18 @@ async fn deliver(
 }
 
 /// Send to one peer and turn the outcome into a result row.
-#[allow(clippy::too_many_arguments)]
 async fn to_peer(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
     name: &str,
     peer_id: &str,
-    msg_id: &str,
-    chunks: &[String],
-    priority: Priority,
-    wait: bool,
+    outgoing: &Outgoing,
 ) -> TargetResult {
     let started = std::time::Instant::now();
-    match send_to_peer(shared, transport, peer_id, msg_id, chunks, priority, wait).await {
+    match send_to_peer(shared, transport, peer_id, outgoing).await {
         Ok(status) => TargetResult {
             device: name.to_string(),
-            took_ms: wait.then(|| started.elapsed().as_millis() as u64),
+            took_ms: outgoing.wait.then(|| started.elapsed().as_millis() as u64),
             status,
             detail: None,
         },
@@ -683,8 +751,14 @@ async fn to_peer(
 }
 
 /// Queue chunks for the local engine.
-fn enqueue(shared: &Arc<Shared>, msg_id: String, chunks: Vec<String>, p: Priority) -> Response {
-    enqueue_inner(shared, msg_id, chunks, p, None)
+fn enqueue(
+    shared: &Arc<Shared>,
+    msg_id: String,
+    chunks: Vec<String>,
+    p: Priority,
+    voice: Option<String>,
+) -> Response {
+    enqueue_inner(shared, msg_id, chunks, p, voice, None)
 }
 
 /// Queue chunks, optionally with a channel signalled when speaking ends.
@@ -696,6 +770,7 @@ fn enqueue_inner(
     msg_id: String,
     chunks: Vec<String>,
     p: Priority,
+    voice: Option<String>,
     done: Option<tokio::sync::oneshot::Sender<Status>>,
 ) -> Response {
     // Policy comes first. A muted device has no business reporting a broken
@@ -703,11 +778,7 @@ fn enqueue_inner(
     // "muted" is both truer and more actionable than "no engine".
     let refusal = {
         let policy = shared.policy.lock().expect("policy lock");
-        policy.verdict(
-            p,
-            policy::local_minute(),
-            shared.queued.load(Ordering::SeqCst),
-        )
+        policy.verdict(p, policy::local_minute(), shared.speaker.depth())
     };
     if let Some(status) = refusal {
         return Response::Finished { status };
@@ -719,20 +790,16 @@ fn enqueue_inner(
             message: e.to_string(),
         };
     }
-    if p == Priority::High {
-        shared.engine.stop();
-    }
-    shared.queued.fetch_add(1, Ordering::SeqCst);
-    match shared.tx.send(Job {
-        msg_id: msg_id.clone(),
-        chunks,
-        done,
-    }) {
-        Ok(()) => Response::Accepted { msg_id },
-        Err(_) => Response::Error {
-            message: "speech worker has stopped".into(),
+    shared.speaker.submit(
+        Job {
+            msg_id: msg_id.clone(),
+            chunks,
+            voice,
+            done,
         },
-    }
+        p == Priority::High,
+    );
+    Response::Accepted { msg_id }
 }
 
 /// Speak here, reporting what actually happened.
@@ -742,13 +809,19 @@ fn enqueue_inner(
 /// not hold a caller open indefinitely.
 async fn speak_here(
     shared: &Arc<Shared>,
-    msg_id: &str,
-    chunks: Vec<String>,
-    p: Priority,
-    wait: bool,
+    outgoing: &Outgoing,
 ) -> (Status, Option<u64>, Option<String>) {
+    let Outgoing {
+        msg_id,
+        chunks,
+        priority: p,
+        wait,
+        voice,
+        timeout,
+    } = outgoing;
+    let (p, wait) = (*p, *wait);
     if !wait {
-        return match enqueue(shared, msg_id.to_string(), chunks, p) {
+        return match enqueue(shared, msg_id.clone(), chunks.clone(), p, voice.clone()) {
             Response::Accepted { .. } => (Status::Queued, None, None),
             Response::Error { message } => (Status::NoEngine, None, Some(message)),
             // A policy refusal — muted, quiet hours, or dropped chatter. It
@@ -762,7 +835,14 @@ async fn speak_here(
     }
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    match enqueue_inner(shared, msg_id.to_string(), chunks, p, Some(tx)) {
+    match enqueue_inner(
+        shared,
+        msg_id.clone(),
+        chunks.clone(),
+        p,
+        voice.clone(),
+        Some(tx),
+    ) {
         Response::Accepted { .. } => {}
         Response::Error { message } => return (Status::NoEngine, None, Some(message)),
         Response::Finished { status } => {
@@ -773,7 +853,7 @@ async fn speak_here(
     }
 
     let started = std::time::Instant::now();
-    match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+    match tokio::time::timeout(*timeout, rx).await {
         Ok(Ok(status)) => (status, Some(started.elapsed().as_millis() as u64), None),
         // The worker went away, or we gave up first. Either way it was
         // accepted, so say that rather than claim a failure.
@@ -926,10 +1006,7 @@ async fn send_to_peer(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
     peer_id: &str,
-    msg_id: &str,
-    chunks: &[String],
-    priority: Priority,
-    wait: bool,
+    outgoing: &Outgoing,
 ) -> Result<Status> {
     let peer = peer_id.parse().context("bad endpoint id in roster")?;
     let conn = transport.connect(peer).await?;
@@ -946,13 +1023,14 @@ async fn send_to_peer(
     write_msg(
         &mut send,
         &PeerMessage::SpeakBegin {
-            msg_id: msg_id.into(),
-            priority,
-            wait,
+            msg_id: outgoing.msg_id.clone(),
+            priority: outgoing.priority,
+            wait: outgoing.wait,
+            voice: outgoing.voice.clone(),
         },
     )
     .await?;
-    for (seq, text) in chunks.iter().enumerate() {
+    for (seq, text) in outgoing.chunks.iter().enumerate() {
         write_msg(
             &mut send,
             &PeerMessage::Chunk {
@@ -1209,6 +1287,7 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 msg_id,
                 priority,
                 wait,
+                voice,
             } => {
                 // Authorisation is the roster, and nothing else: an unpaired
                 // device cannot make this one speak.
@@ -1233,8 +1312,15 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 }
                 // Waiting here is what lets a sender learn "spoken" rather
                 // than "queued": only this device knows when the sound ended.
-                let (status, _took, _detail) =
-                    speak_here(shared, &msg_id, chunks, priority, wait).await;
+                let outgoing = Outgoing {
+                    msg_id: msg_id.clone(),
+                    chunks,
+                    priority,
+                    wait,
+                    voice,
+                    timeout: std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+                };
+                let (status, _took, _detail) = speak_here(shared, &outgoing).await;
                 write_msg(&mut send, &PeerMessage::Report { status }).await?;
             }
             PeerMessage::RosterSync { members, revoked } => {

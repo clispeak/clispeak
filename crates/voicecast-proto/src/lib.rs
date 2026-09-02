@@ -107,6 +107,22 @@ pub enum Request {
         /// playback. On, the caller learns what actually happened.
         #[serde(default)]
         wait: bool,
+        /// A voice to use for this message, if the receiver has it.
+        ///
+        /// A request, not an instruction: engines differ per device, so a
+        /// receiver that has never heard of the voice speaks in its own
+        /// rather than refusing.
+        #[serde(default)]
+        voice: Option<String>,
+        /// How long to wait for a terminal state, in seconds.
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+    },
+    /// Report which devices a selector names, without speaking anything.
+    Resolve {
+        /// The selector to resolve.
+        #[serde(default)]
+        to: Option<String>,
     },
     /// Mint an invite ticket for another device.
     Invite,
@@ -137,6 +153,14 @@ pub enum Request {
     Stop,
     /// Report node health.
     Status,
+    /// Abandon the current message and carry on with the queue.
+    Skip,
+    /// Hold speech without discarding it.
+    Pause,
+    /// Start speaking again after a pause.
+    Resume,
+    /// Report what is playing and what is waiting.
+    Queue,
     /// Report this device's speaking policy.
     Policy,
     /// Silence this device, or let it speak again.
@@ -230,6 +254,23 @@ pub enum Response {
         /// person, and the machine-readable shape is [`Response::Policy`].
         #[serde(default)]
         quiet: Option<String>,
+    },
+    /// The devices a selector names.
+    Targets {
+        /// Their labels, in the order a message would reach them.
+        devices: Vec<String>,
+    },
+    /// What this device is speaking and what is waiting.
+    Queue {
+        /// The message being spoken, if any.
+        #[serde(default)]
+        speaking: Option<String>,
+        /// Messages waiting, in the order they will be spoken.
+        #[serde(default)]
+        pending: Vec<String>,
+        /// Whether speech is held.
+        #[serde(default)]
+        paused: bool,
     },
     /// This device's speaking policy.
     Policy {
@@ -338,6 +379,9 @@ pub enum PeerMessage {
         /// than merely that the message was accepted.
         #[serde(default)]
         wait: bool,
+        /// A voice the sender would like, if this device has it.
+        #[serde(default)]
+        voice: Option<String>,
     },
     /// One sentence-ish unit of text.
     Chunk {

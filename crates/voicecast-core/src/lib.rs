@@ -10,6 +10,7 @@ pub mod identity;
 pub mod ipc;
 mod node;
 pub mod policy;
+mod queue;
 pub mod roster;
 pub mod ticket;
 pub mod transport;
