@@ -246,6 +246,29 @@ enum Command {
     Resume,
     /// Show what is being spoken and what is waiting.
     Queue,
+    /// Show recent messages, spoken or not.
+    ///
+    /// Messages refused while this device was muted or in quiet hours are
+    /// kept here, which is the reason it exists.
+    History {
+        /// How many to show, newest first.
+        #[arg(short, long, default_value = "20")]
+        number: usize,
+        /// Show only the ones that were never heard.
+        #[arg(long)]
+        unheard: bool,
+        /// Forget everything instead of showing it.
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Speak a message from the history again, on this device.
+    ///
+    /// Plays through mute and quiet hours: asking for it is the consent
+    /// those settings exist to require.
+    Replay {
+        /// The message id, from `voicecast history`.
+        msg_id: String,
+    },
     /// Silence this device until it is unmuted.
     ///
     /// Local to the device it is run on: one device cannot mute another. A
@@ -402,6 +425,18 @@ async fn run() -> anyhow::Result<u8> {
             to: target(&cli, &config),
         },
         Some(Command::Queue) => Request::Queue,
+        Some(Command::History { number, clear, .. }) => {
+            if *clear {
+                Request::ClearHistory
+            } else {
+                Request::History {
+                    limit: Some(*number),
+                }
+            }
+        }
+        Some(Command::Replay { msg_id }) => Request::Replay {
+            msg_id: msg_id.clone(),
+        },
         Some(Command::Mute) => Request::SetMute { muted: true },
         Some(Command::Unmute) => Request::SetMute { muted: false },
         Some(Command::Quiet { window, high }) => match quiet_request(window.as_deref(), *high) {
@@ -430,7 +465,8 @@ async fn run() -> anyhow::Result<u8> {
         }
     };
 
-    send(request, cli.json).await
+    let unheard_only = matches!(cli.command, Some(Command::History { unheard: true, .. }));
+    send_with(request, cli.json, unheard_only).await
 }
 
 /// Which devices to send to, with any group expanded.
@@ -659,6 +695,15 @@ fn read_stdin() -> anyhow::Result<String> {
 
 /// Send one request to the local node and report what came back.
 async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
+    send_with(request, json, false).await
+}
+
+/// Send one request to the local node and report what came back.
+///
+/// `unheard_only` filters the history to messages that were never spoken.
+/// Threaded through rather than filtered by the node so `--unheard` stays a
+/// question about presentation, not about what the node stores.
+async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::Result<u8> {
     // Whether a non-spoken outcome counts as failure depends on what was
     // asked: `Cancelled` is the point of `stop`, but a failure for `speak`.
     let was_speak = matches!(request, Request::Speak { .. });
@@ -799,6 +844,30 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
             }
             exit::OK
         }
+        Response::History { entries } => {
+            let shown: Vec<_> = entries
+                .into_iter()
+                .filter(|e| !unheard_only || e.unheard)
+                .collect();
+            if json {
+                out(&serde_json::to_string_pretty(&shown).unwrap_or_else(|_| "[]".into()));
+            } else if shown.is_empty() {
+                err("nothing in the history");
+            } else {
+                for e in &shown {
+                    // The id first, so it can be copied straight into
+                    // `voicecast replay`.
+                    out(&format!(
+                        "{}  {:<10} {:<12} {}",
+                        e.msg_id,
+                        e.from,
+                        label(&e.status),
+                        first_line(&e.text),
+                    ));
+                }
+            }
+            exit::OK
+        }
         Response::Controlled { targets } => {
             for t in &targets {
                 out(&format!(
@@ -855,6 +924,20 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
             exit::USAGE
         }
     })
+}
+
+/// A message shortened to something that fits one row.
+///
+/// The full text is in `--json`, and the app shows all of it; a terminal list
+/// is for finding the message, not for reading it.
+fn first_line(text: &str) -> String {
+    const WIDTH: usize = 60;
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= WIDTH {
+        return flat;
+    }
+    let cut: String = flat.chars().take(WIDTH).collect();
+    format!("{cut}…")
 }
 
 /// A status as a person would say it.

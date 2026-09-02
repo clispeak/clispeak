@@ -108,16 +108,23 @@ pub struct Snapshot {
     pub paused: bool,
 }
 
+/// Told how every message ended, whoever was or was not waiting for it.
+///
+/// The `done` channel only exists when a caller asked to wait, and most do
+/// not — so it cannot be what keeps a record. This fires either way.
+pub type OnFinish = Arc<dyn Fn(&str, Status) + Send + Sync>;
+
 /// The speaking thread and the queue feeding it.
 #[derive(Clone)]
 pub struct Speaker {
     inner: Arc<(Mutex<Inner>, Condvar)>,
     engine: Arc<dyn SpeechEngine>,
+    on_finish: OnFinish,
 }
 
 impl Speaker {
     /// Start the speaking thread.
-    pub fn new(engine: Arc<dyn SpeechEngine>) -> Self {
+    pub fn new(engine: Arc<dyn SpeechEngine>, on_finish: OnFinish) -> Self {
         let inner = Arc::new((
             Mutex::new(Inner {
                 urgent: VecDeque::new(),
@@ -133,6 +140,7 @@ impl Speaker {
         let speaker = Self {
             inner: Arc::clone(&inner),
             engine: Arc::clone(&engine),
+            on_finish,
         };
         let worker = speaker.clone();
         std::thread::spawn(move || worker.run());
@@ -201,6 +209,7 @@ impl Speaker {
         };
         match waiting {
             Some(job) => {
+                (self.on_finish)(&job.msg_id, Status::Cancelled);
                 job.finish(Status::Cancelled);
                 true
             }
@@ -223,6 +232,7 @@ impl Speaker {
         // Told individually rather than left to time out: each of these has a
         // caller that asked to be informed, and silence would read as a hang.
         for job in abandoned {
+            (self.on_finish)(&job.msg_id, Status::Cancelled);
             job.finish(Status::Cancelled);
         }
         self.engine.stop();
@@ -317,6 +327,7 @@ impl Speaker {
             // A message put back for later has no outcome yet.
             drop(inner);
             if let Some((job, status)) = outcome {
+                (self.on_finish)(&job.msg_id, status.clone());
                 job.finish(status);
             }
         }
@@ -478,7 +489,7 @@ mod tests {
     #[tokio::test]
     async fn urgent_interrupts_then_the_interrupted_message_resumes() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone());
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
 
         let (normal, normal_done) = job("m1", &["one", "two", "three"]);
         speaker.submit(normal, false);
@@ -512,7 +523,7 @@ mod tests {
     #[tokio::test]
     async fn skip_abandons_the_current_message_and_moves_on() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone());
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
 
         let (first, first_done) = job("m1", &["one", "two", "three"]);
         let (second, second_done) = job("m2", &["next"]);
@@ -541,7 +552,7 @@ mod tests {
     #[tokio::test]
     async fn clear_cancels_everything_including_what_is_waiting() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone());
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
 
         let (first, first_done) = job("m1", &["one", "two"]);
         let (second, second_done) = job("m2", &["never"]);
@@ -574,7 +585,7 @@ mod tests {
     #[tokio::test]
     async fn pause_holds_the_message_and_resume_finishes_it() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone());
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
 
         let (only, only_done) = job("m1", &["one", "two"]);
         speaker.submit(only, false);
@@ -603,7 +614,7 @@ mod tests {
     #[tokio::test]
     async fn the_queue_reports_what_is_waiting_in_playing_order() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone());
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
 
         speaker.submit(job("m1", &["a", "b"]).0, false);
         speaker.submit(job("m2", &["c"]).0, false);

@@ -6,6 +6,7 @@
 //!
 //! Built out from M3 onward.
 
+pub mod history;
 pub mod identity;
 pub mod ipc;
 mod node;
@@ -16,6 +17,7 @@ pub mod spaces;
 pub mod ticket;
 pub mod transport;
 
+pub use history::{Entry, History};
 pub use identity::{
     FileKeyStore, Identity, IdentityError, KeyStore, config_dir, device_name, load_voice_settings,
     save_voice_settings, set_config_dir, set_device_name,

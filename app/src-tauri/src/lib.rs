@@ -287,6 +287,39 @@ async fn list_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, Str
     }
 }
 
+/// Recent messages this device was asked to speak, spoken or not.
+#[tauri::command]
+fn history(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<voicecast_proto::HistoryEntry>, String> {
+    match state.node.history(limit) {
+        Response::History { entries } => Ok(entries),
+        other => Err(describe(other)),
+    }
+}
+
+/// Speak a message from the history again.
+///
+/// Plays through mute and quiet hours: pressing play is the consent those
+/// settings exist to require.
+#[tauri::command]
+fn replay(state: State<'_, AppState>, msg_id: String) -> Result<(), String> {
+    match state.node.replay(&msg_id) {
+        Response::Accepted { .. } => Ok(()),
+        other => Err(describe(other)),
+    }
+}
+
+/// Forget the history.
+#[tauri::command]
+fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
+    match state.node.clear_history() {
+        Response::Done => Ok(()),
+        other => Err(describe(other)),
+    }
+}
+
 /// The spaces this device belongs to.
 #[tauri::command]
 async fn list_spaces(state: State<'_, AppState>) -> Result<Vec<voicecast_proto::SpaceRow>, String> {
@@ -697,6 +730,9 @@ pub fn run() {
             cli_installable,
             cli_expected_path,
             install_cli,
+            history,
+            replay,
+            clear_history,
             list_spaces,
             new_space,
             drop_space,

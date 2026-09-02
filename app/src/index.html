@@ -120,6 +120,35 @@
     </form>
   </section>
 
+  <!-- History -------------------------------------------------------------- -->
+  <section>
+    <div class="mb-2 flex items-baseline justify-between">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        History
+      </h2>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+          <input id="history-unheard" type="checkbox" class="size-3.5 accent-accent-600" />
+          Unheard only
+        </label>
+        <button id="history-clear"
+          class="text-xs text-neutral-500 underline-offset-2 hover:underline
+                 dark:text-neutral-400">
+          Clear
+        </button>
+      </div>
+    </div>
+    <ul id="history" class="divide-y divide-neutral-200 overflow-hidden rounded-xl
+                            border border-neutral-200 bg-white
+                            dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
+      <li class="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">Nothing yet.</li>
+    </ul>
+    <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+      Messages that arrived while this device was muted or quiet are kept here
+      to read or play.
+    </p>
+  </section>
+
   <!-- Voice ---------------------------------------------------------------- -->
   <section id="voice-section" hidden>
     <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">

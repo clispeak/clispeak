@@ -271,6 +271,27 @@ Groups may span spaces, since they're local config:
 phones = ["home/pixel", "work/iphone"]
 ```
 
+## History
+
+Every message a device is asked to speak is recorded, **whether or not it was
+spoken**. A message refused while the device was muted or in quiet hours is
+the one worth keeping: it is the only record that it came at all.
+
+```
+$ voicecast history                    # recent messages, newest first
+$ voicecast history --unheard          # only the ones never spoken
+$ voicecast history -n 100
+$ voicecast history --clear
+$ voicecast replay <msg-id>            # speak it again, here
+```
+
+`replay` plays **through** mute and quiet hours. Those settings exist to stop
+a device making noise unasked; pressing play is the ask. A replayed message
+keeps its id, so one that was never heard is marked heard once played.
+
+The app shows the same list, with the text in full and a play button per
+message.
+
 ## Receiver-side settings
 
 Not reachable from the CLI of *another* device — these live on each device, in

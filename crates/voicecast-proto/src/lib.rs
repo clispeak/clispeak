@@ -206,6 +206,19 @@ pub enum Request {
     },
     /// Report what is playing and what is waiting.
     Queue,
+    /// Recent messages this device was asked to speak.
+    History {
+        /// How many to return, newest first.
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    /// Speak a message from the history again, here.
+    Replay {
+        /// Which message.
+        msg_id: String,
+    },
+    /// Forget the history.
+    ClearHistory,
     /// Report this device's speaking policy.
     Policy,
     /// Silence this device, or let it speak again.
@@ -299,6 +312,11 @@ pub enum Response {
         /// person, and the machine-readable shape is [`Response::Policy`].
         #[serde(default)]
         quiet: Option<String>,
+    },
+    /// Recent messages this device was asked to speak.
+    History {
+        /// Newest first.
+        entries: Vec<HistoryEntry>,
     },
     /// What a control command did on each device.
     Controlled {
@@ -514,6 +532,26 @@ pub struct TargetResult {
     /// Why, when the status alone does not explain it.
     #[serde(default)]
     pub detail: Option<String>,
+}
+
+/// One message this device was asked to speak, spoken or not.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    /// Identifies the message, and addresses it for replay.
+    pub msg_id: String,
+    /// What was said, or would have been.
+    pub text: String,
+    /// The device it came from.
+    pub from: String,
+    /// Unix seconds when it arrived.
+    pub at: u64,
+    /// How it ended.
+    pub status: Status,
+    /// The urgency it was sent with.
+    pub priority: Priority,
+    /// Whether it was never actually heard, and so is worth going back to.
+    #[serde(default)]
+    pub unheard: bool,
 }
 
 /// One space, as shown by `voicecast space list`.

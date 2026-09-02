@@ -18,6 +18,7 @@ use voicecast_proto::{
 };
 use voicecast_text::chunk;
 
+use crate::history::{Entry, History};
 use crate::ipc::{read_frame, socket_name, write_frame};
 use crate::policy::{self, Policy};
 use crate::queue::{Job, Speaker};
@@ -48,6 +49,12 @@ struct Shared {
     pending: Mutex<Option<Ticket>>,
     /// The speaking thread and everything waiting for it.
     speaker: Speaker,
+    /// What this device was asked to say, spoken or not.
+    ///
+    /// A plain mutex: it is written from the speech thread, which is not
+    /// async, and every operation is over in microseconds.
+    history: std::sync::Mutex<History>,
+    history_path: PathBuf,
     /// When each peer was last reached, as unix seconds.
     ///
     /// Recorded from real contact rather than a separate heartbeat protocol:
@@ -113,7 +120,27 @@ impl Node {
             spaces.save(&spaces_path).context("saving spaces")?;
         }
 
-        let speaker = Speaker::new(Arc::clone(&engine));
+        let history_path = History::default_path()
+            .ok_or_else(|| anyhow::anyhow!("no config directory for the history"))?;
+        let history = std::sync::Mutex::new(History::load(&history_path));
+
+        // The queue reports every outcome here, because most messages have
+        // nobody waiting on them and would otherwise be recorded as "queued"
+        // forever.
+        //
+        // Weak on purpose: the state owns the queue, which owns this
+        // callback, so holding it strongly would be a cycle that never frees.
+        let recorder: Arc<std::sync::Mutex<std::sync::Weak<Shared>>> =
+            Arc::new(std::sync::Mutex::new(std::sync::Weak::new()));
+        let notify = Arc::clone(&recorder);
+        let speaker = Speaker::new(
+            Arc::clone(&engine),
+            Arc::new(move |msg_id, status| {
+                if let Some(shared) = notify.lock().expect("recorder lock").upgrade() {
+                    remember_outcome(&shared, msg_id, status);
+                }
+            }),
+        );
         let shared = Arc::new(Shared {
             engine,
             identity,
@@ -122,11 +149,16 @@ impl Node {
             spaces_path,
             pending: Mutex::new(None),
             speaker,
+            history,
+            history_path,
             last_seen: Mutex::new(std::collections::HashMap::new()),
             policy: std::sync::Mutex::new(policy::load()),
             on_show: Mutex::new(None),
             on_quit: Mutex::new(None),
         });
+
+        // Closes the loop: the queue's callback needs the state that owns it.
+        *recorder.lock().expect("recorder lock") = Arc::downgrade(&shared);
 
         Ok(Self {
             shared,
@@ -198,6 +230,24 @@ impl Node {
     /// Replace this space with a fresh one, locking every other device out.
     pub async fn rotate(&self) -> Response {
         rotate(&self.shared).await
+    }
+
+    /// Recent messages this device was asked to speak.
+    pub fn history(&self, limit: Option<usize>) -> Response {
+        history_response(&self.shared, limit)
+    }
+
+    /// Speak a message from the history again.
+    pub fn replay(&self, msg_id: &str) -> Response {
+        replay(&self.shared, msg_id)
+    }
+
+    /// Forget the history.
+    pub fn clear_history(&self) -> Response {
+        let mut history = self.shared.history.lock().expect("history lock");
+        history.clear();
+        let _ = history.save(&self.shared.history_path);
+        Response::Done
     }
 
     /// The spaces this device belongs to.
@@ -495,6 +545,14 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
                 }
             }
         }
+        Request::History { limit } => history_response(shared, limit),
+        Request::Replay { msg_id } => replay(shared, &msg_id),
+        Request::ClearHistory => {
+            let mut history = shared.history.lock().expect("history lock");
+            history.clear();
+            let _ = history.save(&shared.history_path);
+            Response::Done
+        }
         Request::Policy => policy_response(shared),
         Request::SetMute { muted } => set_mute(shared, muted),
         Request::SetQuiet {
@@ -590,6 +648,8 @@ async fn speak(shared: &Arc<Shared>, transport: &Arc<Transport>, ask: SpeakReque
         wait,
         voice,
         timeout: std::time::Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)),
+        // Typed here, so this device is the origin.
+        from: None,
     };
     let msg_id = outgoing.msg_id.clone();
     let targets = deliver(shared, transport, &outgoing, targets).await;
@@ -631,6 +691,8 @@ struct Outgoing {
     voice: Option<String>,
     /// How long to wait before answering "still speaking".
     timeout: std::time::Duration,
+    /// The device it came from, for the history. `None` means this one.
+    from: Option<String>,
 }
 
 /// One resolved destination for a message.
@@ -973,19 +1035,46 @@ async fn speak_here(
         wait,
         voice,
         timeout,
+        from,
     } = outgoing;
     let (p, wait) = (*p, *wait);
+
+    // Recorded before the policy has its say. The chunks are joined back:
+    // they were split on sentence boundaries, so this is the message as it
+    // was meant to be heard.
+    remember(
+        shared,
+        Entry {
+            msg_id: msg_id.clone(),
+            text: chunks.join(" "),
+            from: from.clone().unwrap_or_else(|| shared.name.clone()),
+            at: now_secs(),
+            status: Status::Queued,
+            priority: p,
+            space: None,
+        },
+    );
+
+    // A message the queue never accepted gets no completion callback, so its
+    // outcome is written here instead. Without this a muted message sat in
+    // the history reading "queued" for ever — and the whole point of keeping
+    // one is to find the messages that were never heard.
+    let settle = |status: Status| {
+        remember_outcome(shared, msg_id, status.clone());
+        status
+    };
+
     if !wait {
         return match enqueue(shared, msg_id.clone(), chunks.clone(), p, voice.clone()) {
             Response::Accepted { .. } => (Status::Queued, None, None),
-            Response::Error { message } => (Status::NoEngine, None, Some(message)),
+            Response::Error { message } => (settle(Status::NoEngine), None, Some(message)),
             // A policy refusal — muted, quiet hours, or dropped chatter. It
             // is a terminal answer, so it travels back to the sender as is.
             Response::Finished { status } => {
                 let why = refusal_detail(&status);
-                (status, None, why)
+                (settle(status), None, why)
             }
-            _ => (Status::Dropped, None, None),
+            _ => (settle(Status::Dropped), None, None),
         };
     }
 
@@ -999,12 +1088,12 @@ async fn speak_here(
         Some(tx),
     ) {
         Response::Accepted { .. } => {}
-        Response::Error { message } => return (Status::NoEngine, None, Some(message)),
+        Response::Error { message } => return (settle(Status::NoEngine), None, Some(message)),
         Response::Finished { status } => {
             let why = refusal_detail(&status);
-            return (status, None, why);
+            return (settle(status), None, why);
         }
-        _ => return (Status::Dropped, None, None),
+        _ => return (settle(Status::Dropped), None, None),
     }
 
     let started = std::time::Instant::now();
@@ -1198,6 +1287,92 @@ fn set_quiet(
     }
     drop(p);
     policy_response(shared)
+}
+
+/// Recent messages, newest first.
+fn history_response(shared: &Arc<Shared>, limit: Option<usize>) -> Response {
+    let history = shared.history.lock().expect("history lock");
+    Response::History {
+        entries: history
+            .recent(limit.unwrap_or(50))
+            .into_iter()
+            .map(|e| voicecast_proto::HistoryEntry {
+                unheard: e.unheard(),
+                msg_id: e.msg_id,
+                text: e.text,
+                from: e.from,
+                at: e.at,
+                status: e.status,
+                priority: e.priority,
+            })
+            .collect(),
+    }
+}
+
+/// Speak a message from the history again, here.
+///
+/// Deliberately skips mute and quiet hours. Those exist to stop a device
+/// making noise unasked; pressing play *is* the ask, and refusing it would
+/// make the history unreadable exactly when it is most useful — while the
+/// device is still muted.
+///
+/// Keeps the original id, so a message that was never heard is marked as
+/// heard once it has been played.
+fn replay(shared: &Arc<Shared>, msg_id: &str) -> Response {
+    let entry = {
+        let history = shared.history.lock().expect("history lock");
+        history.get(msg_id).cloned()
+    };
+    let Some(entry) = entry else {
+        return Response::Error {
+            message: format!("no message {msg_id} in the history"),
+        };
+    };
+    if let Err(e) = shared.engine.ready() {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
+    let chunks = chunk(&entry.text);
+    if chunks.is_empty() {
+        return Response::Error {
+            message: "that message has no text".into(),
+        };
+    }
+    shared.speaker.submit(
+        Job {
+            msg_id: entry.msg_id.clone(),
+            chunks,
+            voice: None,
+            done: None,
+        },
+        false,
+    );
+    Response::Accepted {
+        msg_id: entry.msg_id,
+    }
+}
+
+/// Note that a message was asked for, before anything is decided about it.
+///
+/// Recorded even when policy is about to refuse it: a message that arrived
+/// while the device was muted is precisely the one someone will want to go
+/// back and read, and dropping it would make muting silently lose things.
+fn remember(shared: &Arc<Shared>, entry: Entry) {
+    let mut history = shared.history.lock().expect("history lock");
+    history.record(entry);
+    if let Err(e) = history.save(&shared.history_path) {
+        eprintln!("could not save history: {e}");
+    }
+}
+
+/// Fill in how a message ended, once it has.
+fn remember_outcome(shared: &Arc<Shared>, msg_id: &str, status: Status) {
+    let mut history = shared.history.lock().expect("history lock");
+    history.set_status(msg_id, status);
+    if let Err(e) = history.save(&shared.history_path) {
+        eprintln!("could not save history: {e}");
+    }
 }
 
 /// Say in words why a device stayed silent.
@@ -1797,6 +1972,19 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 }
                 // Waiting here is what lets a sender learn "spoken" rather
                 // than "queued": only this device knows when the sound ended.
+                // The sender's label, so the history says who it came from
+                // rather than showing a public key.
+                let from = {
+                    let spaces = shared.spaces.lock().await;
+                    let remote = remote.to_string();
+                    spaces.ids().into_iter().find_map(|id| {
+                        spaces
+                            .get(&id)?
+                            .members()
+                            .find(|m| m.endpoint_id == remote)
+                            .map(|m| m.name.clone())
+                    })
+                };
                 let outgoing = Outgoing {
                     msg_id: msg_id.clone(),
                     chunks,
@@ -1804,6 +1992,7 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                     wait,
                     voice,
                     timeout: std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+                    from,
                 };
                 let (status, _took, _detail) = speak_here(shared, &outgoing).await;
                 write_msg(&mut send, &PeerMessage::Report { status }).await?;

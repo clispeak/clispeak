@@ -151,6 +151,7 @@ async function refresh() {
   await refreshVoice();
   await refreshPolicy();
   await refreshSpaces();
+  await refreshHistory();
 
   const devices = await invoke("list_devices").catch(() => null);
   if (!devices) return;
@@ -162,6 +163,130 @@ async function refresh() {
           Object.assign(document.createElement("li"), {
             className: "px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400",
             textContent: "No devices yet — add one below.",
+          }),
+        ]),
+  );
+}
+
+/** A clock time for today, or a date for anything older. */
+function whenSaid(unixSeconds) {
+  const at = new Date(unixSeconds * 1000);
+  const today = new Date();
+  const sameDay =
+    at.getFullYear() === today.getFullYear() &&
+    at.getMonth() === today.getMonth() &&
+    at.getDate() === today.getDate();
+  return sameDay
+    ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : at.toLocaleDateString([], { month: "short", day: "numeric" }) +
+        " " +
+        at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** How a status should read to a person. */
+const STATUS_WORDS = {
+  spoken: "spoken",
+  queued: "queued",
+  speaking: "speaking",
+  muted: "muted",
+  quiet_hours: "quiet hours",
+  no_engine: "no engine",
+  unreachable: "unreachable",
+  rejected: "rejected",
+  cancelled: "cancelled",
+  dropped: "dropped",
+};
+
+/**
+ * One message in the history.
+ *
+ * The text is clamped to two lines and expands on a tap. A message can be any
+ * length, and a list where one entry fills the screen is not a list.
+ */
+function historyRow(entry) {
+  const li = document.createElement("li");
+  li.className = "px-4 py-3";
+
+  const head = document.createElement("div");
+  head.className = "flex items-center gap-2";
+
+  const who = document.createElement("span");
+  who.className = "truncate text-xs font-medium text-neutral-600 dark:text-neutral-300";
+  who.textContent = entry.from;
+
+  const when = document.createElement("span");
+  when.className = "shrink-0 text-xs text-neutral-400 dark:text-neutral-500";
+  when.textContent = whenSaid(entry.at);
+
+  const state = document.createElement("span");
+  const word = STATUS_WORDS[entry.status] ?? entry.status;
+  state.className =
+    "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium " +
+    (entry.unheard
+      ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+      : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400");
+  state.textContent = word;
+
+  const spacer = document.createElement("span");
+  spacer.className = "flex-1";
+
+  const play = document.createElement("button");
+  play.className =
+    "shrink-0 rounded-lg border border-neutral-300 px-2 py-1 text-xs transition " +
+    "hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800";
+  play.textContent = "Play";
+  play.title = "Play this message, even while muted";
+  play.onclick = (e) => {
+    e.stopPropagation();
+    withButton(play, "…", async () => {
+      await call("replay", { msgId: entry.msg_id });
+      say("playing");
+      // The status changes to spoken once it plays, so pick that up.
+      setTimeout(refreshHistory, 1500);
+    });
+  };
+
+  head.append(who, when, state, spacer, play);
+
+  const body = document.createElement("p");
+  // Two lines until tapped. Long messages are common and the list has to stay
+  // scannable.
+  body.className =
+    "mt-1 line-clamp-2 cursor-pointer text-sm text-neutral-800 dark:text-neutral-200";
+  body.textContent = entry.text;
+  body.onclick = () => body.classList.toggle("line-clamp-2");
+
+  li.append(head, body);
+  return li;
+}
+
+/**
+ * Show what this device was asked to say.
+ *
+ * The reason this exists is the muted case: a message refused while the
+ * device was silent is otherwise gone, and this is the only place it can be
+ * read or played back.
+ */
+async function refreshHistory() {
+  let entries;
+  try {
+    entries = await invoke("history", { limit: 50 });
+  } catch {
+    return;
+  }
+  if ($("history-unheard").checked) {
+    entries = entries.filter((e) => e.unheard);
+  }
+  const list = $("history");
+  list.replaceChildren(
+    ...(entries.length
+      ? entries.map(historyRow)
+      : [
+          Object.assign(document.createElement("li"), {
+            className: "px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400",
+            textContent: $("history-unheard").checked
+              ? "Nothing unheard."
+              : "Nothing yet.",
           }),
         ]),
   );
@@ -460,6 +585,15 @@ $("leave").onclick = () =>
     if (!confirm("Leave this space? Other devices will stop reaching this one.")) return;
     say(await call("leave_space"));
     await refresh();
+  });
+
+$("history-unheard").onchange = refreshHistory;
+
+$("history-clear").onclick = () =>
+  withButton($("history-clear"), "…", async () => {
+    if (!confirm("Forget every message in the history?")) return;
+    await call("clear_history");
+    await refreshHistory();
   });
 
 $("new-space-form").onsubmit = async (e) => {
