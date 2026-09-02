@@ -49,9 +49,23 @@ fn cli_destination() -> Option<std::path::PathBuf> {
     Some(
         directories::BaseDirs::new()?
             .home_dir()
-            .join(".local/bin/voicecast"),
+            .join(".local/bin")
+            .join(CLI_NAME),
     )
 }
+
+/// The command-line tool's file name, which carries an extension on Windows.
+///
+/// Without it the install writes a file called `voicecast` that Windows will
+/// not execute: present on disk, in a directory that is on the PATH, and
+/// still `command not found`. That is the macOS failure this module already
+/// guards against, arriving through a different mechanism — and it would be
+/// found by an agent rather than by whoever installed the app.
+const CLI_NAME: &str = if cfg!(windows) {
+    "voicecast.exe"
+} else {
+    "voicecast"
+};
 
 /// The copy of the CLI the app carries, if this build carries one.
 ///
@@ -931,11 +945,19 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
             }
         }
     }
+    // Windows. Piper, the same engine as every other desktop — and when it
+    // does not start, the reason it gave rather than a stand-in. There is no
+    // floor engine here, so that reason is the only thing standing between
+    // the sender and an unexplained silence; see decision 22.
     #[cfg(not(unix))]
     {
-        Arc::new(voicecast_engine::SilentEngine::new(
-            "no speech engine is wired up for this platform yet",
-        ))
+        match voicecast_engine::PiperEngine::discover() {
+            Ok(engine) => Arc::new(engine),
+            Err(e) => {
+                eprintln!("piper unavailable: {e}");
+                Arc::new(voicecast_engine::SilentEngine::new(e.to_string()))
+            }
+        }
     }
 }
 

@@ -336,7 +336,7 @@ toggle are mitigations, not afterthoughts.
 |---|---|---|
 | Linux | Piper (downloaded); espeak-ng fallback | Tray + autostart |
 | macOS | `AVSpeechSynthesizer` | Tray + autostart |
-| Windows | WinRT `SpeechSynthesizer` / SAPI5 | Tray + autostart |
+| Windows | Piper (downloaded); no floor engine yet | Tray + autostart |
 | Android | `android.speech.tts.TextToSpeech` | Foreground service |
 | iOS | `AVSpeechSynthesizer` | **Foreground only** — OS restriction |
 

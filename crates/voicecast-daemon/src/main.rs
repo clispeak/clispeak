@@ -8,43 +8,57 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use voicecast_core::{Identity, Node, Transport};
-use voicecast_engine::SpeechEngine;
+use voicecast_engine::{EngineError, PiperEngine, SpeechEngine};
+// The floor engine differs by platform, and only one of them exists per
+// build; importing both unconditionally is what broke Windows last time.
+#[cfg(unix)]
+use voicecast_engine::EspeakEngine;
+#[cfg(not(unix))]
+use voicecast_engine::SilentEngine;
 use voicecast_keystore::DesktopKeyStore;
 
 /// The best engine this platform has.
 ///
-/// Both engines this binary can use spawn a Unix process, so both are
-/// `#[cfg(unix)]` — and this file imported them unconditionally, which broke
-/// the Windows build the moment Piper landed and kept it broken. Selecting
-/// behind the same gate is the fix; the portability rule in
-/// `docs/build-plan.md` is what should have caught it.
-#[cfg(unix)]
+/// Piper first everywhere. It is the engine every desktop is meant to use,
+/// and running the same one on all of them is what makes a message sound the
+/// same wherever it lands.
 fn engine() -> Result<Arc<dyn SpeechEngine>> {
-    use voicecast_engine::{EspeakEngine, PiperEngine};
-
-    // Same order as the app: Piper if installed, espeak as the floor.
     match PiperEngine::discover() {
         Ok(piper) => Ok(Arc::new(piper)),
         Err(e) => {
             eprintln!("piper unavailable: {e}");
-            Ok(Arc::new(EspeakEngine::new().context(
-                "espeak-ng is not available. On Arch: sudo pacman -S espeak-ng",
-            )?))
+            fallback(e)
         }
     }
 }
 
-/// Refused rather than silent.
+/// What speaks when Piper does not.
 ///
-/// Windows has no engine wired yet, and a daemon that accepts messages and
-/// says nothing is worse than one that will not start: the sender is told
-/// "queued" and nothing ever happens. The app is the node on Windows anyway.
+/// espeak-ng is the Unix floor, and a device is never silent while it is
+/// there — see decision 17.
+#[cfg(unix)]
+fn fallback(_piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
+    Ok(Arc::new(EspeakEngine::new().context(
+        "espeak-ng is not available. On Arch: sudo pacman -S espeak-ng",
+    )?))
+}
+
+/// Windows has no floor engine, so it carries the reason instead.
+///
+/// This used to refuse to start — decision 22 — which was right while Windows
+/// had no engine at all: the only alternative then was a node that accepted
+/// messages, reported `queued`, and said nothing. Piper runs here now, so the
+/// choice is no longer between silence and refusal. Refusing would take a
+/// node off the network over an install that can be fixed, and the sender
+/// would learn no more from a daemon that is absent than from one that
+/// explains itself.
+///
+/// Piper's own error is what travels, because it is the part that names
+/// something a person can act on. A device that cannot speak still joins
+/// spaces and still answers for itself.
 #[cfg(not(unix))]
-fn engine() -> Result<Arc<dyn SpeechEngine>> {
-    anyhow::bail!(
-        "no speech engine on this platform yet; run the voicecast app instead, \
-         which is the node here"
-    )
+fn fallback(piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
+    Ok(Arc::new(SilentEngine::new(piper.to_string())))
 }
 
 #[tokio::main]
