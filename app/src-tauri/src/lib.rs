@@ -11,13 +11,15 @@
 use std::sync::Arc;
 
 use serde::Serialize;
+use tauri::{Manager, State};
+// Menus and trays are desktop-only in Tauri; a phone has neither.
+#[cfg(desktop)]
 use tauri::{
-    Manager, State,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
 };
 use voicecast_core::{Identity, Node, Transport};
-use voicecast_engine::{EspeakEngine, SpeechEngine};
+use voicecast_engine::SpeechEngine;
 use voicecast_proto::{DeviceInfo, Priority, Response};
 
 /// What the UI shows in its header.
@@ -115,6 +117,39 @@ fn describe(r: Response) -> String {
     }
 }
 
+/// The speech engine for this platform.
+///
+/// Falls back to [`SilentEngine`] rather than refusing to start: a device that
+/// cannot speak is still a useful member of a space — it can be joined,
+/// renamed, and told about — and it reports `no_engine` honestly instead of
+/// swallowing messages.
+fn speech_engine() -> Arc<dyn SpeechEngine> {
+    #[cfg(all(unix, not(target_os = "android")))]
+    {
+        match voicecast_engine::EspeakEngine::new() {
+            Ok(engine) => Arc::new(engine),
+            Err(e) => {
+                eprintln!("espeak-ng unavailable: {e}");
+                Arc::new(voicecast_engine::SilentEngine::new(
+                    "espeak-ng is not installed on this device",
+                ))
+            }
+        }
+    }
+    #[cfg(target_os = "android")]
+    {
+        Arc::new(voicecast_engine::SilentEngine::new(
+            "this device has no speech engine yet",
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        Arc::new(voicecast_engine::SilentEngine::new(
+            "no speech engine is wired up for this platform yet",
+        ))
+    }
+}
+
 /// This device's key store.
 ///
 /// Desktop shares the keyring-backed store with `voicecastd`, so the app and
@@ -137,7 +172,7 @@ async fn start_node() -> anyhow::Result<Node> {
     let identity = Identity::load_or_create(store.as_ref())?;
     let name = voicecast_core::device_name();
 
-    let engine: Arc<dyn SpeechEngine> = Arc::new(EspeakEngine::new()?);
+    let engine = speech_engine();
     let transport = Transport::bind(identity.secret().clone()).await?;
     Node::new(engine, identity, transport, name).await
 }
@@ -163,16 +198,20 @@ pub fn run() {
                         });
 
                         // Give the CLI a way to reach a window it cannot see.
-                        // This matters most where the tray icon fails to
-                        // appear: without it, closing the window leaves a
+                        // This matters most where the tray icon is collapsed
+                        // or absent: without it, closing the window leaves a
                         // running node with no way back and no way out.
-                        let show_handle = handle.clone();
-                        let quit_handle = handle.clone();
-                        node.set_window_hooks(
-                            Arc::new(move || reveal(&show_handle)),
-                            Arc::new(move || quit_handle.exit(0)),
-                        )
-                        .await;
+                        // Desktop only — a phone has no CLI to reach it from.
+                        #[cfg(desktop)]
+                        {
+                            let show_handle = handle.clone();
+                            let quit_handle = handle.clone();
+                            node.set_window_hooks(
+                                Arc::new(move || reveal(&show_handle)),
+                                Arc::new(move || quit_handle.exit(0)),
+                            )
+                            .await;
+                        }
                         // On desktop the app is the node the CLI talks to:
                         // install it, open it, and `voicecast --to phone ...`
                         // works with no separate daemon. A phone has no CLI,
@@ -199,13 +238,14 @@ pub fn run() {
             join_space,
             speak
         ])
-        .on_window_event(|window, event| {
+        .on_window_event(|_window, _event| {
+            #[cfg(desktop)]
             // Closing the window hides it rather than quitting: the node has
             // to keep running for the CLI and for peers to reach this device.
             // Quitting is a deliberate act from the tray menu.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
                 api.prevent_close();
-                let _ = window.hide();
+                let _ = _window.hide();
             }
         })
         .run(tauri::generate_context!())

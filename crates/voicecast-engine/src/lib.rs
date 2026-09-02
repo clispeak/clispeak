@@ -5,8 +5,14 @@
 //! anything that cannot be expressed portably gets a trait here rather than a
 //! `#[cfg]` in the middle of business logic.
 
-mod espeak;
+mod silent;
 
+pub use silent::SilentEngine;
+
+// espeak-ng is a Unix binary; there is no such thing to spawn on a phone.
+#[cfg(unix)]
+mod espeak;
+#[cfg(unix)]
 pub use espeak::EspeakEngine;
 
 /// A voice offered by an engine.
