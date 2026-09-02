@@ -181,3 +181,61 @@ fn a_roster_round_trips_through_disk() {
     assert!(back.allows(&bob.public()));
     assert_eq!(back.members().count(), 2);
 }
+
+#[test]
+fn a_rename_survives_a_merge_with_a_stale_peer() {
+    // The bug this guards: merge kept the existing entry whenever `joined_at`
+    // was equal, and renaming does not change `joined_at`. So a device could
+    // rename itself and every peer would keep showing the old label forever,
+    // with sync appearing to work.
+    let alice = device();
+    let bob = device();
+    let bob_id = bob.public().to_string();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob_id, "bob");
+
+    // Bob adopts the space, then renames himself.
+    let mut on_bob = Roster::new();
+    on_bob.merge(&on_alice);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert!(
+        on_bob.rename(&bob_id, "bob's phone"),
+        "rename should change something"
+    );
+
+    on_alice.merge(&on_bob);
+
+    let seen = on_alice.by_name("bob's phone");
+    assert!(
+        seen.is_some(),
+        "alice should see the new name, got {:?}",
+        on_alice.members().map(|m| &m.name).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        on_alice.members().count(),
+        2,
+        "renaming must not duplicate a member"
+    );
+}
+
+#[test]
+fn an_older_label_does_not_overwrite_a_newer_one() {
+    let alice = device();
+    let bob = device();
+    let bob_id = bob.public().to_string();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob_id, "bob");
+    let stale = on_alice.clone();
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    on_alice.rename(&bob_id, "bob's phone");
+
+    // Merging an older copy back in must not undo the rename.
+    on_alice.merge(&stale);
+    assert!(
+        on_alice.by_name("bob's phone").is_some(),
+        "newer label must win"
+    );
+}

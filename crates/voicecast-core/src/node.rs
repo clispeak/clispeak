@@ -73,9 +73,14 @@ impl Node {
         if roster.members().count() == 0 {
             roster = Roster::found(identity.secret(), &name);
             roster.save(&roster_path).context("saving roster")?;
-        } else if roster.rename(&identity.id().to_string(), &name) {
-            // The label is captured when the device joins; without this a
-            // rename would show everywhere except in the device's own list.
+        } else if roster.rename(&identity.id().to_string(), &name)
+            || roster.stamp_own_label(&identity.id().to_string())
+        {
+            // Two reasons to rewrite: the label changed, or it predates the
+            // `renamed_at` stamp. Rosters written before that field existed
+            // deserialize it as zero, and a merge comparing 0 > 0 keeps the
+            // stale copy forever — so an unstamped entry is stamped once, on
+            // the device that owns it.
             roster.save(&roster_path).context("saving roster")?;
         }
 
@@ -329,7 +334,7 @@ fn status(shared: &Arc<Shared>) -> Response {
     }
 }
 
-/// Speak locally, or relay to a named peer.
+/// Speak here, on a named peer, or on everything in the space.
 async fn speak(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
@@ -345,17 +350,19 @@ async fn speak(
     }
     let msg_id = new_msg_id();
 
-    let Some(target) = to else {
-        return enqueue(shared, msg_id, chunks, priority);
-    };
+    let target = to.as_deref().unwrap_or("here");
 
-    if target == shared.name || target == "here" {
+    if target == "all" {
+        return speak_everywhere(shared, transport, &msg_id, &chunks, priority).await;
+    }
+
+    if target == "here" || target == shared.name {
         return enqueue(shared, msg_id, chunks, priority);
     }
 
     let peer = {
         let roster = shared.roster.lock().await;
-        match roster.by_name(&target) {
+        match roster.by_name(target) {
             Some(m) => m.endpoint_id.clone(),
             None => {
                 return Response::Error {
@@ -365,11 +372,63 @@ async fn speak(
         }
     };
 
-    match send_to_peer(transport, &peer, &msg_id, &chunks, priority).await {
+    match send_to_peer(shared, transport, &peer, &msg_id, &chunks, priority).await {
         Ok(status) => Response::Finished { status },
         Err(e) => Response::Error {
             message: format!("could not reach '{target}': {e:#}"),
         },
+    }
+}
+
+/// Speak on every device in the space, this one included.
+///
+/// Failures are reported rather than aborting the rest: one unreachable phone
+/// should not stop the laptop from speaking. Per-target detail arrives with
+/// `--wait`/`--json`; for now the summary says what did not work.
+async fn speak_everywhere(
+    shared: &Arc<Shared>,
+    transport: &Arc<Transport>,
+    msg_id: &str,
+    chunks: &[String],
+    priority: Priority,
+) -> Response {
+    let me = shared.identity.id().to_string();
+    let peers: Vec<(String, String)> = {
+        let roster = shared.roster.lock().await;
+        roster
+            .members()
+            .filter(|m| m.endpoint_id != me)
+            .map(|m| (m.name.clone(), m.endpoint_id.clone()))
+            .collect()
+    };
+
+    let local = enqueue(shared, msg_id.to_string(), chunks.to_vec(), priority);
+    let mut spoken = matches!(local, Response::Accepted { .. });
+    let mut failures = Vec::new();
+    if let Response::Error { message } = &local {
+        failures.push(format!("{}: {message}", shared.name));
+    }
+
+    for (name, peer) in peers {
+        match send_to_peer(shared, transport, &peer, msg_id, chunks, priority).await {
+            Ok(Status::Queued | Status::Speaking | Status::Spoken) => spoken = true,
+            Ok(status) => failures.push(format!("{name}: {status:?}")),
+            Err(e) => failures.push(format!("{name}: {e:#}")),
+        }
+    }
+
+    if spoken && failures.is_empty() {
+        Response::Accepted {
+            msg_id: msg_id.to_string(),
+        }
+    } else if spoken {
+        Response::Error {
+            message: format!("spoken, except — {}", failures.join("; ")),
+        }
+    } else {
+        Response::Error {
+            message: format!("nothing was spoken — {}", failures.join("; ")),
+        }
     }
 }
 
@@ -400,8 +459,49 @@ fn enqueue(shared: &Arc<Shared>, msg_id: String, chunks: Vec<String>, p: Priorit
     }
 }
 
+/// Exchange rosters with a peer, merging what they know into what we know.
+///
+/// Sync happens on contact rather than on a schedule: devices talk to each
+/// other when there is something to say, and that is exactly when a stale
+/// roster would be noticed. Without this, a rename or a newly joined device
+/// never reaches anyone — which is what `voicecast rename` had to warn about.
+async fn sync_roster(shared: &Arc<Shared>, conn: &iroh::endpoint::Connection) -> Result<()> {
+    let (mut send, mut recv) = conn.open_bi().await.context("opening roster stream")?;
+    let mine = {
+        let roster = shared.roster.lock().await;
+        PeerMessage::RosterSync {
+            members: roster.members().cloned().collect(),
+            revoked: roster.tombstones(),
+        }
+    };
+    write_msg(&mut send, &mine).await?;
+    send.finish().ok();
+
+    if let PeerMessage::RosterSync { members, revoked } = read_msg(&mut recv).await? {
+        merge_from_peer(shared, members, revoked).await?;
+    }
+    Ok(())
+}
+
+/// Merge a peer's roster into ours and persist the result.
+async fn merge_from_peer(
+    shared: &Arc<Shared>,
+    members: Vec<Member>,
+    revoked: Vec<(String, u64)>,
+) -> Result<()> {
+    let mut roster = shared.roster.lock().await;
+    let theirs = Roster::from_parts(members, revoked);
+    roster.merge(&theirs);
+    // Our own label is ours to decide; a peer's older copy must not overwrite
+    // a rename we just made.
+    roster.rename(&shared.identity.id().to_string(), &shared.name);
+    roster.save(&shared.roster_path)?;
+    Ok(())
+}
+
 /// Open a stream to a peer and stream the message down it.
 async fn send_to_peer(
+    shared: &Arc<Shared>,
     transport: &Arc<Transport>,
     peer_id: &str,
     msg_id: &str,
@@ -410,6 +510,14 @@ async fn send_to_peer(
 ) -> Result<Status> {
     let peer = peer_id.parse().context("bad endpoint id in roster")?;
     let conn = transport.connect(peer).await?;
+
+    // Piggyback a roster exchange: this is the moment both sides are known to
+    // be reachable, so it costs one extra stream and keeps names and
+    // membership converging without any background chatter.
+    if let Err(e) = sync_roster(shared, &conn).await {
+        eprintln!("roster sync with {peer_id}: {e:#}");
+    }
+
     let (mut send, mut recv) = conn.open_bi().await.context("opening message stream")?;
 
     write_msg(
@@ -592,6 +700,17 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                     _ => Status::Dropped,
                 };
                 write_msg(&mut send, &PeerMessage::Report { status }).await?;
+            }
+            PeerMessage::RosterSync { members, revoked } => {
+                let mine = {
+                    let roster = shared.roster.lock().await;
+                    PeerMessage::RosterSync {
+                        members: roster.members().cloned().collect(),
+                        revoked: roster.tombstones(),
+                    }
+                };
+                write_msg(&mut send, &mine).await?;
+                merge_from_peer(shared, members, revoked).await?;
             }
             PeerMessage::Hello { .. } => {}
             other => anyhow::bail!("unexpected message: {other:?}"),

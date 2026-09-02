@@ -15,8 +15,24 @@ async function call(cmd, args) {
   }
 }
 
+/** Clear a message that has been superseded by things working again. */
+function clearResult() {
+  $("result").className = "sub";
+  $("result").textContent = "";
+}
+
 async function refresh() {
-  const status = await call("node_status");
+  // The node starts asynchronously, so early polls can fail while it comes
+  // up. Report that as a transient state rather than an error, and clear it
+  // once it succeeds — otherwise a startup blip stays on screen forever.
+  let status;
+  try {
+    status = await invoke("node_status");
+  } catch (e) {
+    $("ident").textContent = "starting…";
+    return;
+  }
+  clearResult();
   $("name").textContent = status.name;
   $("name-input").placeholder = status.name;
   $("ident").innerHTML =

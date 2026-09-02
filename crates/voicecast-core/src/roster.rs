@@ -92,6 +92,7 @@ impl Roster {
             invited_by: inviter,
             signature: secret.sign(&payload).to_bytes().to_vec(),
             joined_at,
+            renamed_at: joined_at,
         };
         self.members.insert(endpoint_id.to_string(), member.clone());
         member
@@ -111,6 +112,20 @@ impl Roster {
             }
         }
         roster
+    }
+
+    /// Rebuild a roster from a peer's snapshot, verifying every signature.
+    pub fn from_parts(members: Vec<Member>, revoked: Vec<(String, u64)>) -> Self {
+        let mut roster = Self::adopt(members);
+        for (id, at) in revoked {
+            roster.revoked.insert(id, at);
+        }
+        roster
+    }
+
+    /// Revocations, for sending to a peer.
+    pub fn tombstones(&self) -> Vec<(String, u64)> {
+        self.revoked.iter().map(|(k, v)| (k.clone(), *v)).collect()
     }
 
     /// Accept a member vouched for by someone already in the roster.
@@ -147,6 +162,24 @@ impl Roster {
         match self.members.get_mut(endpoint_id) {
             Some(m) if m.name != name => {
                 m.name = name.to_string();
+                // Stamped so a merge can tell this apart from a stale copy.
+                m.renamed_at = now();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Give this device's own entry a rename stamp if it has none.
+    ///
+    /// Migration for rosters written before `renamed_at` existed: without a
+    /// stamp its label can never win a merge, so a rename made before the
+    /// upgrade would never reach anyone. Only a device's own entry is
+    /// stamped — it is the authority on its own name.
+    pub fn stamp_own_label(&mut self, endpoint_id: &str) -> bool {
+        match self.members.get_mut(endpoint_id) {
+            Some(m) if m.renamed_at == 0 => {
+                m.renamed_at = now();
                 true
             }
             _ => false,
@@ -186,7 +219,14 @@ impl Roster {
                 continue;
             }
             match self.members.get(id) {
-                Some(existing) if existing.joined_at >= member.joined_at => {}
+                Some(existing) if existing.joined_at >= member.joined_at => {
+                    // Same membership, but the label may have moved on. A
+                    // device is authoritative about its own name, and the
+                    // newer stamp is how that reaches everyone else.
+                    if member.renamed_at > existing.renamed_at {
+                        self.members.insert(id.clone(), member.clone());
+                    }
+                }
                 _ => {
                     self.members.insert(id.clone(), member.clone());
                 }

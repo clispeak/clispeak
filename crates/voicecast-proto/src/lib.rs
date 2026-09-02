@@ -201,6 +201,15 @@ pub struct Member {
     pub signature: Vec<u8>,
     /// Unix seconds. Used to order a rejoin after a revocation.
     pub joined_at: u64,
+    /// Unix seconds when the label last changed.
+    ///
+    /// Names sit outside the signature so they *can* change, which means a
+    /// merge cannot tell a renamed entry from a stale one by `joined_at` —
+    /// renaming does not alter it. This does, so the newer label wins.
+    /// Defaulted: entries written before this field existed sort oldest,
+    /// which is correct.
+    #[serde(default)]
+    pub renamed_at: u64,
 }
 
 impl Member {
