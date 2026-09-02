@@ -7,3 +7,7 @@ dist/
 *.log
 node_modules/
 target/
+
+# Staged into the app bundle by `cargo xtask bundle`, not authored here.
+app/src-tauri/speech/
+app/src-tauri/binaries/

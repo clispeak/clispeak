@@ -1,15 +1,31 @@
 //! Build automation, run as `cargo xtask <task>`.
 
+mod bundle;
+mod piper;
+
 use std::path::{Path, PathBuf};
 
 /// Crates that must stay portable across all five targets.
 const PORTABLE: &[&str] = &["voicecast-proto", "voicecast-text", "voicecast-core"];
 
 fn main() -> anyhow::Result<()> {
-    match std::env::args().nth(1).as_deref() {
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
         Some("portability") => portability(),
+        // Puts Piper and a voice where the engine looks for them, so a
+        // freshly cloned checkout can speak without hunting for downloads.
+        Some("piper") => {
+            let root = match args.next() {
+                Some(dir) => PathBuf::from(dir),
+                None => piper::user_root()?,
+            };
+            piper::fetch(&root)
+        }
+        // Builds the app with Piper, a voice and the CLI inside it, which
+        // is what makes a Mac install a single drag with nothing to follow.
+        Some("bundle") => bundle::bundle(&bundle::workspace_root()?),
         _ => {
-            eprintln!("usage: cargo xtask portability");
+            eprintln!("usage: cargo xtask <portability | piper [dir] | bundle>");
             Ok(())
         }
     }

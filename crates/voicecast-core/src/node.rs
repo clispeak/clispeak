@@ -9,7 +9,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use interprocess::local_socket::{
-    GenericNamespaced, ListenerOptions, ToNsName, tokio::Stream, traits::tokio::Listener,
+    GenericNamespaced,
+    ListenerOptions,
+    ToNsName,
+    tokio::{Listener as TokioListener, Stream},
+    // Anonymous: `connect` and `accept` are wanted, but the trait names
+    // themselves would collide with the concrete types above.
+    traits::tokio::{Listener, Stream as _},
 };
 use tokio::sync::Mutex;
 use voicecast_engine::SpeechEngine;
@@ -25,6 +31,44 @@ use crate::queue::{Job, Speaker};
 use crate::spaces::Spaces;
 use crate::transport::{read_msg, write_msg};
 use crate::{Identity, Roster, Ticket, Transport};
+
+/// Bind the local socket, reclaiming one a dead node left behind.
+///
+/// On Linux the name lives in the abstract namespace and vanishes with the
+/// process that held it, so `AddrInUse` can only mean a node is running. Not
+/// so anywhere else: the name is a file, and a crash or a `kill` leaves it
+/// on disk. Every node started afterwards then fails to bind, while every
+/// CLI call gets `connection refused` from a socket that looks perfectly
+/// healthy — a state nothing recovers from without deleting a file by hand.
+///
+/// A live node is told from a dead one's leftovers by connecting, not by
+/// inspecting the file: only a refused connection proves nothing is
+/// listening. Overwriting on `AddrInUse` alone would let a second node
+/// displace a running one, which is the very thing the error exists to
+/// prevent.
+async fn bind_ipc(socket: &str) -> Result<TokioListener> {
+    let name = || socket.to_string().to_ns_name::<GenericNamespaced>();
+
+    let refused = match ListenerOptions::new().name(name()?).create_tokio() {
+        Ok(listener) => return Ok(listener),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            // Nothing answering means the name outlived its node.
+            Stream::connect(name()?).await.is_err()
+        }
+        Err(e) => return Err(e).context("binding the local socket"),
+    };
+
+    if !refused {
+        anyhow::bail!("another node is already running on {socket}");
+    }
+
+    eprintln!("removing the socket a previous node left at {socket}");
+    ListenerOptions::new()
+        .name(name()?)
+        .try_overwrite(true)
+        .create_tokio()
+        .context("reclaiming the local socket")
+}
 
 /// Shared state both loops need.
 /// What to do when the CLI asks for the window or for shutdown.
@@ -432,11 +476,7 @@ impl Node {
 
     /// Run both loops until one of them fails.
     pub async fn serve(&self) -> Result<()> {
-        let name = socket_name().to_ns_name::<GenericNamespaced>()?;
-        let listener = ListenerOptions::new()
-            .name(name)
-            .create_tokio()
-            .context("another node may already be running")?;
+        let listener = bind_ipc(&socket_name()).await?;
 
         eprintln!(
             "listening on {} and as {}",
@@ -2220,4 +2260,49 @@ fn new_msg_id() -> String {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     format!("m_{:x}", nanos as u64 & 0xffff_ffff)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A socket name unique to this test run, so tests never collide.
+    fn unique(label: &str) -> String {
+        format!("voicecast-test-{}-{label}.sock", std::process::id())
+    }
+
+    /// A socket left behind by a node that died is reclaimed, not refused.
+    ///
+    /// The failure this covers is macOS-shaped but not macOS-only: anywhere
+    /// the name is a file rather than an abstract address, a `kill -9` leaves
+    /// it behind and every later node fails to bind.
+    #[tokio::test]
+    async fn reclaims_a_socket_a_dead_node_left() {
+        let socket = unique("stale");
+
+        // Exactly what a crash leaves: a bound name whose owner is gone and
+        // which was never cleaned up on the way out.
+        let mut abandoned = bind_ipc(&socket).await.expect("first bind");
+        abandoned.do_not_reclaim_name_on_drop();
+        drop(abandoned);
+
+        let reclaimed = bind_ipc(&socket).await;
+        assert!(reclaimed.is_ok(), "{:?}", reclaimed.err());
+    }
+
+    /// A node that is actually running is never displaced.
+    ///
+    /// The whole reason reclamation cannot simply overwrite on `AddrInUse`:
+    /// doing so would let a second node quietly steal the socket from the
+    /// first, and the CLI would reach whichever won.
+    #[tokio::test]
+    async fn refuses_to_displace_a_live_node() {
+        let socket = unique("live");
+        let _live = bind_ipc(&socket).await.expect("first bind");
+
+        let second = bind_ipc(&socket).await;
+        assert!(second.is_err(), "a second node must not take the socket");
+        let message = second.unwrap_err().to_string();
+        assert!(message.contains("already running"), "{message}");
+    }
 }

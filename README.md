@@ -15,10 +15,17 @@ and no account to create.
 
 ## Status
 
-**Working on Linux and Android.** Both run the packaged app and talk to each
-other over the open internet, including on cellular.
+**Working on Linux, macOS and Android.** Linux and Android run the packaged
+app and talk to each other over the open internet, including on cellular.
 
-macOS, Windows and iOS build on every commit but are not yet wired to a speech
+**macOS speaks, and installs like a Mac app.** Verified on an arm64 Mac:
+installed from the built dmg, synthesising through Piper, with the `voicecast`
+command on the PATH. Its peer-to-peer side is exercised only as far as binding
+an endpoint — pairing a Mac with another device has not been tested yet, and
+an Intel Mac has no verified Piper checksum, so it is refused rather than
+guessed at.
+
+Windows and iOS build on every commit but are not yet wired to a speech
 engine — the rule is that nothing merges unless it compiles for all five
 targets, so adding them later is a matter of testing rather than untangling.
 
@@ -44,6 +51,27 @@ the host rather than inside the sandbox: entering a Flatpak costs about 86ms
 against the tool's own 3ms, and an agent calls it repeatedly. They still find
 each other, over an abstract socket that crosses the sandbox.
 
+**macOS.** Build the app bundle, which carries Piper, a voice and the
+command-line tool, so a drag to /Applications is the whole install:
+
+```bash
+cargo xtask bundle
+open target/release/bundle/dmg/voicecast_0.1.0_aarch64.dmg
+```
+
+As on Linux, the app installs the `voicecast` command to `~/.local/bin` on
+launch and rewrites it whenever the bundled copy differs, so an update cannot
+leave a stale CLI behind. macOS builds its default PATH from `/etc/paths`,
+which names no home directory, so the app also adds a line to `~/.zprofile` —
+after `path_helper`, which would otherwise reorder it away. Nothing is written
+if any of your start-up files already puts that directory on the PATH.
+
+Builds are ad-hoc signed unless `APPLE_SIGNING_IDENTITY` names a certificate.
+Ad-hoc is enough to run, at a cost worth knowing: the identity is derived from
+the binary's own hash, so every rebuild looks like a different program to
+macOS and the keychain grant holding the device identity is asked for again.
+Any stable certificate, self-signed included, ends that.
+
 **Android.** Build and install over USB:
 
 ```bash
@@ -54,8 +82,10 @@ adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-u
 ```
 
 **Without the app.** `voicecastd` is a headless node for a machine with no
-desktop. Linux then needs `espeak-ng` on `PATH` as the floor engine, or Piper
-in `~/.local/share/voicecast`.
+desktop. It needs Piper installed where the engine looks for it, which
+`cargo xtask piper` does — `~/.local/share/voicecast` on Linux,
+`~/Library/Application Support/voicecast` on macOS. Linux can instead fall
+back to `espeak-ng` on `PATH`.
 
 ## Pairing
 
@@ -107,9 +137,15 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 | | Speech | Background |
 |---|---|---|
 | Linux | Piper, falling back to espeak-ng | tray app |
+| macOS | Piper | tray app |
 | Android | system text-to-speech | foreground service + battery exemption |
-| macOS, Windows | not yet wired | tray app |
+| Windows | not yet wired | tray app |
 | iOS | not yet wired | — |
+
+Piper streams raw audio to whatever player the system has — `paplay`,
+`pw-play`, `aplay`, or sox. macOS ships none that read raw audio on stdin, so
+there the chunk is rendered and played with the built-in `afplay`: speech
+starts a little later, and a stock Mac needs nothing installed.
 
 ## How it works
 
@@ -144,12 +180,28 @@ Start with `decisions.md` if you want to know *why* rather than *what*.
 
 ## Building
 
+Rust 1.98 or newer, and `npm install` in `app/` once.
+
 ```bash
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
+cargo run -p xtask -- portability
 cd app && npx tailwindcss -i src/input.css -o src/styles.css --minify
 ```
+
+`cargo xtask piper` downloads Piper and a voice against pinned checksums and
+puts them where the engine looks, which is what a checked-out copy needs
+before it can speak. On macOS it also repairs the upstream release: that build
+ships without an rpath and without the dylibs it links against, which live in
+a separate `piper-phonemize` archive, so the two are merged and re-signed.
+
+`cargo xtask bundle` stages Piper, a voice and the CLI into the app and builds
+the installable bundle. Those staged files are declared in
+`tauri.bundle.conf.json` rather than the main config, because Tauri's build
+script checks declared resources exist on *every* `cargo check` — declaring
+them normally would break `cargo build --workspace` on any machine that had
+not staged them first, CI included.
 
 The frontend is plain HTML and JavaScript with a Tailwind build step — no
 framework and no bundler, because the interesting behaviour lives in
