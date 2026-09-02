@@ -534,9 +534,23 @@ async fn sync_roster(shared: &Arc<Shared>, conn: &iroh::endpoint::Connection) ->
         PeerMessage::RosterSync { members, revoked } => {
             merge_from_peer(shared, members, revoked).await?;
         }
-        // The peer no longer counts us as a member — most likely it left, or
-        // removed us. Not an error worth shouting about.
-        PeerMessage::JoinRefused { .. } => {}
+        // The peer no longer counts us as a member: it left, or removed us.
+        // Either way the relationship is over, so drop it rather than keep
+        // showing a device that will never answer. This is what makes the
+        // system self-heal when a departure announcement goes missing — the
+        // next check-in settles it.
+        //
+        // Safe by construction: a peer can only ever make us forget *itself*,
+        // which it could already do by leaving.
+        PeerMessage::JoinRefused { .. } => {
+            let peer = conn.remote_id().to_string();
+            let mut roster = shared.roster.lock().await;
+            if roster.allows(&conn.remote_id()) {
+                roster.revoke(&peer);
+                roster.save(&shared.roster_path)?;
+                eprintln!("{peer} no longer shares a space with us; removed");
+            }
+        }
         other => anyhow::bail!("unexpected reply to roster sync: {other:?}"),
     }
     mark_seen(shared, &conn.remote_id().to_string()).await;
@@ -887,6 +901,12 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                     .await?;
                     continue;
                 }
+                // Merge before replying. A departing peer sends its tombstone
+                // and closes without waiting, so writing first meant the reply
+                // failed and `?` returned before the news was ever acted on —
+                // which is why a device that left stayed listed here.
+                merge_from_peer(shared, members, revoked).await?;
+
                 let mine = {
                     let roster = shared.roster.lock().await;
                     PeerMessage::RosterSync {
@@ -894,8 +914,8 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                         revoked: roster.tombstones(),
                     }
                 };
-                write_msg(&mut send, &mine).await?;
-                merge_from_peer(shared, members, revoked).await?;
+                // Best-effort: the peer may already be gone, and that is fine.
+                let _ = write_msg(&mut send, &mine).await;
             }
             PeerMessage::Hello { .. } => {}
             other => anyhow::bail!("unexpected message: {other:?}"),
