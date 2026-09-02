@@ -163,6 +163,24 @@ roster?", so compromising one device leaks nothing that decrypts another's
 traffic. The roster is an add-only set with tombstones, signed by whoever
 invited each member, which is what lets a device admit a peer it has never met.
 
+## Using it from an agent
+
+`skills/voicecast/SKILL.md` is an agent skill. Copy it into an agent's skills
+directory — for Claude Code, `~/.claude/skills/voicecast/` — and the agent
+gains the judgement the `--help` output cannot give it: when speaking is worth
+doing at all, which device suits which kind of message, what each exit code
+means for what to do next, and that a `muted` device is a decision to respect
+rather than a failure to retry.
+
+It also walks the user through a one-time working agreement — what the agent
+should call itself when it speaks, which device is the default, and where the
+line is between speaking and printing — and tells the agent to record it. The
+naming matters once more than one agent can reach the same phone: a voice from
+a pocket that does not say whose it is makes the user guess.
+
+A test checks that every command and flag the skill mentions actually exists,
+so it cannot quietly drift into describing a tool that has moved on.
+
 ## Docs
 
 | | |
