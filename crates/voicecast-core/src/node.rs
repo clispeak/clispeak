@@ -147,7 +147,9 @@ impl Node {
             name,
             spaces: Mutex::new(spaces),
             spaces_path,
-            pending: Mutex::new(None),
+            // An invite outstanding when the app last stopped is still
+            // valid if it has not expired.
+            pending: Mutex::new(Ticket::recall()),
             speaker,
             history,
             history_path,
@@ -1571,6 +1573,9 @@ async fn invite(shared: &Arc<Shared>) -> Response {
         }
     };
     let expires_in = ticket.remaining();
+    // Written down as well as held, so restarting the app mid-pairing does
+    // not silently invalidate a code someone is looking at.
+    ticket.remember();
     *shared.pending.lock().await = Some(ticket);
     Response::Invite { url, expires_in }
 }
@@ -2148,14 +2153,19 @@ async fn accept_join(
 ) -> PeerMessage {
     let mut pending = shared.pending.lock().await;
     let Some(ticket) = pending.as_ref() else {
+        // Named from the joiner's point of view, because that is who reads
+        // it. "Run invite first" sounded like an instruction for this end.
         return PeerMessage::JoinRefused {
-            reason: "no invite is open on this device; run `voicecast invite` first".into(),
+            reason: "the inviting device has no invite open — it may have expired, \
+                     already been used, or the app was restarted. Show a new one there"
+                .into(),
         };
     };
     if !ticket.is_valid() {
         *pending = None;
+        Ticket::forget();
         return PeerMessage::JoinRefused {
-            reason: "that invite has expired".into(),
+            reason: "that invite has expired; show a new one on the inviting device".into(),
         };
     }
     if ticket.token != token {
@@ -2166,6 +2176,7 @@ async fn accept_join(
     // Single use: consumed here so a ticket seen over a shoulder, or left in
     // scrollback, cannot be replayed.
     *pending = None;
+    Ticket::forget();
     drop(pending);
 
     let mut spaces = shared.spaces.lock().await;

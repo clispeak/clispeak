@@ -6,7 +6,7 @@
 <title>voicecast</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="flex h-full flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 antialiased">
+<body class="flex h-full flex-col overflow-hidden bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 antialiased">
 
 <!-- Identity. Shared by both screens, because which device you are looking at
      is the one thing that is true on every screen. -->
@@ -28,7 +28,7 @@
 
 <!-- Home: what this device is saying, what it has been asked to say, and
      whether it is willing to say anything at all. -->
-<main id="screen-home" class="flex-1 overflow-y-auto">
+<main id="screen-home" class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
   <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
 
     <!-- Now playing. Only present while there is something to act on, so the
@@ -154,7 +154,7 @@
 </main>
 
 <!-- Settings: everything that is set once and then left alone. -->
-<main id="screen-settings" hidden class="flex-1 overflow-y-auto">
+<main id="screen-settings" hidden class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
   <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
 
     <!-- Doze warning. Hidden unless it applies, which is Android only. ------- -->

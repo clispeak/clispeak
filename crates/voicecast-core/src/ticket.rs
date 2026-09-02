@@ -36,6 +36,54 @@ impl Ticket {
         }
     }
 
+    /// Where an outstanding invite is kept between restarts.
+    fn path() -> Option<std::path::PathBuf> {
+        crate::identity::config_dir()
+            .ok()
+            .map(|d| d.join("invite.json"))
+    }
+
+    /// Remember this invite, so it survives the app being restarted.
+    ///
+    /// An invite lives in memory for the five minutes it is valid, and on a
+    /// phone the system can kill the app in that window — between showing a
+    /// QR code and the other device scanning it. Losing it there refuses a
+    /// join for a reason the person cannot see or act on.
+    ///
+    /// Persisting widens nothing meaningfully: the ticket is already on
+    /// screen as a QR code, it still expires, and it is still single use. The
+    /// file lives in app-private storage.
+    pub fn remember(&self) {
+        let Some(path) = Self::path() else { return };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(text) = serde_json::to_string(self) {
+            let _ = std::fs::write(path, text);
+        }
+    }
+
+    /// Drop the remembered invite, once used or abandoned.
+    pub fn forget() {
+        if let Some(path) = Self::path() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    /// The remembered invite, if there is one and it has not expired.
+    pub fn recall() -> Option<Self> {
+        let path = Self::path()?;
+        let ticket: Self = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+        if ticket.is_valid() {
+            Some(ticket)
+        } else {
+            // Tidy up rather than leave a dead ticket to be re-read on every
+            // start.
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+    }
+
     /// Whether this ticket is still within its lifetime.
     pub fn is_valid(&self) -> bool {
         now() <= self.expires_at
