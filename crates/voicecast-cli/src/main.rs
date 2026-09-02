@@ -503,7 +503,7 @@ fn run_skill(install: bool, path: Option<&std::path::Path>) -> u8 {
     }
 
     let destination = match path {
-        Some(path) => path.to_path_buf(),
+        Some(path) => skill::expand_home(path),
         None => match skill::default_destination() {
             Some(path) => path,
             None => {
