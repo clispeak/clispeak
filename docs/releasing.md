@@ -13,6 +13,28 @@ and Apple's distribution route is not a download link.
 **The source stays closed for now.** That is compatible with free binaries, but
 it is not free of consequences — see below, twice.
 
+## What 1.0 means
+
+A thing someone can download and use on Linux, Android, macOS and Windows.
+Not iOS: it has never been run, and Apple's route is not a download link.
+
+The milestone holds two kinds of thing, and nothing else:
+
+**The release chain** — everything between a tag and a binary in someone's
+hands. Building on tags, publishing from a private repository, the licensing
+that has to be settled first, the download page, and the three signing
+questions: a macOS identity, an Android release key, and Microsoft's
+redistribution terms.
+
+**First run** — what someone hits in the first five minutes. A node that
+blocks silently on a keychain prompt while the CLI blames the wrong thing. A
+Mac with no working Piper being told to install what it already has. Two
+commands the docs promise that do not exist. Adding a device.
+
+Deliberately outside it: iOS, which has no hardware; branch protection, which
+is a repository setting rather than work; and the architecture matrix, which
+has a pull request open already.
+
 ## Builds run on version tags, not on every push
 
 CI today runs six jobs on every push to `main` and every pull request:
