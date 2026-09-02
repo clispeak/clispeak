@@ -1,9 +1,14 @@
 //! Desktop key storage.
 //!
-//! Lives here rather than in `voicecast-core` on purpose: the `keyring` crate
-//! pulls in platform backends, and core has to compile for all five targets.
-//! Keeping it in the desktop binary means the portability gate stays honest
-//! without anyone having to remember a rule.
+//! Its own crate rather than part of `voicecast-core` on purpose: the
+//! `keyring` crate pulls in platform backends, and core has to compile for
+//! all five targets. Confining it here means the portability gate stays
+//! honest without anyone having to remember a rule, and CI simply excludes
+//! this crate from the mobile jobs.
+//!
+//! Shared by `voicecastd` and the desktop app so both are the *same device*.
+//! When they each picked their own store they generated separate identities
+//! while reading one roster, which looked like the roster was corrupt.
 
 use std::path::{Path, PathBuf};
 

@@ -7,6 +7,7 @@ members = [
     "crates/voicecast-core",
     "crates/voicecast-cli",
     "crates/voicecast-daemon",
+    "crates/voicecast-keystore",
     "app/src-tauri",
     "xtask",
 ]
@@ -25,6 +26,7 @@ voicecast-text = { path = "crates/voicecast-text" }
 voicecast-engine = { path = "crates/voicecast-engine" }
 voicecast-core = { path = "crates/voicecast-core" }
 voicecast-daemon = { path = "crates/voicecast-daemon" }
+voicecast-keystore = { path = "crates/voicecast-keystore" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

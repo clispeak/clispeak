@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{Manager, State};
-use voicecast_core::{FileKeyStore, Identity, Node, Transport};
+use voicecast_core::{Identity, Node, Transport};
 use voicecast_engine::{EspeakEngine, SpeechEngine};
 use voicecast_proto::{DeviceInfo, Priority, Response};
 
@@ -111,10 +111,26 @@ fn describe(r: Response) -> String {
     }
 }
 
+/// This device's key store.
+///
+/// Desktop shares the keyring-backed store with `voicecastd`, so the app and
+/// the daemon are the same device rather than two devices arguing over one
+/// roster. Mobile has no keyring backend, so the key lives in app-private
+/// storage instead.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn key_store() -> anyhow::Result<Box<dyn voicecast_core::KeyStore>> {
+    Ok(Box::new(voicecast_keystore::DesktopKeyStore::new()?))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn key_store() -> anyhow::Result<Box<dyn voicecast_core::KeyStore>> {
+    Ok(Box::new(voicecast_core::FileKeyStore::default_location()?))
+}
+
 /// Build the node this app wraps.
 async fn start_node() -> anyhow::Result<Node> {
-    let store = FileKeyStore::default_location()?;
-    let identity = Identity::load_or_create(&store)?;
+    let store = key_store()?;
+    let identity = Identity::load_or_create(store.as_ref())?;
     let name = device_name();
 
     let engine: Arc<dyn SpeechEngine> = Arc::new(EspeakEngine::new()?);

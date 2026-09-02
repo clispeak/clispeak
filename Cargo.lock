@@ -6366,6 +6366,7 @@ dependencies = [
  "tokio",
  "voicecast-core",
  "voicecast-engine",
+ "voicecast-keystore",
  "voicecast-proto",
  "voicecast-text",
 ]
@@ -6409,11 +6410,10 @@ name = "voicecast-daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "directories",
- "keyring",
  "tokio",
  "voicecast-core",
  "voicecast-engine",
+ "voicecast-keystore",
 ]
 
 [[package]]
@@ -6421,6 +6421,15 @@ name = "voicecast-engine"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "voicecast-keystore"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "keyring",
+ "voicecast-core",
 ]
 
 [[package]]

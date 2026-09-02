@@ -10,8 +10,7 @@ use anyhow::{Context, Result};
 use voicecast_core::{Identity, Node, Transport};
 use voicecast_engine::EspeakEngine;
 
-mod keystore;
-use keystore::DesktopKeyStore;
+use voicecast_keystore::DesktopKeyStore;
 
 #[tokio::main]
 async fn main() -> Result<()> {

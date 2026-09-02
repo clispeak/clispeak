@@ -17,8 +17,7 @@ anyhow.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 # Desktop keystores only. Kept out of voicecast-core deliberately: this crate
 # is excluded from the mobile CI targets, so core stays buildable everywhere.
-keyring = "4"
-directories = "6"
+voicecast-keystore.workspace = true
 
 [lints]
 workspace = true

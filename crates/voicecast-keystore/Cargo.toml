@@ -1,0 +1,15 @@
+[package]
+name = "voicecast-keystore"
+description = "Desktop key storage. Not built for mobile."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+voicecast-core.workspace = true
+keyring = "4"
+directories = "6"
+
+[lints]
+workspace = true
