@@ -50,13 +50,39 @@ function showScreen(name) {
  * `tone` is "info" or "error"; errors persist until the next action rather
  * than timing out, so a failure cannot vanish before it is read.
  */
+/** How long an ordinary message stays up before fading. */
+const SAY_MS = 3500;
+
+let sayTimer = null;
+
 function say(text, tone = "info") {
   const el = $("result");
+  if (sayTimer) {
+    clearTimeout(sayTimer);
+    sayTimer = null;
+  }
+  if (!text) {
+    el.hidden = true;
+    return;
+  }
   el.textContent = text;
+  // Rebuilt in full each time, since the tone changes the whole palette.
   el.className =
-    tone === "error"
-      ? "min-h-5 text-center text-sm text-red-600 dark:text-red-400"
-      : "min-h-5 text-center text-sm text-neutral-500 dark:text-neutral-400";
+    "max-w-sm rounded-full border px-4 py-2 text-center text-sm shadow-lg " +
+    (tone === "error"
+      ? "border-red-300 bg-red-50 text-red-700 " +
+        "dark:border-red-500/40 dark:bg-red-950 dark:text-red-300"
+      : "border-neutral-300 bg-white text-neutral-700 " +
+        "dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200");
+  el.hidden = false;
+  // Errors stay until something replaces them; a confirmation that has been
+  // read is only clutter.
+  if (tone !== "error") {
+    sayTimer = setTimeout(() => {
+      el.hidden = true;
+      sayTimer = null;
+    }, SAY_MS);
+  }
 }
 
 /** Call a Tauri command, surfacing failures rather than swallowing them. */
@@ -557,65 +583,47 @@ function spaceCard(space, devices, several) {
     });
   foot.append(add);
 
-  if (space.is_default) {
-    const leave = cardButton(`Leave ${space.label}`, { danger: true });
-    leave.onclick = () =>
-      withButton(leave, "…", async () => {
-        if (
-          !(await ask(
-            `Leave ${space.label}? The other devices are told, and stop ` +
-              "reaching this one.",
-          ))
-        )
-          return;
-        say(await call("leave_space"));
-        await refresh();
-      });
+  // Leaving, replacing and inviting all name their space now, so every card
+  // gets the same controls rather than only the default one.
+  const leave = cardButton(`Leave ${space.label}`, { danger: true });
+  leave.onclick = () =>
+    withButton(leave, "…", async () => {
+      if (
+        !(await ask(
+          `Leave ${space.label}? The other devices are told, and stop ` +
+            "reaching this one.",
+        ))
+      )
+        return;
+      say(await call("leave_space", { space: space.label }));
+      await refresh();
+    });
 
-    const rotate = cardButton(`Replace ${space.label}`, { danger: true });
-    rotate.onclick = () =>
-      withButton(rotate, "…", async () => {
-        if (
-          !(await ask(
-            `Replace ${space.label}? Every other device is locked out ` +
-              "immediately and has to be invited again.",
-          ))
-        )
-          return;
-        const left = await call("rotate_space", { space: space.label });
-        say(
-          left.length
-            ? `space replaced — re-invite ${left.join(", ")}`
-            : "space replaced",
-        );
-        await refresh();
-      });
-    foot.append(leave, rotate);
-  } else {
-    const rotate = cardButton(`Replace ${space.label}`, { danger: true });
-    rotate.onclick = () =>
-      withButton(rotate, "…", async () => {
-        if (
-          !(await ask(
-            `Replace ${space.label}? Every other device is locked out ` +
-              "immediately and has to be invited again.",
-          ))
-        )
-          return;
-        const left = await call("rotate_space", { space: space.label });
-        say(
-          left.length
-            ? `space replaced — re-invite ${left.join(", ")}`
-            : "space replaced",
-        );
-        await refresh();
-      });
-    foot.append(rotate);
-  }
-  if (!space.is_default && several) {
-    // Named for what it does. Dropping a space is local and tells nobody, so
-    // the other devices go on believing this one is a member — which "Leave"
-    // would wrongly imply had been handled.
+  const rotate = cardButton(`Replace ${space.label}`, { danger: true });
+  rotate.onclick = () =>
+    withButton(rotate, "…", async () => {
+      if (
+        !(await ask(
+          `Replace ${space.label}? Every other device is locked out ` +
+            "immediately and has to be invited again.",
+        ))
+      )
+        return;
+      const left = await call("rotate_space", { space: space.label });
+      say(
+        left.length
+          ? `space replaced — re-invite ${left.join(", ")}`
+          : "space replaced",
+      );
+      await refresh();
+    });
+  foot.append(leave, rotate);
+
+  // Only where the difference matters. Forgetting is the escape hatch for a
+  // space whose other devices cannot be reached to be told — it removes the
+  // space here and sends nothing, so they go on counting this device a
+  // member. Leaving is what you want otherwise.
+  if (several) {
     const forget = cardButton("Forget on this device", { danger: true });
     forget.onclick = () =>
       withButton(forget, "…", async () => {
@@ -836,6 +844,10 @@ async function showInvite(space) {
   $("invite-for").textContent = space ? `Joins ${space}.` : "";
   $("expiry").textContent = `Expires in ${Math.max(1, Math.round(expires_in / 60))} min. Single use.`;
   $("invite-out").hidden = false;
+  // The panel sits below the space cards, so a button pressed on a card can
+  // open it several hundred pixels out of view — which looks exactly like
+  // nothing happening.
+  $("invite-out").scrollIntoView({ behavior: "smooth", block: "center" });
   say("");
 }
 

@@ -150,8 +150,12 @@ pub enum Request {
         #[serde(default)]
         space: Option<String>,
     },
-    /// Leave the space, keeping this device's identity.
-    Leave,
+    /// Leave a space, keeping this device's identity.
+    Leave {
+        /// Which space. `None` is the default space.
+        #[serde(default)]
+        space: Option<String>,
+    },
     /// Replace a space with a fresh one, locking every other device out.
     Rotate {
         /// Which space to replace. `None` is the default space.
@@ -346,6 +350,16 @@ pub enum Response {
     Spaces {
         /// One row per space.
         spaces: Vec<SpaceRow>,
+    },
+    /// A space was left.
+    Left {
+        /// Its local name.
+        space: String,
+        /// Devices told at the time. The rest find out when next reached.
+        unreached: usize,
+        /// Whether the space is gone, or was replaced by a fresh empty one
+        /// because it was the only one this device had.
+        refounded: bool,
     },
     /// The space was replaced.
     Rotated {

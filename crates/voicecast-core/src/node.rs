@@ -269,8 +269,8 @@ impl Node {
     }
 
     /// Leave the space, keeping this device's identity.
-    pub async fn leave(&self) -> Response {
-        leave(&self.shared, &self.transport).await
+    pub async fn leave(&self, space: Option<&str>) -> Response {
+        leave(&self.shared, &self.transport, space).await
     }
 
     /// Replace this space with a fresh one, locking every other device out.
@@ -585,7 +585,7 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
         Request::Devices => devices(shared).await,
         Request::Rename { name } => rename(shared, &name).await,
         Request::Revoke { name, space } => revoke(shared, &name, space.as_deref()).await,
-        Request::Leave => leave(shared, transport).await,
+        Request::Leave { space } => leave(shared, transport, space.as_deref()).await,
         Request::Rotate { space } => rotate(shared, space.as_deref()).await,
         Request::Spaces => list_spaces(shared).await,
         Request::NewSpace { label } => new_space(shared, &label).await,
@@ -1842,14 +1842,22 @@ async fn revoke(shared: &Arc<Shared>, name: &str, space: Option<&str>) -> Respon
 ///
 /// Telling them is best-effort; the local removal is not. Leaving must work
 /// with no network at all.
-async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>) -> Response {
+async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&str>) -> Response {
+    let space = match space_named(shared, space).await {
+        Ok(id) => id,
+        Err(message) => return Response::Error { message },
+    };
     let me = shared.identity.id().to_string();
 
     // A roster carrying our own tombstone. Peers merging this drop us.
-    let (farewell, peers, space) = {
+    let (farewell, peers, label) = {
         let spaces = shared.spaces.lock().await;
-        let roster = spaces.current();
-        let space = spaces.default_id().to_string();
+        let Some(roster) = spaces.get(&space) else {
+            return Response::Error {
+                message: "that space is no longer held".into(),
+            };
+        };
+        let label = spaces.label(&space).to_string();
         let mut goodbye = roster.clone();
         goodbye.revoke(&me);
         let peers: Vec<String> = roster
@@ -1857,7 +1865,7 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>) -> Response {
             .filter(|m| m.endpoint_id != me)
             .map(|m| m.endpoint_id.clone())
             .collect();
-        (goodbye, peers, space)
+        (goodbye, peers, label)
     };
 
     let mut told = 0usize;
@@ -1871,20 +1879,27 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>) -> Response {
     }
 
     let mut spaces = shared.spaces.lock().await;
-    spaces.replace_current(Roster::leave(shared.identity.secret(), &shared.name));
+    // Remove it, unless it is the only space this device has. A device with
+    // no space cannot speak even to itself, so the last one is replaced by a
+    // fresh empty one instead — which is what leaving used to do to *every*
+    // space, and why leaving one of several appeared to do nothing at all:
+    // the replacement carried the same local name and the same lone member.
+    let refounded = spaces.ids().len() <= 1;
+    if refounded {
+        spaces.replace_current(Roster::leave(shared.identity.secret(), &shared.name));
+    } else if let Err(message) = spaces.remove(&space) {
+        return Response::Error { message };
+    }
     if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
         };
     }
 
-    let unreached = peers.len() - told;
-    Response::Renamed {
-        name: if unreached == 0 {
-            "left the space".into()
-        } else {
-            format!("left the space; {unreached} device(s) will find out when next reached")
-        },
+    Response::Left {
+        space: label,
+        unreached: peers.len() - told,
+        refounded,
     }
 }
 

@@ -851,8 +851,8 @@ async fn revoke_device(
 }
 
 #[tauri::command]
-async fn leave_space(state: State<'_, AppState>) -> Result<String, String> {
-    match state.node.leave().await {
+async fn leave_space(state: State<'_, AppState>, space: Option<String>) -> Result<String, String> {
+    match state.node.leave(space.as_deref()).await {
         Response::Renamed { name } => Ok(name),
         other => Err(describe(other)),
     }

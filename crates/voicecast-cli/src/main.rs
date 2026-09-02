@@ -225,8 +225,12 @@ enum Command {
         #[arg(long)]
         space: Option<String>,
     },
-    /// Leave the space, keeping this device's identity.
-    Leave,
+    /// Leave a space, keeping this device's identity.
+    Leave {
+        /// Which space. Defaults to the default space.
+        #[arg(long)]
+        space: Option<String>,
+    },
     /// Work with the spaces this device belongs to.
     ///
     /// A space is a set of your own devices, kept fully separate from the
@@ -436,7 +440,9 @@ async fn run() -> anyhow::Result<u8> {
             name: name.clone(),
             space: space.clone(),
         },
-        Some(Command::Leave) => Request::Leave,
+        Some(Command::Leave { space }) => Request::Leave {
+            space: space.clone(),
+        },
         Some(Command::Rotate { space }) => Request::Rotate {
             space: space.clone(),
         },
@@ -927,6 +933,22 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
                     ));
                 }
                 _ => out("quiet:   off"),
+            }
+            exit::OK
+        }
+        Response::Left {
+            space,
+            unreached,
+            refounded,
+        } => {
+            out(&format!("left {space}"));
+            if refounded {
+                err("It was the only space, so an empty one was founded in its place.");
+            }
+            if unreached > 0 {
+                err(&format!(
+                    "{unreached} device(s) will find out when next reached."
+                ));
             }
             exit::OK
         }

@@ -234,7 +234,7 @@ $ voicecast space list
   home    4         founder
 
 $ voicecast space new home           # found a new space from this device
-$ voicecast space leave work         # drop the roster + gossip a self-revocation
+$ voicecast leave --space work       # tell the others, then remove it here
                                # warns if you are the last member
 $ voicecast space default home       # which space bare target names resolve in
 $ voicecast space rename work team   # local label only
