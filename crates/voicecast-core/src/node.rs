@@ -27,7 +27,7 @@ use voicecast_text::chunk;
 use crate::history::{Entry, History};
 use crate::ipc::{read_frame, socket_name, write_frame};
 use crate::policy::{self, Policy};
-use crate::queue::{Job, Speaker};
+use crate::queue::{Job, Speaker, words_in};
 use crate::spaces::Spaces;
 use crate::transport::{read_msg, write_msg};
 use crate::{Identity, Roster, Ticket, Transport};
@@ -724,7 +724,7 @@ async fn speak(shared: &Arc<Shared>, transport: &Arc<Transport>, ask: SpeakReque
         priority,
         wait,
         voice,
-        timeout: std::time::Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)),
+        timeout: timeout_secs.map(std::time::Duration::from_secs),
         // Typed here, so this device is the origin.
         from: None,
     };
@@ -733,11 +733,46 @@ async fn speak(shared: &Arc<Shared>, transport: &Arc<Transport>, ask: SpeakReque
     Response::Report { msg_id, targets }
 }
 
-/// How long `--wait` waits when the caller does not say.
+/// Words per minute a device is assumed to speak at when estimating a wait.
 ///
-/// Matches the documented default in `docs/cli.md`. A device speaking a long
-/// document should not hold a caller open indefinitely.
-const DEFAULT_TIMEOUT_SECS: u64 = 120;
+/// Deliberately far slower than anything here actually manages: Piper's
+/// `en_US-lessac-medium` measures 197–231 wpm on an M4, and espeak-ng
+/// defaults to 175. Being wrong in this direction is nearly free, because the
+/// estimate is an *upper bound on waiting* rather than a delay — the wait ends
+/// the moment speaking does. Being wrong in the other direction is the bug
+/// this replaced.
+const ASSUMED_WPM: f32 = 100.0;
+
+/// Added to every estimate, for starting the synthesiser and scheduling.
+const STARTUP_ALLOWANCE: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The shortest wait, so a two-word message still tolerates a slow start.
+const MIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The longest wait, however much text was sent.
+///
+/// A stuck engine would otherwise hold a caller for as long as the text
+/// implies, which for a whole document read from a file is hours. Anyone
+/// genuinely speaking for longer than this can say so with `--timeout`.
+const MAX_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// How long to allow for `words` to be spoken at `rate`.
+///
+/// `rate` is the engine's own multiplier, where 1.0 is its normal pace, so a
+/// device set to speak at half speed waits twice as long. Clamped low so a
+/// nonsense rate cannot divide by zero.
+///
+/// Estimated rather than fixed because a constant is wrong at exactly one
+/// length. The previous 120 seconds was fine until someone sent 569 words,
+/// which is around 148 seconds of audio — the device spoke all of it and the
+/// caller was told it had not finished.
+fn estimated_wait(words: usize, rate: f32) -> std::time::Duration {
+    let per_minute = ASSUMED_WPM * rate.max(0.1);
+    let seconds = (words as f32 / per_minute) * 60.0;
+    std::time::Duration::from_secs_f32(seconds)
+        .saturating_add(STARTUP_ALLOWANCE)
+        .clamp(MIN_TIMEOUT, MAX_TIMEOUT)
+}
 
 /// What a caller asked to have spoken.
 ///
@@ -767,7 +802,12 @@ struct Outgoing {
     /// A voice the sender would like, if the receiver has it.
     voice: Option<String>,
     /// How long to wait before answering "still speaking".
-    timeout: std::time::Duration,
+    ///
+    /// `None` leaves it to the device that will do the speaking, which is the
+    /// only one that knows its own engine, its own rate, and what is already
+    /// queued ahead of this. `Some` is the caller saying `--timeout`, which
+    /// always wins over any estimate.
+    timeout: Option<std::time::Duration>,
     /// The device it came from, for the history. `None` means this one.
     from: Option<String>,
 }
@@ -1173,8 +1213,18 @@ async fn speak_here(
         _ => return (settle(Status::Dropped), None, None),
     }
 
+    // Worked out here rather than by the sender, because this is the device
+    // that knows its own engine and rate — and, for a message arriving from a
+    // peer, the sender could not have known them at all. Everything already
+    // queued counts: a message waiting its turn is not being spoken slowly,
+    // but the caller is waiting for it just the same.
+    let limit = timeout.unwrap_or_else(|| {
+        let ahead = shared.speaker.pending_words();
+        estimated_wait(words_in(chunks) + ahead, shared.engine.rate())
+    });
+
     let started = std::time::Instant::now();
-    match tokio::time::timeout(*timeout, rx).await {
+    match tokio::time::timeout(limit, rx).await {
         Ok(Ok(status)) => (status, Some(started.elapsed().as_millis() as u64), None),
         // We gave up waiting before the device finished. It was accepted and
         // is still going, so say *that* — "queued" reads as though nothing
@@ -1580,6 +1630,9 @@ async fn send_to_peer(
             wait: outgoing.wait,
             voice: outgoing.voice.clone(),
             space: Some(space.to_string()),
+            // Only what the caller asked for. Absent means the receiver
+            // estimates, which it is far better placed to do.
+            timeout_secs: outgoing.timeout.map(|t| t.as_secs()),
         },
     )
     .await?;
@@ -2024,6 +2077,7 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 wait,
                 voice,
                 space,
+                timeout_secs,
             } => {
                 // Authorisation is the roster of the space the message was
                 // sent in, and nothing else: an unpaired device cannot make
@@ -2077,7 +2131,7 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                     priority,
                     wait,
                     voice,
-                    timeout: std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+                    timeout: timeout_secs.map(std::time::Duration::from_secs),
                     from,
                 };
                 let (status, _took, _detail) = speak_here(shared, &outgoing).await;
@@ -2264,6 +2318,71 @@ fn new_msg_id() -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// The message that exposed the bug now gets long enough to finish.
+    ///
+    /// 569 words measured at 147.6 seconds of audio through Piper's
+    /// `en_US-lessac-medium`; the old flat 120 seconds cut the report short
+    /// while the device was still speaking.
+    #[test]
+    fn a_long_message_is_given_longer_than_it_takes_to_say() {
+        let estimate = estimated_wait(569, 1.0);
+        assert!(
+            estimate > std::time::Duration::from_secs_f32(147.6),
+            "569 words estimated at {estimate:?}, which is less than the \
+             audio it produces"
+        );
+        // The old constant, for the avoidance of doubt.
+        assert!(estimate > std::time::Duration::from_secs(120));
+    }
+
+    /// A short message is not made to wait a long time for nothing.
+    #[test]
+    fn a_short_message_gets_the_floor_and_no_more() {
+        assert_eq!(estimated_wait(1, 1.0), MIN_TIMEOUT);
+        assert_eq!(estimated_wait(0, 1.0), MIN_TIMEOUT);
+    }
+
+    /// Longer text waits longer. The property the old constant lacked.
+    #[test]
+    fn the_estimate_grows_with_the_text() {
+        let short = estimated_wait(100, 1.0);
+        let long = estimated_wait(1_000, 1.0);
+        assert!(long > short, "{long:?} should exceed {short:?}");
+    }
+
+    /// A device set to speak slowly is given proportionally longer.
+    ///
+    /// The rate is the receiver's own setting, which is the reason this is
+    /// estimated on the device that will do the speaking.
+    #[test]
+    fn a_slower_device_waits_longer() {
+        let normal = estimated_wait(1_000, 1.0);
+        let half_speed = estimated_wait(1_000, 0.5);
+        assert!(
+            half_speed > normal,
+            "{half_speed:?} should exceed {normal:?}"
+        );
+    }
+
+    /// However much text arrives, a stuck engine cannot hold a caller for ever.
+    #[test]
+    fn the_estimate_is_capped() {
+        assert_eq!(estimated_wait(usize::MAX, 1.0), MAX_TIMEOUT);
+        assert_eq!(estimated_wait(10_000_000, 1.0), MAX_TIMEOUT);
+    }
+
+    /// A nonsense rate cannot divide by zero or produce a negative wait.
+    #[test]
+    fn an_absurd_rate_is_still_a_sane_wait() {
+        for rate in [0.0, -1.0, f32::MIN_POSITIVE] {
+            let estimate = estimated_wait(500, rate);
+            assert!(
+                estimate >= MIN_TIMEOUT && estimate <= MAX_TIMEOUT,
+                "{estimate:?}"
+            );
+        }
+    }
     use super::*;
 
     /// A socket name unique to this test run, so tests never collide.

@@ -497,6 +497,17 @@ pub enum PeerMessage {
         /// Defaulted for the same reason as on [`PeerMessage::RosterSync`].
         #[serde(default)]
         space: Option<String>,
+        /// How long the sender is prepared to wait, in seconds.
+        ///
+        /// Only ever set when the caller passed `--timeout`. Absent means the
+        /// receiver decides, which it is far better placed to do: the length
+        /// of the text is the smaller half of the answer, and the engine, its
+        /// rate and the queue in front of it all live on that device.
+        ///
+        /// Defaulted so an older peer, which sends nothing here, is read as
+        /// having expressed no preference rather than as asking for zero.
+        #[serde(default)]
+        timeout_secs: Option<u64>,
     },
     /// One sentence-ish unit of text.
     Chunk {
