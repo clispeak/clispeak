@@ -209,7 +209,7 @@ fallback UI on both platforms, `Presence` reporting.
 *Exit:* a fresh Linux install speaks via espeak immediately, shows *why* it is
 in fallback, and upgrades to Piper without a restart.
 
-### M8 — The rest of the CLI
+### M8 — The rest of the CLI  🟡 IN PROGRESS
 
 Priority and queue, `stop`/`skip`/`pause`, groups, multiple spaces, quiet
 hours, `--wait`/`--json`, rotation.

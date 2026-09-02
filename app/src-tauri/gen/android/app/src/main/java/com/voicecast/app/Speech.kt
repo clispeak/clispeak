@@ -2,6 +2,10 @@ package com.voicecast.app
 
 import android.content.Context
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import android.util.Log
 import java.util.Locale
 
@@ -49,6 +53,7 @@ object Speech {
                 // restored at startup arrives before there is anything to
                 // apply it to — and was silently dropped.
                 applyPreferences()
+                tts?.setOnUtteranceProgressListener(progress)
                 Log.i(TAG, "speech engine ready")
             } else {
                 failure = "this device has no working text-to-speech engine"
@@ -182,6 +187,37 @@ object Speech {
     @JvmStatic
     fun failureReason(): String? = failure
 
+    /** One latch per in-flight utterance, released when it stops. */
+    private val waiting = ConcurrentHashMap<String, CountDownLatch>()
+
+    /**
+     * Releases whichever caller is waiting on an utterance.
+     *
+     * `speak` returns as soon as the text is queued, so without this the
+     * caller learns only that the engine accepted it — and reporting "spoken"
+     * a fifth of a second into three seconds of audio is simply untrue.
+     */
+    private val progress = object : UtteranceProgressListener() {
+        override fun onStart(utteranceId: String?) {}
+
+        override fun onDone(utteranceId: String?) {
+            waiting.remove(utteranceId)?.countDown()
+        }
+
+        @Deprecated("required by the base class")
+        override fun onError(utteranceId: String?) {
+            waiting.remove(utteranceId)?.countDown()
+        }
+
+        override fun onError(utteranceId: String?, errorCode: Int) {
+            waiting.remove(utteranceId)?.countDown()
+        }
+
+        override fun onStop(utteranceId: String?, interrupted: Boolean) {
+            waiting.remove(utteranceId)?.countDown()
+        }
+    }
+
     /**
      * Speak one chunk, queued behind anything already speaking.
      *
@@ -192,14 +228,38 @@ object Speech {
     fun speak(text: String): Boolean {
         val engine = tts ?: return false
         if (!ready) return false
-        val result = engine.speak(text, TextToSpeech.QUEUE_ADD, null, "voicecast")
-        return result == TextToSpeech.SUCCESS
+
+        val id = "voicecast-" + counter.incrementAndGet()
+        val latch = CountDownLatch(1)
+        waiting[id] = latch
+
+        if (engine.speak(text, TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) {
+            waiting.remove(id)
+            return false
+        }
+
+        // Blocks until the audio actually finishes, so a caller that waited
+        // is told the truth. Bounded: a stuck engine must not hold the
+        // speech worker for ever.
+        return try {
+            latch.await(5, TimeUnit.MINUTES)
+        } catch (_: InterruptedException) {
+            waiting.remove(id)
+            Thread.currentThread().interrupt()
+            false
+        }
     }
+
+    /** Gives every utterance a distinct id, which the listener keys on. */
+    private val counter = java.util.concurrent.atomic.AtomicLong(0)
 
     /** Stop immediately, discarding anything queued. */
     @JvmStatic
     fun stop() {
         tts?.stop()
+        // Release anyone waiting; onStop may not fire for queued utterances.
+        waiting.values.forEach { it.countDown() }
+        waiting.clear()
     }
 
     /** Whether the engine is still speaking. */

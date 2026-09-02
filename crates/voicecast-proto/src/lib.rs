@@ -42,6 +42,8 @@ pub enum Status {
     QuietHours,
     /// No working speech engine — e.g. a voice model not yet downloaded.
     NoEngine,
+    /// The device could not be reached at all.
+    Unreachable,
     /// Sender is not in this device's roster.
     Rejected,
     /// Cancelled before completion.
@@ -99,6 +101,12 @@ pub enum Request {
         /// Device label to speak on. `None` means this machine.
         #[serde(default)]
         to: Option<String>,
+        /// Wait for every target to finish before replying.
+        ///
+        /// Off by default: an agent firing notifications should not block on
+        /// playback. On, the caller learns what actually happened.
+        #[serde(default)]
+        wait: bool,
     },
     /// Mint an invite ticket for another device.
     Invite,
@@ -159,6 +167,13 @@ pub enum Response {
     },
     /// The request was carried out but has nothing to report.
     Done,
+    /// Per-device outcome of a message.
+    Report {
+        /// Identifies the message.
+        msg_id: String,
+        /// One entry per target.
+        targets: Vec<TargetResult>,
+    },
     /// The device was renamed.
     Renamed {
         /// Its new label.
@@ -278,6 +293,10 @@ pub enum PeerMessage {
         msg_id: String,
         /// Sender's stated urgency.
         priority: Priority,
+        /// Whether the sender wants to be told when speaking finishes, rather
+        /// than merely that the message was accepted.
+        #[serde(default)]
+        wait: bool,
     },
     /// One sentence-ish unit of text.
     Chunk {
@@ -293,6 +312,21 @@ pub enum PeerMessage {
         /// How it went.
         status: Status,
     },
+}
+
+/// What happened on one device.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetResult {
+    /// The device's label.
+    pub device: String,
+    /// How it ended.
+    pub status: Status,
+    /// How long speaking took, when the caller waited for it.
+    #[serde(default)]
+    pub took_ms: Option<u64>,
+    /// Why, when the status alone does not explain it.
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 /// A device as shown by `voicecast devices`.

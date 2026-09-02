@@ -14,7 +14,9 @@ use interprocess::local_socket::{
 };
 use tokio::sync::Mutex;
 use voicecast_engine::SpeechEngine;
-use voicecast_proto::{DeviceInfo, Member, PeerMessage, Priority, Request, Response, Status};
+use voicecast_proto::{
+    DeviceInfo, Member, PeerMessage, Priority, Request, Response, Status, TargetResult,
+};
 use voicecast_text::chunk;
 
 use crate::ipc::{read_frame, socket_name, write_frame};
@@ -25,6 +27,11 @@ use crate::{Identity, Roster, Ticket, Transport};
 struct Job {
     msg_id: String,
     chunks: Vec<String>,
+    /// Signalled when speaking ends, for callers that asked to wait.
+    ///
+    /// Optional because the common case is fire-and-forget: an agent firing
+    /// notifications should not pay for machinery it is not using.
+    done: Option<tokio::sync::oneshot::Sender<Status>>,
 }
 
 /// Shared state both loops need.
@@ -118,13 +125,19 @@ impl Node {
         // the runtime that is accepting connections.
         std::thread::spawn(move || {
             while let Some(job) = rx.blocking_recv() {
+                let mut outcome = Status::Spoken;
                 for c in &job.chunks {
                     if let Err(e) = worker_engine.speak(c) {
                         eprintln!("[{}] speech failed: {e}", job.msg_id);
+                        outcome = Status::NoEngine;
                         break;
                     }
                 }
                 counter.queued.fetch_sub(1, Ordering::SeqCst);
+                // Ignored deliberately: the caller may have stopped waiting.
+                if let Some(done) = job.done {
+                    let _ = done.send(outcome);
+                }
             }
         });
 
@@ -146,7 +159,7 @@ impl Node {
 
     /// Speak text here, or on a named peer.
     pub async fn speak(&self, text: String, priority: Priority, to: Option<String>) -> Response {
-        speak(&self.shared, &self.transport, text, priority, to).await
+        speak(&self.shared, &self.transport, text, priority, to, false).await
     }
 
     /// Mint an invite for another device.
@@ -324,7 +337,12 @@ impl Node {
 async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Stream) -> Result<()> {
     let request: Request = read_frame(&mut s).await?;
     let response = match request {
-        Request::Speak { text, priority, to } => speak(shared, transport, text, priority, to).await,
+        Request::Speak {
+            text,
+            priority,
+            to,
+            wait,
+        } => speak(shared, transport, text, priority, to, wait).await,
         Request::Stop => {
             shared.engine.stop();
             Response::Finished {
@@ -420,12 +438,17 @@ fn status(shared: &Arc<Shared>) -> Response {
 }
 
 /// Speak here, on a named peer, or on everything in the space.
+///
+/// Always answers with a per-target report. Without `wait` those say `queued`
+/// — accepted, not yet spoken — which is the honest thing to claim when the
+/// sound has not happened yet.
 async fn speak(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
     text: String,
     priority: Priority,
     to: Option<String>,
+    wait: bool,
 ) -> Response {
     let chunks = chunk(&text);
     if chunks.is_empty() {
@@ -434,49 +457,51 @@ async fn speak(
         };
     }
     let msg_id = new_msg_id();
-
     let target = to.as_deref().unwrap_or("here");
 
-    if target == "all" {
-        return speak_everywhere(shared, transport, &msg_id, &chunks, priority).await;
-    }
-
-    if target == "here" || target == shared.name {
-        return enqueue(shared, msg_id, chunks, priority);
-    }
-
-    let peer = {
-        let roster = shared.roster.lock().await;
-        match roster.by_name(target) {
-            Some(m) => m.endpoint_id.clone(),
-            None => {
-                return Response::Error {
-                    message: format!("no device named '{target}' in this space"),
-                };
-            }
-        }
+    let targets = if target == "all" {
+        everywhere(shared, transport, &msg_id, &chunks, priority, wait).await
+    } else if target == "here" || target == shared.name {
+        let (status, took_ms, detail) = speak_here(shared, &msg_id, chunks, priority, wait).await;
+        vec![TargetResult {
+            device: shared.name.clone(),
+            status,
+            took_ms,
+            detail,
+        }]
+    } else {
+        let peer = {
+            let roster = shared.roster.lock().await;
+            roster.by_name(target).map(|m| m.endpoint_id.clone())
+        };
+        let Some(peer) = peer else {
+            return Response::Error {
+                message: format!("no device named '{target}' in this space"),
+            };
+        };
+        vec![
+            to_peer(
+                shared, transport, target, &peer, &msg_id, &chunks, priority, wait,
+            )
+            .await,
+        ]
     };
 
-    match send_to_peer(shared, transport, &peer, &msg_id, &chunks, priority).await {
-        Ok(status) => Response::Finished { status },
-        Err(e) => Response::Error {
-            message: format!("could not reach '{target}': {e:#}"),
-        },
-    }
+    Response::Report { msg_id, targets }
 }
 
 /// Speak on every device in the space, this one included.
 ///
-/// Failures are reported rather than aborting the rest: one unreachable phone
-/// should not stop the laptop from speaking. Per-target detail arrives with
-/// `--wait`/`--json`; for now the summary says what did not work.
-async fn speak_everywhere(
+/// One unreachable device must not stop the others, so failures are collected
+/// rather than returned.
+async fn everywhere(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
     msg_id: &str,
     chunks: &[String],
     priority: Priority,
-) -> Response {
+    wait: bool,
+) -> Vec<TargetResult> {
     let me = shared.identity.id().to_string();
     let peers: Vec<(String, String)> = {
         let roster = shared.roster.lock().await;
@@ -487,38 +512,71 @@ async fn speak_everywhere(
             .collect()
     };
 
-    let local = enqueue(shared, msg_id.to_string(), chunks.to_vec(), priority);
-    let mut spoken = matches!(local, Response::Accepted { .. });
-    let mut failures = Vec::new();
-    if let Response::Error { message } = &local {
-        failures.push(format!("{}: {message}", shared.name));
-    }
+    let (status, took_ms, detail) =
+        speak_here(shared, msg_id, chunks.to_vec(), priority, wait).await;
+    let mut results = vec![TargetResult {
+        device: shared.name.clone(),
+        status,
+        took_ms,
+        detail,
+    }];
 
     for (name, peer) in peers {
-        match send_to_peer(shared, transport, &peer, msg_id, chunks, priority).await {
-            Ok(Status::Queued | Status::Speaking | Status::Spoken) => spoken = true,
-            Ok(status) => failures.push(format!("{name}: {status:?}")),
-            Err(e) => failures.push(format!("{name}: {e:#}")),
-        }
+        results.push(
+            to_peer(
+                shared, transport, &name, &peer, msg_id, chunks, priority, wait,
+            )
+            .await,
+        );
     }
+    results
+}
 
-    if spoken && failures.is_empty() {
-        Response::Accepted {
-            msg_id: msg_id.to_string(),
-        }
-    } else if spoken {
-        Response::Error {
-            message: format!("spoken, except — {}", failures.join("; ")),
-        }
-    } else {
-        Response::Error {
-            message: format!("nothing was spoken — {}", failures.join("; ")),
-        }
+/// Send to one peer and turn the outcome into a result row.
+#[allow(clippy::too_many_arguments)]
+async fn to_peer(
+    shared: &Arc<Shared>,
+    transport: &Arc<Transport>,
+    name: &str,
+    peer_id: &str,
+    msg_id: &str,
+    chunks: &[String],
+    priority: Priority,
+    wait: bool,
+) -> TargetResult {
+    let started = std::time::Instant::now();
+    match send_to_peer(shared, transport, peer_id, msg_id, chunks, priority, wait).await {
+        Ok(status) => TargetResult {
+            device: name.to_string(),
+            took_ms: wait.then(|| started.elapsed().as_millis() as u64),
+            status,
+            detail: None,
+        },
+        Err(e) => TargetResult {
+            device: name.to_string(),
+            status: Status::Unreachable,
+            took_ms: None,
+            detail: Some(format!("{e:#}")),
+        },
     }
 }
 
 /// Queue chunks for the local engine.
 fn enqueue(shared: &Arc<Shared>, msg_id: String, chunks: Vec<String>, p: Priority) -> Response {
+    enqueue_inner(shared, msg_id, chunks, p, None)
+}
+
+/// Queue chunks, optionally with a channel signalled when speaking ends.
+///
+/// The channel is optional because the common case is fire-and-forget: an
+/// agent firing notifications should not pay for machinery it is not using.
+fn enqueue_inner(
+    shared: &Arc<Shared>,
+    msg_id: String,
+    chunks: Vec<String>,
+    p: Priority,
+    done: Option<tokio::sync::oneshot::Sender<Status>>,
+) -> Response {
     // Refuse before accepting, so the sender is told rather than the failure
     // being buried in this device's log.
     if let Err(e) = shared.engine.ready() {
@@ -536,11 +594,48 @@ fn enqueue(shared: &Arc<Shared>, msg_id: String, chunks: Vec<String>, p: Priorit
     match shared.tx.send(Job {
         msg_id: msg_id.clone(),
         chunks,
+        done,
     }) {
         Ok(()) => Response::Accepted { msg_id },
         Err(_) => Response::Error {
             message: "speech worker has stopped".into(),
         },
+    }
+}
+
+/// Speak here, reporting what actually happened.
+///
+/// Waits for the worker when asked, so a caller learns "spoken" rather than
+/// merely "queued". Bounded, because a device speaking a long document should
+/// not hold a caller open indefinitely.
+async fn speak_here(
+    shared: &Arc<Shared>,
+    msg_id: &str,
+    chunks: Vec<String>,
+    p: Priority,
+    wait: bool,
+) -> (Status, Option<u64>, Option<String>) {
+    if !wait {
+        return match enqueue(shared, msg_id.to_string(), chunks, p) {
+            Response::Accepted { .. } => (Status::Queued, None, None),
+            Response::Error { message } => (Status::NoEngine, None, Some(message)),
+            _ => (Status::Dropped, None, None),
+        };
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    match enqueue_inner(shared, msg_id.to_string(), chunks, p, Some(tx)) {
+        Response::Accepted { .. } => {}
+        Response::Error { message } => return (Status::NoEngine, None, Some(message)),
+        _ => return (Status::Dropped, None, None),
+    }
+
+    let started = std::time::Instant::now();
+    match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+        Ok(Ok(status)) => (status, Some(started.elapsed().as_millis() as u64), None),
+        // The worker went away, or we gave up first. Either way it was
+        // accepted, so say that rather than claim a failure.
+        _ => (Status::Queued, None, Some("still speaking".into())),
     }
 }
 
@@ -613,6 +708,7 @@ async fn send_to_peer(
     msg_id: &str,
     chunks: &[String],
     priority: Priority,
+    wait: bool,
 ) -> Result<Status> {
     let peer = peer_id.parse().context("bad endpoint id in roster")?;
     let conn = transport.connect(peer).await?;
@@ -631,6 +727,7 @@ async fn send_to_peer(
         &PeerMessage::SpeakBegin {
             msg_id: msg_id.into(),
             priority,
+            wait,
         },
     )
     .await?;
@@ -887,7 +984,11 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 let reply = accept_join(shared, &endpoint_id, &display_name, &token).await;
                 write_msg(&mut send, &reply).await?;
             }
-            PeerMessage::SpeakBegin { msg_id, priority } => {
+            PeerMessage::SpeakBegin {
+                msg_id,
+                priority,
+                wait,
+            } => {
                 // Authorisation is the roster, and nothing else: an unpaired
                 // device cannot make this one speak.
                 let allowed = shared.roster.lock().await.allows(&remote);
@@ -909,13 +1010,10 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                         other => anyhow::bail!("unexpected in message stream: {other:?}"),
                     }
                 }
-                let status = match enqueue(shared, msg_id, chunks, priority) {
-                    Response::Accepted { .. } => Status::Queued,
-                    // The peer needs to know this device cannot speak, not
-                    // just that something went wrong.
-                    Response::Error { .. } => Status::NoEngine,
-                    _ => Status::Dropped,
-                };
+                // Waiting here is what lets a sender learn "spoken" rather
+                // than "queued": only this device knows when the sound ended.
+                let (status, _took, _detail) =
+                    speak_here(shared, &msg_id, chunks, priority, wait).await;
                 write_msg(&mut send, &PeerMessage::Report { status }).await?;
             }
             PeerMessage::RosterSync { members, revoked } => {

@@ -6423,6 +6423,7 @@ dependencies = [
  "clap",
  "interprocess",
  "serde",
+ "serde_json",
  "tokio",
  "voicecast-proto",
  "voicecast-text",

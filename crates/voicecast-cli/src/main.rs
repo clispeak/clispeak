@@ -28,6 +28,8 @@ mod exit {
     pub const USAGE: u8 = 1;
     /// The local node could not be reached or started.
     pub const NO_NODE: u8 = 5;
+    /// Some targets spoke and some did not.
+    pub const PARTIAL: u8 = 3;
     /// Every target failed to speak the message.
     pub const ALL_FAILED: u8 = 4;
     /// Text rejected: markdown or a URL that will not read well aloud.
@@ -56,6 +58,17 @@ struct Cli {
     /// Speak exactly as given, skipping validation entirely.
     #[arg(long, global = true)]
     raw: bool,
+
+    /// Wait for every device to finish, and report what happened on each.
+    ///
+    /// Off by default so an agent firing notifications is not blocked on
+    /// playback; on when it needs to know the message was actually heard.
+    #[arg(short, long, global = true)]
+    wait: bool,
+
+    /// Print the result as JSON. Implies waiting.
+    #[arg(long, global = true)]
+    json: bool,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -196,7 +209,7 @@ async fn run() -> anyhow::Result<u8> {
         }
     };
 
-    send(request).await
+    send(request, cli.json).await
 }
 
 /// Reject text that is almost certainly a mistyped flag.
@@ -252,6 +265,9 @@ fn build_speak(cli: &Cli, tokens: &[String]) -> anyhow::Result<Result<Request, u
         text,
         priority: cli.priority.into(),
         to: cli.to.clone(),
+        // JSON output exists to be consumed, and a report of "queued" tells a
+        // consumer nothing — so asking for it implies waiting.
+        wait: cli.wait || cli.json,
     }))
 }
 
@@ -300,7 +316,7 @@ fn read_stdin() -> anyhow::Result<String> {
 }
 
 /// Send one request to the local node and report what came back.
-async fn send(request: Request) -> anyhow::Result<u8> {
+async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
     // Whether a non-spoken outcome counts as failure depends on what was
     // asked: `Cancelled` is the point of `stop`, but a failure for `speak`.
     let was_speak = matches!(request, Request::Speak { .. });
@@ -361,6 +377,7 @@ async fn send(request: Request) -> anyhow::Result<u8> {
             exit::OK
         }
         Response::Done => exit::OK,
+        Response::Report { msg_id, targets } => report(&msg_id, &targets, json),
         Response::Renamed { name } => {
             out(&format!("renamed to {name}"));
             err("Other devices keep the old name until they sync.");
@@ -386,6 +403,55 @@ async fn send(request: Request) -> anyhow::Result<u8> {
             exit::USAGE
         }
     })
+}
+
+/// Show what happened on each device, and pick an exit code to match.
+///
+/// The exit code is what an agent branches on, so it has to distinguish
+/// "everything worked" from "some of it did" from "none of it did" — see the
+/// table in `docs/cli.md`.
+fn report(msg_id: &str, targets: &[voicecast_proto::TargetResult], json: bool) -> u8 {
+    use voicecast_proto::Status;
+
+    let heard = |s: &Status| matches!(s, Status::Spoken | Status::Queued | Status::Speaking);
+    let good = targets.iter().filter(|t| heard(&t.status)).count();
+
+    if json {
+        let value = serde_json::json!({
+            "id": msg_id,
+            "targets": targets.iter().map(|t| serde_json::json!({
+                "device": t.device,
+                "status": t.status,
+                "took_ms": t.took_ms,
+                "detail": t.detail,
+            })).collect::<Vec<_>>(),
+        });
+        out(&serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into()));
+    } else if targets.len() == 1 && targets[0].detail.is_none() && targets[0].took_ms.is_none() {
+        // The common case: one target, fire and forget. A table would be
+        // noise, so keep the bare id the shell can capture.
+        out(msg_id);
+    } else {
+        for t in targets {
+            let took = t.took_ms.map(|ms| format!("{:.1}s", ms as f64 / 1000.0));
+            out(&format!(
+                "  {:<16} {:<12} {}{}",
+                t.device,
+                format!("{:?}", t.status).to_lowercase(),
+                took.unwrap_or_default(),
+                t.detail
+                    .as_deref()
+                    .map(|d| format!("  ({d})"))
+                    .unwrap_or_default(),
+            ));
+        }
+    }
+
+    match (good, targets.len()) {
+        (0, _) => exit::ALL_FAILED,
+        (g, n) if g < n => exit::PARTIAL,
+        _ => exit::OK,
+    }
 }
 
 /// Socket name, duplicated rather than depending on `voicecast-core`.
