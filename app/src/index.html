@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>voicecast</title>
+<style>
+  :root { color-scheme: light dark; --fg:#111; --bg:#fafafa; --dim:#666; --line:#e3e3e3; --accent:#2b6cb0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#eee; --bg:#161616; --dim:#999; --line:#2c2c2c; --accent:#7aa7d9; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: env(safe-area-inset-top) 1rem 1rem;
+    font: 15px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg);
+  }
+  h1 { font-size: 1.1rem; margin: 1rem 0 0.25rem; }
+  .sub { color: var(--dim); font-size: 0.85rem; margin-bottom: 1.25rem; }
+  section { border-top: 1px solid var(--line); padding: 1rem 0; }
+  h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em;
+       color: var(--dim); margin: 0 0 0.6rem; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.35rem 0; }
+  .row .id { color: var(--dim); font-family: ui-monospace, monospace; font-size: 0.8rem; }
+  button { font: inherit; padding: 0.6rem 1rem; border: 1px solid var(--line);
+           border-radius: 8px; background: transparent; color: var(--fg); width: 100%; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  input { font: inherit; width: 100%; padding: 0.6rem; border: 1px solid var(--line);
+          border-radius: 8px; background: transparent; color: var(--fg); }
+  .stack > * + * { margin-top: 0.6rem; }
+  code { font-family: ui-monospace, monospace; font-size: 0.78rem; word-break: break-all;
+         color: var(--dim); }
+  .warn { color: #b45309; }
+</style>
+
+<h1 id="name">voicecast</h1>
+<div class="sub" id="ident">starting…</div>
+
+<section>
+  <h2>Devices</h2>
+  <div id="devices">—</div>
+</section>
+
+<section class="stack">
+  <h2>Add a device</h2>
+  <button id="invite">Show an invite</button>
+  <code id="ticket"></code>
+  <input id="join-input" placeholder="voicecast://join/… paste an invite" />
+  <button id="join" class="primary">Join a space</button>
+</section>
+
+<section class="stack">
+  <h2>Test</h2>
+  <input id="say-input" placeholder="say something" />
+  <button id="say">Speak here</button>
+  <div id="result" class="sub"></div>
+</section>
+
+<script type="module" src="main.js"></script>

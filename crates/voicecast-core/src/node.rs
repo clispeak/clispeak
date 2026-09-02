@@ -101,6 +101,70 @@ impl Node {
         })
     }
 
+    /// Speak text here, or on a named peer.
+    pub async fn speak(&self, text: String, priority: Priority, to: Option<String>) -> Response {
+        speak(&self.shared, &self.transport, text, priority, to).await
+    }
+
+    /// Mint an invite for another device.
+    pub async fn invite(&self) -> Response {
+        invite(&self.shared).await
+    }
+
+    /// Join a space using someone else's invite.
+    pub async fn join(&self, ticket: &str) -> Response {
+        join(&self.shared, &self.transport, ticket).await
+    }
+
+    /// Devices in this space.
+    pub async fn devices(&self) -> Response {
+        devices(&self.shared).await
+    }
+
+    /// This node's health.
+    pub fn status(&self) -> Response {
+        status(&self.shared)
+    }
+
+    /// This device's local label.
+    pub fn name(&self) -> &str {
+        &self.shared.name
+    }
+
+    /// Stop whatever is being spoken.
+    pub fn stop(&self) {
+        self.shared.engine.stop();
+    }
+
+    /// Serve peers only.
+    ///
+    /// What the mobile app runs: there is no CLI on a phone, so binding a
+    /// local IPC socket would be pointless and, on Android, may not work at
+    /// all.
+    pub async fn serve_peers(&self) -> Result<()> {
+        let shared = Arc::clone(&self.shared);
+        let transport = Arc::clone(&self.transport);
+        while let Some(conn) = transport.accept().await {
+            let shared = Arc::clone(&shared);
+            match conn {
+                Ok(conn) => {
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_peer(&shared, conn).await {
+                            eprintln!("peer: {e:#}");
+                        }
+                    });
+                }
+                Err(e) => eprintln!("peer handshake: {e:#}"),
+            }
+        }
+        Ok(())
+    }
+
+    /// This device's public key.
+    pub fn id(&self) -> String {
+        self.shared.identity.id().to_string()
+    }
+
     /// Run both loops until one of them fails.
     pub async fn serve(&self) -> Result<()> {
         let name = socket_name().to_ns_name::<GenericNamespaced>()?;
@@ -187,6 +251,22 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
         },
     };
     write_frame(&mut s, &response).await
+}
+
+/// This node's health.
+fn status(shared: &Arc<Shared>) -> Response {
+    Response::Status {
+        device_id: shared.identity.id().to_string(),
+        key_store: shared.identity.location().to_string(),
+        engine: shared
+            .engine
+            .voices()
+            .first()
+            .map_or("unknown", |v| &v.name)
+            .to_string(),
+        fallback: shared.engine.tier() == voicecast_engine::Tier::Fallback,
+        queued: shared.queued.load(Ordering::SeqCst),
+    }
 }
 
 /// Speak locally, or relay to a named peer.

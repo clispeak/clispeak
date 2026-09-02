@@ -1,0 +1,28 @@
+[package]
+name = "voicecast-app"
+description = "The voicecast node as a desktop and mobile app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+# Mobile builds link a library, not a binary; the desktop binary calls into it.
+name = "voicecast_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+voicecast-core.workspace = true
+voicecast-engine.workspace = true
+voicecast-proto.workspace = true
+tauri = { version = "2", features = [] }
+serde.workspace = true
+anyhow.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+voicecast-text = { version = "0.1.0", path = "../../crates/voicecast-text" }
+
+[lints]
+workspace = true
