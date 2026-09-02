@@ -7,6 +7,11 @@
 
 mod silent;
 
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::AndroidEngine;
+
 pub use silent::SilentEngine;
 
 // espeak-ng is a Unix binary; there is no such thing to spawn on a phone.

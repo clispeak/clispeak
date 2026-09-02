@@ -185,7 +185,7 @@ iroh transport, control stream, `Hello`, roster, `SpeakBegin`/`Chunk`/
 *Exit:* two Linux boxes on a LAN join a space and speak to each other; then
 the same across networks, exercising the relay path from M0.
 
-### M6 — Android  🟡 IN PROGRESS
+### M6 — Android  ✅ DONE
 
 Tauri v2 mobile shell, `TextToSpeech` engine, foreground service, QR scanning,
 join flow, receiver settings UI.

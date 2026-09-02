@@ -9,5 +9,14 @@ publish.workspace = true
 [dependencies]
 thiserror.workspace = true
 
-[lints]
-workspace = true
+# Not `workspace = true`: this crate owns the JNI boundary, which needs one
+# `#[no_mangle]` entry point. Everything else still denies unsafe.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+todo = "allow"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

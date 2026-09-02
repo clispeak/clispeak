@@ -34,6 +34,15 @@ voicecast --to laptop "build finished"
 Two nodes can be run on one machine for testing by overriding
 `VOICECAST_SOCKET` and `VOICECAST_CONFIG_DIR`.
 
+## Platforms
+
+| | Speech | Background |
+|---|---|---|
+| Linux | espeak-ng (Piper planned) | tray app |
+| Android | system text-to-speech | foreground service |
+| macOS, Windows | not yet wired | tray app |
+| iOS | not yet wired | — |
+
 ## Status
 
 **Design complete. Transport validated. Implementation not started.**

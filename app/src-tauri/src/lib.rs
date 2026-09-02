@@ -168,9 +168,15 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
     }
     #[cfg(target_os = "android")]
     {
-        Arc::new(voicecast_engine::SilentEngine::new(
-            "this device has no speech engine yet",
-        ))
+        match voicecast_engine::AndroidEngine::new() {
+            Ok(engine) => Arc::new(engine),
+            Err(e) => {
+                eprintln!("android speech unavailable: {e}");
+                Arc::new(voicecast_engine::SilentEngine::new(format!(
+                    "this device's speech engine could not start: {e}"
+                )))
+            }
+        }
     }
     #[cfg(not(unix))]
     {
