@@ -218,6 +218,25 @@ pub fn set_device_name(name: &str) -> Result<(), IdentityError> {
     std::fs::write(dir.join("name"), name.trim()).map_err(|e| IdentityError::Store(e.to_string()))
 }
 
+/// The voice and rate this device was last set to.
+///
+/// Stored beside the identity rather than in the engine: engines are
+/// recreated on every start, and a preference that does not survive a restart
+/// is not a preference.
+pub fn load_voice_settings() -> Option<(String, f32)> {
+    let text = std::fs::read_to_string(config_dir().ok()?.join("voice")).ok()?;
+    let (id, rate) = text.trim().split_once('\n')?;
+    Some((id.to_string(), rate.parse().ok()?))
+}
+
+/// Remember the voice and rate for next time.
+pub fn save_voice_settings(id: &str, rate: f32) -> Result<(), IdentityError> {
+    let dir = config_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| IdentityError::Store(e.to_string()))?;
+    std::fs::write(dir.join("voice"), format!("{id}\n{rate}"))
+        .map_err(|e| IdentityError::Store(e.to_string()))
+}
+
 /// This machine's hostname, if it has a usable one.
 fn hostname() -> Option<String> {
     std::fs::read_to_string("/etc/hostname")

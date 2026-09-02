@@ -72,6 +72,13 @@ impl Node {
     ) -> Result<Self> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Job>();
 
+        // Apply a remembered voice before anything can be spoken with the
+        // wrong one.
+        if let Some((voice, rate)) = crate::load_voice_settings() {
+            let _ = engine.set_voice(&voice);
+            let _ = engine.set_rate(rate);
+        }
+
         let roster_path = Roster::default_path().context("locating roster")?;
         let mut roster = Roster::load(&roster_path).context("loading roster")?;
         // A device is always a member of its own space, even before anyone
@@ -175,6 +182,11 @@ impl Node {
     /// This node's health.
     pub fn status(&self) -> Response {
         status(&self.shared)
+    }
+
+    /// The speech engine, for reading and changing its settings.
+    pub fn engine(&self) -> &Arc<dyn SpeechEngine> {
+        &self.shared.engine
     }
 
     /// This device's local label.

@@ -37,6 +37,17 @@ pub struct Voice {
     pub name: String,
 }
 
+/// How an engine is currently configured.
+#[derive(Debug, Clone)]
+pub struct VoiceSettings {
+    /// Every voice this engine can offer.
+    pub available: Vec<Voice>,
+    /// Which one is in use.
+    pub current: Option<String>,
+    /// Speaking rate, where 1.0 is normal.
+    pub rate: f32,
+}
+
 /// Why speech is unavailable or degraded.
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -78,6 +89,33 @@ pub trait SpeechEngine: Send + Sync {
 
     /// Voices this engine can offer.
     fn voices(&self) -> Vec<Voice>;
+
+    /// The voice currently in use, by id.
+    fn current_voice(&self) -> Option<String> {
+        self.voices().first().map(|v| v.id.clone())
+    }
+
+    /// Choose a voice by id.
+    ///
+    /// Engines with one voice can ignore this; the default refuses rather
+    /// than pretending to have changed something.
+    fn set_voice(&self, _id: &str) -> Result<(), EngineError> {
+        Err(EngineError::Unavailable(
+            "this engine has only one voice".into(),
+        ))
+    }
+
+    /// Speaking rate as a multiplier, where 1.0 is the engine's normal pace.
+    fn rate(&self) -> f32 {
+        1.0
+    }
+
+    /// Set the speaking rate.
+    fn set_rate(&self, _rate: f32) -> Result<(), EngineError> {
+        Err(EngineError::Unavailable(
+            "this engine's rate cannot be changed".into(),
+        ))
+    }
 
     /// Stop immediately, mid-sentence.
     fn stop(&self);

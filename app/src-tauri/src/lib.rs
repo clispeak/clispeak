@@ -35,6 +35,26 @@ pub struct NodeStatus {
     pub fallback: bool,
 }
 
+/// How this device's voice is configured.
+#[derive(Serialize)]
+pub struct VoiceConfig {
+    /// Every voice this engine offers.
+    pub available: Vec<VoiceOption>,
+    /// The one in use.
+    pub current: Option<String>,
+    /// Speaking rate, where 1.0 is normal.
+    pub rate: f32,
+}
+
+/// One selectable voice.
+#[derive(Serialize)]
+pub struct VoiceOption {
+    /// Stable id, used when selecting.
+    pub id: String,
+    /// What to show a person.
+    pub name: String,
+}
+
 /// An invite, ready to hand to another device.
 #[derive(Serialize)]
 pub struct Invite {
@@ -158,6 +178,43 @@ fn pending_invite() -> Option<String> {
     {
         None
     }
+}
+
+#[tauri::command]
+fn voice_config(state: State<'_, AppState>) -> VoiceConfig {
+    let engine = state.node.engine();
+    VoiceConfig {
+        available: engine
+            .voices()
+            .into_iter()
+            .map(|v| VoiceOption {
+                id: v.id,
+                name: v.name,
+            })
+            .collect(),
+        current: engine.current_voice(),
+        rate: engine.rate(),
+    }
+}
+
+#[tauri::command]
+fn set_voice(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let engine = state.node.engine();
+    engine.set_voice(&id).map_err(|e| e.to_string())?;
+    // Remembered immediately: a preference that needs a clean shutdown to
+    // stick is one that will sometimes not.
+    let _ = voicecast_core::save_voice_settings(&id, engine.rate());
+    Ok(())
+}
+
+#[tauri::command]
+fn set_rate(state: State<'_, AppState>, rate: f32) -> Result<(), String> {
+    let engine = state.node.engine();
+    engine.set_rate(rate).map_err(|e| e.to_string())?;
+    if let Some(voice) = engine.current_voice() {
+        let _ = voicecast_core::save_voice_settings(&voice, rate);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -364,6 +421,9 @@ pub fn run() {
             revoke_device,
             leave_space,
             pending_invite,
+            voice_config,
+            set_voice,
+            set_rate,
             speak
         ])
         .on_window_event(|_window, _event| {

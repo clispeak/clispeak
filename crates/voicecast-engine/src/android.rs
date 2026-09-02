@@ -165,6 +165,41 @@ impl AndroidEngine {
         f(&mut env).map_err(|e| EngineError::Unavailable(format!("speech call failed: {e}")))
     }
 
+    /// Call a no-argument static method returning a string.
+    fn call_string(method: &str) -> Option<String> {
+        let class = SPEECH_CLASS.get()?;
+        Self::with_env(|env| {
+            let value = env.call_static_method(
+                <&JClass>::from(class.as_obj()),
+                method,
+                "()Ljava/lang/String;",
+                &[],
+            )?;
+            let obj: JObject = value.l()?;
+            if obj.is_null() {
+                return Ok(None);
+            }
+            Ok(Some(env.get_string(&JString::from(obj))?.into()))
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// Call a static method taking one string and returning a boolean.
+    fn call_bool_with_string(method: &str, arg: &str) -> Result<bool, EngineError> {
+        let class = speech_class()?;
+        Self::with_env(|env| {
+            let text = env.new_string(arg)?;
+            env.call_static_method(
+                <&JClass>::from(class.as_obj()),
+                method,
+                "(Ljava/lang/String;)Z",
+                &[JValue::Object(&text)],
+            )?
+            .z()
+        })
+    }
+
     /// Call a no-argument static method returning a boolean.
     fn call_bool(method: &str) -> Result<bool, EngineError> {
         let class = speech_class()?;
@@ -224,10 +259,66 @@ impl SpeechEngine for AndroidEngine {
     }
 
     fn voices(&self) -> Vec<Voice> {
-        vec![Voice {
-            id: "system".into(),
-            name: "Android text-to-speech".into(),
-        }]
+        // Kotlin returns "name\tlabel" lines: flattening avoids marshalling a
+        // list across JNI for what is ultimately a dropdown.
+        Self::call_string("voices")
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .map(|(id, label)| Voice {
+                id: id.to_string(),
+                name: label.to_string(),
+            })
+            .collect()
+    }
+
+    fn current_voice(&self) -> Option<String> {
+        Self::call_string("currentVoice").filter(|s| !s.is_empty())
+    }
+
+    fn set_voice(&self, id: &str) -> Result<(), EngineError> {
+        let ok = Self::call_bool_with_string("setVoice", id)?;
+        if ok {
+            Ok(())
+        } else {
+            Err(EngineError::Unavailable(format!(
+                "this device has no voice called '{id}'"
+            )))
+        }
+    }
+
+    fn rate(&self) -> f32 {
+        Self::with_env(|env| {
+            let class = SPEECH_CLASS.get().expect("speech class");
+            env.call_static_method(<&JClass>::from(class.as_obj()), "rate", "()F", &[])?
+                .f()
+        })
+        .unwrap_or(1.0)
+    }
+
+    fn set_rate(&self, rate: f32) -> Result<(), EngineError> {
+        if !(0.5..=2.0).contains(&rate) {
+            return Err(EngineError::Unavailable(
+                "speaking rate must be between 0.5 and 2.0".into(),
+            ));
+        }
+        let class = speech_class()?;
+        let ok = Self::with_env(|env| {
+            env.call_static_method(
+                <&JClass>::from(class.as_obj()),
+                "setRate",
+                "(F)Z",
+                &[JValue::Float(rate)],
+            )?
+            .z()
+        })?;
+        if ok {
+            Ok(())
+        } else {
+            Err(EngineError::Unavailable(
+                "the engine refused that rate".into(),
+            ))
+        }
     }
 
     fn stop(&self) {

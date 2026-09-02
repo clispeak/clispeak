@@ -148,6 +148,8 @@ async function refresh() {
     $("battery").hidden = true;
   }
 
+  await refreshVoice();
+
   const devices = await invoke("list_devices").catch(() => null);
   if (!devices) return;
   const list = $("devices");
@@ -162,6 +164,67 @@ async function refresh() {
         ]),
   );
 }
+
+/**
+ * Show what this device's engine can be set to.
+ *
+ * Hidden entirely when there is nothing to choose — an engine with one voice
+ * and no rate control should not present an empty panel.
+ */
+async function refreshVoice() {
+  let config;
+  try {
+    config = await invoke("voice_config");
+  } catch {
+    $("voice-section").hidden = true;
+    return;
+  }
+
+  const choices = config.available ?? [];
+  $("voice-section").hidden = choices.length === 0;
+  $("voice-picker-wrap").hidden = choices.length < 2;
+
+  const picker = $("voice-picker");
+  // Left alone while open, or the list would close under the user's finger.
+  if (document.activeElement !== picker) {
+    picker.replaceChildren(
+      ...choices.map((v) =>
+        Object.assign(document.createElement("option"), {
+          value: v.id,
+          textContent: v.name,
+          selected: v.id === config.current,
+        }),
+      ),
+    );
+  }
+
+  if (document.activeElement !== $("rate")) {
+    $("rate").value = config.rate;
+  }
+  $("rate-value").textContent = `${Number(config.rate).toFixed(2)}×`;
+}
+
+$("voice-picker").onchange = async () => {
+  await call("set_voice", { id: $("voice-picker").value });
+  say("voice changed");
+  await refreshVoice();
+};
+
+// Fires continuously while dragging, so the label tracks the thumb but the
+// engine is only told when the finger lifts.
+$("rate").oninput = () => {
+  $("rate-value").textContent = `${Number($("rate").value).toFixed(2)}×`;
+};
+
+$("rate").onchange = async () => {
+  await call("set_rate", { rate: Number($("rate").value) });
+  await refreshVoice();
+};
+
+$("preview").onclick = () =>
+  withButton($("preview"), "…", async () => {
+    await call("speak", { text: "This is how this device sounds." });
+  });
 
 $("speak-form").onsubmit = async (e) => {
   e.preventDefault();

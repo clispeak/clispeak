@@ -52,6 +52,65 @@ object Speech {
         }
     }
 
+    /** Speaking rate, where 1.0 is the engine's normal pace. */
+    @Volatile
+    private var rate = 1.0f
+
+    /** The chosen voice's name, or null for the engine's default. */
+    @Volatile
+    private var voiceName: String? = null
+
+    /**
+     * Installed voices, newline-separated as `name\tlabel`.
+     *
+     * Flattened to a string because returning a list across JNI costs far
+     * more code than splitting one here.
+     */
+    @JvmStatic
+    fun voices(): String {
+        val engine = tts ?: return ""
+        return try {
+            engine.voices
+                .orEmpty()
+                .filter { !it.isNetworkConnectionRequired }
+                .sortedBy { it.name }
+                .joinToString("\n") { v ->
+                    val locale = v.locale?.displayName ?: ""
+                    "${v.name}\t${locale.ifEmpty { v.name }}"
+                }
+        } catch (_: Exception) {
+            // Some engines throw rather than return an empty list.
+            ""
+        }
+    }
+
+    /** The voice in use, or empty for the engine's default. */
+    @JvmStatic
+    fun currentVoice(): String = voiceName ?: tts?.voice?.name.orEmpty()
+
+    /** Choose a voice by name. */
+    @JvmStatic
+    fun setVoice(name: String): Boolean {
+        val engine = tts ?: return false
+        val match = engine.voices.orEmpty().firstOrNull { it.name == name } ?: return false
+        val ok = engine.setVoice(match) == TextToSpeech.SUCCESS
+        if (ok) voiceName = name
+        return ok
+    }
+
+    /** The speaking rate. */
+    @JvmStatic
+    fun rate(): Float = rate
+
+    /** Set the speaking rate. */
+    @JvmStatic
+    fun setRate(value: Float): Boolean {
+        val engine = tts ?: return false
+        val ok = engine.setSpeechRate(value) == TextToSpeech.SUCCESS
+        if (ok) rate = value
+        return ok
+    }
+
     /** Whether speech can be attempted right now. */
     @JvmStatic
     fun isReady(): Boolean = ready

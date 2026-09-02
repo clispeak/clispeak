@@ -4,8 +4,6 @@
 //! `voicecast-core` directly. Until that exists, this stands in so the CLI
 //! has something to talk to.
 
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
 use voicecast_core::{Identity, Node, Transport};
 use voicecast_engine::EspeakEngine;
@@ -23,8 +21,10 @@ async fn main() -> Result<()> {
             Ok(piper) => std::sync::Arc::new(piper),
             Err(e) => {
                 eprintln!("piper unavailable: {e}");
-                std::sync::Arc::new(EspeakEngine::new()
-                    .context("espeak-ng is not available. On Arch: sudo pacman -S espeak-ng")?)
+                std::sync::Arc::new(
+                    EspeakEngine::new()
+                        .context("espeak-ng is not available. On Arch: sudo pacman -S espeak-ng")?,
+                )
             }
         };
 

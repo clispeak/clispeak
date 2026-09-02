@@ -14,8 +14,8 @@ pub mod ticket;
 pub mod transport;
 
 pub use identity::{
-    FileKeyStore, Identity, IdentityError, KeyStore, config_dir, device_name, set_config_dir,
-    set_device_name,
+    FileKeyStore, Identity, IdentityError, KeyStore, config_dir, device_name, load_voice_settings,
+    save_voice_settings, set_config_dir, set_device_name,
 };
 pub use node::{Node, WindowHook};
 pub use roster::{Roster, RosterError, verify};
