@@ -97,6 +97,14 @@ async fn join_space(state: State<'_, AppState>, ticket: String) -> Result<usize,
 }
 
 #[tauri::command]
+async fn rename_device(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    match state.node.rename(&name).await {
+        Response::Renamed { name } => Ok(name),
+        other => Err(describe(other)),
+    }
+}
+
+#[tauri::command]
 async fn speak(state: State<'_, AppState>, text: String) -> Result<(), String> {
     // Validated here rather than in the UI so the app and the CLI reject
     // exactly the same things.
@@ -114,6 +122,28 @@ fn describe(r: Response) -> String {
     match r {
         Response::Error { message } => message,
         other => format!("unexpected response: {other:?}"),
+    }
+}
+
+/// How hostnames get resolved on this platform.
+///
+/// Android reads its DNS configuration through JNI, which needs an
+/// initialised `ndk_context`. Tauri does not provide one, and the lookup
+/// panics rather than failing — killing the task that starts the node. Using
+/// a fixed public resolver avoids the JNI path entirely and is what iroh
+/// falls back to anyway when it cannot read the system config.
+fn dns_resolver() -> Option<iroh::dns::DnsResolver> {
+    #[cfg(target_os = "android")]
+    {
+        // Cloudflare. A carrier's resolver would be preferable, but reaching
+        // it costs a JNI context we do not have.
+        Some(iroh::dns::DnsResolver::with_nameserver(
+            "1.1.1.1:53".parse().expect("valid nameserver address"),
+        ))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        None
     }
 }
 
@@ -173,7 +203,7 @@ async fn start_node() -> anyhow::Result<Node> {
     let name = voicecast_core::device_name();
 
     let engine = speech_engine();
-    let transport = Transport::bind(identity.secret().clone()).await?;
+    let transport = Transport::bind(identity.secret().clone(), dns_resolver()).await?;
     Node::new(engine, identity, transport, name).await
 }
 
@@ -185,6 +215,13 @@ async fn start_node() -> anyhow::Result<Node> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // Android has no XDG config directory, so tell the core where its
+            // app-private storage is before anything tries to read a key.
+            match app.path().app_data_dir() {
+                Ok(dir) => voicecast_core::set_config_dir(dir),
+                Err(e) => eprintln!("no app data directory: {e}"),
+            }
+
             #[cfg(desktop)]
             build_tray(app.handle())?;
 
@@ -236,6 +273,7 @@ pub fn run() {
             list_devices,
             make_invite,
             join_space,
+            rename_device,
             speak
         ])
         .on_window_event(|_window, _event| {

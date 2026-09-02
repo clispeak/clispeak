@@ -50,6 +50,16 @@ pub enum Tier {
 /// engine, or later a cloud API. Engine choice is a receiver-side setting —
 /// a direct consequence of only text crossing the wire.
 pub trait SpeechEngine: Send + Sync {
+    /// Whether this engine can speak right now.
+    ///
+    /// Checked before a message is accepted so `no_engine` reaches the
+    /// *sender*. Without it a device with no engine replies "queued" and then
+    /// fails silently in its own log, which is precisely the swallowing the
+    /// design forbids.
+    fn ready(&self) -> Result<(), EngineError> {
+        Ok(())
+    }
+
     /// Speak one chunk.
     fn speak(&self, chunk: &str) -> Result<(), EngineError>;
 

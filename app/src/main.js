@@ -18,6 +18,7 @@ async function call(cmd, args) {
 async function refresh() {
   const status = await call("node_status");
   $("name").textContent = status.name;
+  $("name-input").placeholder = status.name;
   $("ident").innerHTML =
     `<code>${status.device_id.slice(0, 16)}…</code> · ${status.engine}` +
     (status.fallback ? ' · <span class="warn">fallback voice</span>' : "");
@@ -33,6 +34,20 @@ async function refresh() {
         .join("")
     : "<div class='sub'>none yet</div>";
 }
+
+$("rename").onclick = async () => {
+  const name = $("name-input").value.trim();
+  if (!name) {
+    $("result").className = "sub warn";
+    $("result").textContent = "type a name first";
+    return;
+  }
+  await call("rename_device", { name });
+  $("result").className = "sub";
+  $("result").textContent = `renamed to ${name}`;
+  $("name-input").value = "";
+  await refresh();
+};
 
 $("invite").onclick = async () => {
   const { url, expires_in } = await call("make_invite");

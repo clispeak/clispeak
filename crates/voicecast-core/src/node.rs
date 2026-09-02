@@ -140,6 +140,11 @@ impl Node {
         join(&self.shared, &self.transport, ticket).await
     }
 
+    /// Change this device's label.
+    pub async fn rename(&self, name: &str) -> Response {
+        rename(&self.shared, name).await
+    }
+
     /// Devices in this space.
     pub async fn devices(&self) -> Response {
         devices(&self.shared).await
@@ -370,6 +375,13 @@ async fn speak(
 
 /// Queue chunks for the local engine.
 fn enqueue(shared: &Arc<Shared>, msg_id: String, chunks: Vec<String>, p: Priority) -> Response {
+    // Refuse before accepting, so the sender is told rather than the failure
+    // being buried in this device's log.
+    if let Err(e) = shared.engine.ready() {
+        return Response::Error {
+            message: e.to_string(),
+        };
+    }
     // High priority interrupts. Resuming the interrupted message at its chunk
     // boundary is M8; for now it is dropped, which is honest but not yet what
     // docs/cli.md promises.
@@ -574,6 +586,9 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 }
                 let status = match enqueue(shared, msg_id, chunks, priority) {
                     Response::Accepted { .. } => Status::Queued,
+                    // The peer needs to know this device cannot speak, not
+                    // just that something went wrong.
+                    Response::Error { .. } => Status::NoEngine,
                     _ => Status::Dropped,
                 };
                 write_msg(&mut send, &PeerMessage::Report { status }).await?;

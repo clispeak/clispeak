@@ -143,17 +143,35 @@ impl KeyStore for FileKeyStore {
     }
 }
 
+/// Where this device keeps its state, when the host has told us.
+static CONFIG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Tell the library where to keep this device's state.
+///
+/// Android has no XDG-style config directory — `ProjectDirs` returns nothing
+/// there — so the app passes its own app-private path in. Ignored if called
+/// twice; the first caller wins.
+pub fn set_config_dir(dir: PathBuf) {
+    let _ = CONFIG_DIR.set(dir);
+}
+
 /// Where this device keeps its state.
 ///
-/// `VOICECAST_CONFIG_DIR` overrides it so a second node can run alongside the
-/// first with its own identity and roster — the only way to exercise joining
-/// without two machines.
+/// Resolution order: a path the host set, then `VOICECAST_CONFIG_DIR` (which
+/// lets a second node run alongside the first for testing), then the
+/// platform's own config directory.
 pub fn config_dir() -> Result<PathBuf, IdentityError> {
+    if let Some(dir) = CONFIG_DIR.get() {
+        return Ok(dir.clone());
+    }
     if let Ok(dir) = std::env::var("VOICECAST_CONFIG_DIR") {
         return Ok(PathBuf::from(dir));
     }
-    let dirs = directories::ProjectDirs::from("", "", "voicecast")
-        .ok_or_else(|| IdentityError::Store("no config directory".into()))?;
+    let dirs = directories::ProjectDirs::from("", "", "voicecast").ok_or_else(|| {
+        IdentityError::Store(
+            "no config directory on this platform; the host must call set_config_dir".into(),
+        )
+    })?;
     Ok(dirs.config_dir().to_path_buf())
 }
 
@@ -176,7 +194,21 @@ pub fn device_name() -> String {
     {
         return name.trim().to_string();
     }
-    hostname().unwrap_or_else(|| "this device".to_string())
+    hostname().unwrap_or_else(|| default_name().to_string())
+}
+
+/// A name for a device whose hostname tells us nothing useful.
+///
+/// Android has no `/etc/hostname`, and "this device" reads like a bug in a
+/// device list. Something plausible is better until the user renames it.
+fn default_name() -> &'static str {
+    if cfg!(target_os = "android") {
+        "Android phone"
+    } else if cfg!(target_os = "ios") {
+        "iPhone"
+    } else {
+        "this device"
+    }
 }
 
 /// Choose this device's label, remembering it across restarts.

@@ -13,6 +13,7 @@
 use anyhow::{Context, Result, bail};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, SecretKey,
+    dns::DnsResolver,
     endpoint::{Connection, presets},
 };
 use voicecast_proto::PeerMessage;
@@ -34,13 +35,20 @@ impl Transport {
     /// The `N0` preset supplies pkarr publishing and resolution plus relay
     /// fallback — the three-rung discovery ladder from `docs/architecture.md`,
     /// none of which we have to run.
-    pub async fn bind(secret: SecretKey) -> Result<Self> {
-        let endpoint = Endpoint::builder(presets::N0)
+    ///
+    /// `dns` overrides how hostnames are resolved. Passing `None` reads the
+    /// system's configuration, which is right everywhere except Android:
+    /// there it requires a JNI context this crate has no way to obtain, and
+    /// the lookup panics without one. The app supplies a fixed resolver
+    /// instead — platform knowledge belongs in the shell, not here.
+    pub async fn bind(secret: SecretKey, dns: Option<DnsResolver>) -> Result<Self> {
+        let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret)
-            .alpns(vec![ALPN.to_vec()])
-            .bind()
-            .await
-            .context("binding iroh endpoint")?;
+            .alpns(vec![ALPN.to_vec()]);
+        if let Some(dns) = dns {
+            builder = builder.dns_resolver(dns);
+        }
+        let endpoint = builder.bind().await.context("binding iroh endpoint")?;
         Ok(Self { endpoint })
     }
 

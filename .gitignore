@@ -1,7 +1,8 @@
-app/src-tauri/gen/
-dist/
-.DS_Store
-gen/
 *.log
+.DS_Store
+app/src-tauri/gen/android/**/build/
+app/src-tauri/gen/android/.gradle/
+app/src-tauri/gen/apple/
+dist/
 node_modules/
 target/

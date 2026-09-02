@@ -29,6 +29,10 @@ impl SilentEngine {
 }
 
 impl SpeechEngine for SilentEngine {
+    fn ready(&self) -> Result<(), EngineError> {
+        Err(EngineError::Unavailable(self.reason.clone()))
+    }
+
     fn speak(&self, _chunk: &str) -> Result<(), EngineError> {
         Err(EngineError::Unavailable(self.reason.clone()))
     }

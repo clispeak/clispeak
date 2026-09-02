@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     // The device's label. A local convenience only — identity is the key.
     let name = voicecast_core::device_name();
 
-    let transport = Transport::bind(identity.secret().clone())
+    let transport = Transport::bind(identity.secret().clone(), None)
         .await
         .context("binding the peer-to-peer endpoint")?;
 
