@@ -125,7 +125,12 @@ pub enum Request {
         to: Option<String>,
     },
     /// Mint an invite ticket for another device.
-    Invite,
+    Invite {
+        /// Which space to invite into, by its local name. `None` is the
+        /// default space.
+        #[serde(default)]
+        space: Option<String>,
+    },
     /// Join a space using a ticket from another device.
     Join {
         /// The `voicecast://join/...` string.
@@ -141,11 +146,18 @@ pub enum Request {
     Revoke {
         /// The device's label.
         name: String,
+        /// Which space to remove it from. `None` is the default space.
+        #[serde(default)]
+        space: Option<String>,
     },
     /// Leave the space, keeping this device's identity.
     Leave,
-    /// Replace this space with a fresh one, locking every other device out.
-    Rotate,
+    /// Replace a space with a fresh one, locking every other device out.
+    Rotate {
+        /// Which space to replace. `None` is the default space.
+        #[serde(default)]
+        space: Option<String>,
+    },
     /// List the spaces this device belongs to.
     Spaces,
     /// Found a new space from this device and make it the default.
@@ -264,6 +276,13 @@ pub enum Response {
     Joined {
         /// How many devices are now in it.
         members: usize,
+        /// What this device now calls it locally.
+        ///
+        /// Worth returning because joining a second space has to name it
+        /// something, and the person who joined should be told what rather
+        /// than having to go and look.
+        #[serde(default)]
+        space: String,
     },
     /// The request was carried out but has nothing to report.
     Done,

@@ -78,6 +78,18 @@ impl Spaces {
         self.default_id = id;
     }
 
+    /// Whether the default space is one nobody else ever joined.
+    ///
+    /// Every node founds a space for itself at first start. Joining should
+    /// displace *that* — otherwise a fresh device ends up holding an
+    /// abandoned empty space beside the one it just joined — and should never
+    /// displace a space with other devices in it, which is a real space
+    /// somebody would lose.
+    pub fn current_is_unshared(&self, me: &str) -> bool {
+        let roster = self.current();
+        roster.members().count() <= 1 && roster.members().all(|m| m.endpoint_id == me)
+    }
+
     /// A space by id.
     pub fn get(&self, id: &str) -> Option<&Roster> {
         self.rosters.get(id)
@@ -309,6 +321,32 @@ mod tests {
         assert!(spaces.set_label(&first, "home/again").is_err());
         assert!(spaces.set_label(&first, "a,b").is_err());
         assert!(spaces.set_label(&first, "  ").is_err());
+    }
+
+    #[test]
+    fn a_space_with_other_devices_in_it_is_never_displaced_by_joining() {
+        // The bug this guards: `do_join` replaced the current space, so a
+        // device in `home` that joined `work` lost `home` entirely.
+        let mut spaces = Spaces::default();
+        spaces.insert(a_space(1, "laptop"), "home");
+        let me = SecretKey::from_bytes(&[1; 32]).public().to_string();
+
+        // Alone: the empty space a node founds for itself, safe to displace.
+        assert!(spaces.current_is_unshared(&me));
+
+        // Once somebody else is in it, it is a real space.
+        let mut shared = a_space(1, "laptop");
+        let other = SecretKey::from_bytes(&[9; 32]);
+        shared.invite(
+            &SecretKey::from_bytes(&[1; 32]),
+            &other.public().to_string(),
+            "phone",
+        );
+        spaces.replace_current(shared);
+        assert!(!spaces.current_is_unshared(&me));
+
+        // And it is not this device's own membership that makes it shared.
+        assert!(!spaces.current_is_unshared("somebody-else"));
     }
 
     #[test]

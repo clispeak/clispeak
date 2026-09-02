@@ -713,16 +713,19 @@ async fn rename_space(state: State<'_, AppState>, label: String, to: String) -> 
 /// Returns the devices that were in it, so the interface can say who has to
 /// be re-invited rather than leaving the user to remember.
 #[tauri::command]
-async fn rotate_space(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    match state.node.rotate().await {
+async fn rotate_space(
+    state: State<'_, AppState>,
+    space: Option<String>,
+) -> Result<Vec<String>, String> {
+    match state.node.rotate(space.as_deref()).await {
         Response::Rotated { devices } => Ok(devices),
         other => Err(describe(other)),
     }
 }
 
 #[tauri::command]
-async fn make_invite(state: State<'_, AppState>) -> Result<Invite, String> {
-    match state.node.invite().await {
+async fn make_invite(state: State<'_, AppState>, space: Option<String>) -> Result<Invite, String> {
+    match state.node.invite(space.as_deref()).await {
         Response::Invite { url, expires_in } => {
             // A missing QR is a degraded invite, not a failed one: the code
             // can still be copied.
@@ -740,7 +743,7 @@ async fn make_invite(state: State<'_, AppState>) -> Result<Invite, String> {
 #[tauri::command]
 async fn join_space(state: State<'_, AppState>, ticket: String) -> Result<usize, String> {
     match state.node.join(&ticket).await {
-        Response::Joined { members } => Ok(members),
+        Response::Joined { members, .. } => Ok(members),
         other => Err(describe(other)),
     }
 }
@@ -836,8 +839,12 @@ fn set_rate(state: State<'_, AppState>, rate: f32) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn revoke_device(state: State<'_, AppState>, name: String) -> Result<String, String> {
-    match state.node.revoke(&name).await {
+async fn revoke_device(
+    state: State<'_, AppState>,
+    name: String,
+    space: Option<String>,
+) -> Result<String, String> {
+    match state.node.revoke(&name, space.as_deref()).await {
         Response::Renamed { name } => Ok(name),
         other => Err(describe(other)),
     }

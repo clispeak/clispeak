@@ -24,15 +24,27 @@ pub struct Ticket {
     pub token: String,
     /// Unix seconds when this ticket stops being accepted.
     pub expires_at: u64,
+    /// Which space the joiner is being invited into.
+    ///
+    /// Defaulted, and absent means the inviter's default space — both because
+    /// tickets minted before this existed carry nothing, and because that is
+    /// the honest reading of an invite that never named one.
+    ///
+    /// The ticket has to carry it. Without it the inviting device decides at
+    /// the moment the joiner arrives, which is a different question from the
+    /// one the person pressing the button was answering.
+    #[serde(default)]
+    pub space: Option<String>,
 }
 
 impl Ticket {
     /// Mint a ticket for `endpoint_id`, valid for [`TTL_SECS`].
-    pub fn mint(endpoint_id: String) -> Self {
+    pub fn mint(endpoint_id: String, space: Option<String>) -> Self {
         Self {
             endpoint_id,
             token: random_token(),
             expires_at: now() + TTL_SECS,
+            space,
         }
     }
 

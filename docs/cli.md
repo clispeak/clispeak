@@ -215,7 +215,9 @@ $ voicecast devices                    # names, platform, status, voice, last se
 $ voicecast invite                     # QR + ticket to add a device
 $ voicecast invite --print-only        # ticket only, for pasting over SSH
 $ voicecast join <ticket>              # join a space from this device
+$ voicecast invite --space work        # invite into a named space
 $ voicecast revoke <name>
+$ voicecast revoke <name> --space work
 $ voicecast rename <new>                 # this device's own label
 $ voicecast status                     # this node: identity, connections, queue
 $ voicecast init                       # first run: identity + new space

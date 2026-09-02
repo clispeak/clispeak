@@ -139,8 +139,11 @@ enum SpaceAction {
         /// What to call it instead.
         to: String,
     },
-    /// Replace the default space, locking every other device out.
-    Rotate,
+    /// Replace a space, locking every other device out.
+    Rotate {
+        /// Which space. Defaults to the default space.
+        name: Option<String>,
+    },
 }
 
 /// What to do to the group list.
@@ -197,8 +200,12 @@ enum Command {
     },
     /// Show node health.
     Status,
-    /// Print an invite for another device to join this space.
-    Invite,
+    /// Print an invite for another device to join a space.
+    Invite {
+        /// Which space to invite into. Defaults to the default space.
+        #[arg(long)]
+        space: Option<String>,
+    },
     /// Join a space using an invite from another device.
     Join {
         /// The `voicecast://join/...` string.
@@ -210,10 +217,13 @@ enum Command {
     Show,
     /// Shut the local node down.
     Quit,
-    /// Remove another device from this space.
+    /// Remove another device from a space.
     Revoke {
         /// The device's name.
         name: String,
+        /// Which space to remove it from. Defaults to the default space.
+        #[arg(long)]
+        space: Option<String>,
     },
     /// Leave the space, keeping this device's identity.
     Leave,
@@ -232,7 +242,11 @@ enum Command {
     /// consistent, so a device that has been offline since the revoke still
     /// honours it until it syncs; a rotated space never contained the
     /// excluded device at all. Every other device has to be re-invited.
-    Rotate,
+    Rotate {
+        /// Which space to replace. Defaults to the default space.
+        #[arg(long)]
+        space: Option<String>,
+    },
     /// Change this device's name.
     Rename {
         /// The new name.
@@ -413,12 +427,19 @@ async fn run() -> anyhow::Result<u8> {
             msg_id: id.clone(),
         },
         Some(Command::Status) => Request::Status,
-        Some(Command::Invite) => Request::Invite,
+        Some(Command::Invite { space }) => Request::Invite {
+            space: space.clone(),
+        },
         Some(Command::Devices) => Request::Devices,
         Some(Command::Show) => Request::Show,
-        Some(Command::Revoke { name }) => Request::Revoke { name: name.clone() },
+        Some(Command::Revoke { name, space }) => Request::Revoke {
+            name: name.clone(),
+            space: space.clone(),
+        },
         Some(Command::Leave) => Request::Leave,
-        Some(Command::Rotate) => Request::Rotate,
+        Some(Command::Rotate { space }) => Request::Rotate {
+            space: space.clone(),
+        },
         Some(Command::Space { action }) => match action {
             SpaceAction::List => Request::Spaces,
             SpaceAction::New { name } => Request::NewSpace {
@@ -434,7 +455,9 @@ async fn run() -> anyhow::Result<u8> {
                 label: name.clone(),
                 to: to.clone(),
             },
-            SpaceAction::Rotate => Request::Rotate,
+            SpaceAction::Rotate { name } => Request::Rotate {
+                space: name.clone(),
+            },
         },
         Some(Command::Quit) => Request::Quit,
         Some(Command::Rename { name }) => Request::Rename { name: name.clone() },
@@ -847,8 +870,15 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
             err("Other devices keep the old name until they sync.");
             exit::OK
         }
-        Response::Joined { members } => {
-            out(&format!("joined. {members} devices in this space"));
+        Response::Joined { members, space } => {
+            out(&format!("joined '{space}'. {members} devices in it"));
+            // Said because joining a second space has to name it something,
+            // and a placeholder nobody is told about is one nobody renames.
+            if space.starts_with("space-") {
+                err(&format!(
+                    "\nRename it with:  voicecast space rename {space} <name>"
+                ));
+            }
             exit::OK
         }
         Response::Devices { devices } => {

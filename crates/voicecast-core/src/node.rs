@@ -249,8 +249,8 @@ impl Node {
     }
 
     /// Mint an invite for another device.
-    pub async fn invite(&self) -> Response {
-        invite(&self.shared).await
+    pub async fn invite(&self, space: Option<&str>) -> Response {
+        invite(&self.shared, space).await
     }
 
     /// Join a space using someone else's invite.
@@ -264,8 +264,8 @@ impl Node {
     }
 
     /// Remove another device from this space.
-    pub async fn revoke(&self, name: &str) -> Response {
-        revoke(&self.shared, name).await
+    pub async fn revoke(&self, name: &str, space: Option<&str>) -> Response {
+        revoke(&self.shared, name, space).await
     }
 
     /// Leave the space, keeping this device's identity.
@@ -274,8 +274,8 @@ impl Node {
     }
 
     /// Replace this space with a fresh one, locking every other device out.
-    pub async fn rotate(&self) -> Response {
-        rotate(&self.shared).await
+    pub async fn rotate(&self, space: Option<&str>) -> Response {
+        rotate(&self.shared, space).await
     }
 
     /// Recent messages this device was asked to speak.
@@ -580,13 +580,13 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
                 paused: snap.paused,
             }
         }
-        Request::Invite => invite(shared).await,
+        Request::Invite { space } => invite(shared, space.as_deref()).await,
         Request::Join { ticket } => join(shared, transport, &ticket).await,
         Request::Devices => devices(shared).await,
         Request::Rename { name } => rename(shared, &name).await,
-        Request::Revoke { name } => revoke(shared, &name).await,
+        Request::Revoke { name, space } => revoke(shared, &name, space.as_deref()).await,
         Request::Leave => leave(shared, transport).await,
-        Request::Rotate => rotate(shared).await,
+        Request::Rotate { space } => rotate(shared, space.as_deref()).await,
         Request::Spaces => list_spaces(shared).await,
         Request::NewSpace { label } => new_space(shared, &label).await,
         Request::LeaveSpace { label } => leave_space(shared, &label).await,
@@ -1655,8 +1655,15 @@ async fn send_to_peer(
 }
 
 /// Mint an invite.
-async fn invite(shared: &Arc<Shared>) -> Response {
-    let ticket = Ticket::mint(shared.identity.id().to_string());
+async fn invite(shared: &Arc<Shared>, space: Option<&str>) -> Response {
+    let space = match space_named(shared, space).await {
+        Ok(id) => id,
+        Err(message) => return Response::Error { message },
+    };
+    // Recorded on the ticket rather than decided when the joiner arrives:
+    // those are different questions, and the person pressing the button was
+    // answering the first one.
+    let ticket = Ticket::mint(shared.identity.id().to_string(), Some(space));
     let url = match ticket.to_url() {
         Ok(u) => u,
         Err(e) => {
@@ -1684,14 +1691,21 @@ async fn join(shared: &Arc<Shared>, transport: &Arc<Transport>, raw: &str) -> Re
         }
     };
     match do_join(shared, transport, &ticket).await {
-        Ok(count) => Response::Joined { members: count },
+        Ok((count, space)) => Response::Joined {
+            members: count,
+            space,
+        },
         Err(e) => Response::Error {
             message: format!("{e:#}"),
         },
     }
 }
 
-async fn do_join(shared: &Arc<Shared>, transport: &Arc<Transport>, t: &Ticket) -> Result<usize> {
+async fn do_join(
+    shared: &Arc<Shared>,
+    transport: &Arc<Transport>,
+    t: &Ticket,
+) -> Result<(usize, String)> {
     let peer = t.endpoint_id.parse().context("bad endpoint id in ticket")?;
     let conn = transport
         .connect(peer)
@@ -1716,14 +1730,32 @@ async fn do_join(shared: &Arc<Shared>, transport: &Arc<Transport>, t: &Ticket) -
             space: _,
         } => {
             let mut spaces = shared.spaces.lock().await;
-            // Replace rather than merge: joining a space means adopting its
-            // membership, not blending it with whatever we had before.
+            // Adopt the space's membership wholesale rather than blending it
+            // with whatever we had — but *add* it rather than replace what we
+            // already belong to. Replacing was right when a device could hold
+            // one space and became wrong the moment it could hold several: a
+            // device in `home` that joined `work` lost `home`.
             let all = members.into_iter().chain(std::iter::once(member));
             let joined = Roster::from_parts(all.collect(), Vec::new());
             let count = joined.members().count();
-            spaces.replace_current(joined);
+
+            // A space holding only this device is one nobody ever joined —
+            // the empty space every node founds for itself at first start.
+            // Displacing that is what `replace_current` was written for, and
+            // it stops a fresh device ending up with an abandoned space
+            // beside the one it just joined.
+            let me = shared.identity.id().to_string();
+            let label = if spaces.current_is_unshared(&me) {
+                let kept = spaces.label(spaces.default_id()).to_string();
+                spaces.replace_current(joined);
+                kept
+            } else {
+                let name = next_space_label(&spaces);
+                spaces.insert(joined, &name);
+                name
+            };
             spaces.save(&shared.spaces_path)?;
-            Ok(count)
+            Ok((count, label))
         }
         PeerMessage::JoinRefused { reason } => anyhow::bail!("{reason}"),
         other => anyhow::bail!("unexpected reply: {other:?}"),
@@ -1766,13 +1798,17 @@ async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
 /// device keeps working until it does. That is the eventual consistency the
 /// architecture accepts, and the message says so rather than implying the
 /// removal was instant everywhere.
-async fn revoke(shared: &Arc<Shared>, name: &str) -> Response {
+async fn revoke(shared: &Arc<Shared>, name: &str, space: Option<&str>) -> Response {
+    let space = match space_named(shared, space).await {
+        Ok(id) => id,
+        Err(message) => return Response::Error { message },
+    };
     let me = shared.identity.id().to_string();
     let mut spaces = shared.spaces.lock().await;
 
     let Some(target) = spaces
-        .current()
-        .by_name(name)
+        .get(&space)
+        .and_then(|r| r.by_name(name))
         .map(|m| m.endpoint_id.clone())
     else {
         return Response::Error {
@@ -1785,7 +1821,9 @@ async fn revoke(shared: &Arc<Shared>, name: &str) -> Response {
         };
     }
 
-    spaces.current_mut().revoke(&target);
+    if let Some(roster) = spaces.get_mut(&space) {
+        roster.revoke(&target);
+    }
     if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
@@ -1866,12 +1904,20 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>) -> Response {
 ///
 /// Everyone has to be re-invited, which is the cost of locking one device out
 /// immediately. It is only bearable because joining is cheap.
-async fn rotate(shared: &Arc<Shared>) -> Response {
+async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
+    let space = match space_named(shared, space).await {
+        Ok(id) => id,
+        Err(message) => return Response::Error { message },
+    };
     let me = shared.identity.id().to_string();
     let mut spaces = shared.spaces.lock().await;
 
-    let devices: Vec<String> = spaces
-        .current()
+    let Some(roster) = spaces.get(&space) else {
+        return Response::Error {
+            message: "that space is no longer held".into(),
+        };
+    };
+    let devices: Vec<String> = roster
         .members()
         .filter(|m| m.endpoint_id != me)
         .map(|m| m.name.clone())
@@ -1884,6 +1930,38 @@ async fn rotate(shared: &Arc<Shared>) -> Response {
         };
     }
     Response::Rotated { devices }
+}
+
+/// A local name for a space this device has just joined.
+///
+/// Joining has to call it something, and the space itself carries no name —
+/// labels are local, like device labels. Numbered rather than guessed from
+/// the inviter, because a guess that collides is worse than a placeholder
+/// somebody renames.
+fn next_space_label(spaces: &Spaces) -> String {
+    (2..)
+        .map(|n| format!("space-{n}"))
+        .find(|name| spaces.by_label(name).is_none())
+        .expect("an unused name exists")
+}
+
+/// Which space a request means, by its local name.
+///
+/// `None` is the default, which is what every caller meant before spaces
+/// could be named. An unknown name is an error rather than a silent fallback
+/// to the default: acting on the wrong space is the failure worth refusing,
+/// and it is exactly what a per-space button would otherwise do.
+async fn space_named(shared: &Arc<Shared>, label: Option<&str>) -> Result<String, String> {
+    let spaces = shared.spaces.lock().await;
+    match label {
+        None => Ok(spaces.default_id().to_string()),
+        Some(label) => spaces.by_label(label).ok_or_else(|| {
+            format!(
+                "no space called '{label}'. Known: {}",
+                space_labels(&spaces)
+            )
+        }),
+    }
 }
 
 /// The spaces this device belongs to.
@@ -2267,6 +2345,9 @@ async fn accept_join(
             reason: "that invite is not valid".into(),
         };
     }
+    // Which space this invite was for, read before the ticket is consumed.
+    let wanted = ticket.space.clone();
+
     // Single use: consumed here so a ticket seen over a shoulder, or left in
     // scrollback, cannot be replayed.
     *pending = None;
@@ -2274,16 +2355,28 @@ async fn accept_join(
     drop(pending);
 
     let mut spaces = shared.spaces.lock().await;
-    let member = spaces
-        .current_mut()
-        .invite(shared.identity.secret(), endpoint_id, name);
+    // The space the ticket named, not whichever happens to be default now.
+    // Those differ the moment someone changes the default between showing an
+    // invite and it being scanned, and the ticket is what the person pressing
+    // the button was answering.
+    let space_id = wanted
+        .filter(|id| spaces.get(id).is_some())
+        .unwrap_or_else(|| spaces.default_id().to_string());
+    let Some(roster) = spaces.get_mut(&space_id) else {
+        return PeerMessage::JoinRefused {
+            reason: "that space is no longer on this device".into(),
+        };
+    };
+    let member = roster.invite(shared.identity.secret(), endpoint_id, name);
     if let Err(e) = spaces.save(&shared.spaces_path) {
         return PeerMessage::JoinRefused {
             reason: format!("could not record membership: {e}"),
         };
     }
-    let members: Vec<Member> = spaces.current().members().cloned().collect();
-    let space_id = spaces.current().space_id();
+    let members: Vec<Member> = spaces
+        .get(&space_id)
+        .map(|r| r.members().cloned().collect())
+        .unwrap_or_default();
     PeerMessage::JoinAccepted {
         member,
         members,
