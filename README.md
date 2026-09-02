@@ -206,6 +206,7 @@ so it cannot quietly drift into describing a tool that has moved on.
 | [build-plan.md](docs/build-plan.md) | Milestones, repo layout, CI |
 | [m0-results.md](docs/m0-results.md) | Measured transport results on real devices |
 | [decisions.md](docs/decisions.md) | Every decision, with its rationale and cost |
+| [releasing.md](docs/releasing.md) | How binaries will be built and published, and what has to be settled first |
 
 Start with `decisions.md` if you want to know *why* rather than *what*.
 
