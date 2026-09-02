@@ -165,8 +165,15 @@ invited each member, which is what lets a device admit a peer it has never met.
 
 ## Using it from an agent
 
-`skills/voicecast/SKILL.md` is an agent skill. Copy it into an agent's skills
-directory — for Claude Code, `~/.claude/skills/voicecast/` — and the agent
+`skills/voicecast/SKILL.md` is an agent skill. Install it with
+
+```bash
+voicecast skill --install                          # Claude Code's default location
+voicecast skill --install --path <dir>/SKILL.md    # anywhere else
+voicecast skill                                    # print it, to pipe somewhere
+```
+
+or from the app's Settings tab. The agent
 gains the judgement the `--help` output cannot give it: when speaking is worth
 doing at all, which device suits which kind of message, what each exit code
 means for what to do next, and that a `muted` device is a decision to respect

@@ -41,6 +41,11 @@ finish-args:
   # Where the app offers to put the command-line tool, so an agent can call it
   # without paying sandbox startup on every message.
   - --filesystem=~/.local/bin:create
+  # Where agents keep skills. Narrow on purpose: an unshared write inside the
+  # sandbox appears to succeed and never reaches the host, so the app must be
+  # able to genuinely write anywhere it offers to. Any other location goes
+  # through the command-line tool, which is not sandboxed.
+  - --filesystem=~/.claude:create
   # Somewhere for a user-added voice to live. Piper and one voice are bundled
   # below, so this is only needed for voices added after install.
   - --persist=.local/share/voicecast

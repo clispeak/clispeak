@@ -246,6 +246,23 @@ enum Command {
     Resume,
     /// Show what is being spoken and what is waiting.
     Queue,
+    /// Print or install the agent skill.
+    ///
+    /// The skill teaches an agent how to use this tool: when speaking is
+    /// worth doing, how to name itself so the user knows who is talking, and
+    /// what each exit code means. With no flags it prints to stdout, so an
+    /// agent that keeps skills somewhere unusual can be pointed at it.
+    Skill {
+        /// Write it to disk instead of printing it.
+        #[arg(long)]
+        install: bool,
+        /// Where to write it. Defaults to Claude Code's skills directory.
+        ///
+        /// Named `--path` rather than `--to` because `--to` already means
+        /// which device to speak on, and clap cannot hold both meanings.
+        #[arg(long, value_name = "PATH")]
+        path: Option<std::path::PathBuf>,
+    },
     /// Show recent messages, spoken or not.
     ///
     /// Messages refused while this device was muted or in quiet hours are
@@ -357,6 +374,12 @@ async fn run() -> anyhow::Result<u8> {
     }
     let config = config::load();
 
+    // Neither does the skill: it is compiled in, so printing or installing
+    // it needs nothing running.
+    if let Some(Command::Skill { install, path }) = &cli.command {
+        return Ok(run_skill(*install, path.as_deref()));
+    }
+
     // Group commands never reach the node: groups are this machine's own
     // shorthand, so editing them is a local file operation and answering
     // "what groups exist" needs nothing running.
@@ -447,7 +470,9 @@ async fn run() -> anyhow::Result<u8> {
             ticket: ticket.clone(),
         },
         // Handled above, before the node is contacted.
-        Some(Command::Group { .. }) | Some(Command::Groups) => unreachable!("local commands"),
+        Some(Command::Group { .. }) | Some(Command::Groups) | Some(Command::Skill { .. }) => {
+            unreachable!("local commands")
+        }
         Some(Command::Say { text }) => match build_speak(&cli, &config, text)? {
             Ok(req) => req,
             Err(code) => return Ok(code),
@@ -467,6 +492,48 @@ async fn run() -> anyhow::Result<u8> {
 
     let unheard_only = matches!(cli.command, Some(Command::History { unheard: true, .. }));
     send_with(request, cli.json, unheard_only).await
+}
+
+/// Print the skill, or write it somewhere an agent will find it.
+fn run_skill(install: bool, path: Option<&std::path::Path>) -> u8 {
+    if !install {
+        // Printed rather than described, so it can be piped anywhere.
+        print!("{}", skill::SKILL);
+        return exit::OK;
+    }
+
+    let destination = match path {
+        Some(path) => path.to_path_buf(),
+        None => match skill::default_destination() {
+            Some(path) => path,
+            None => {
+                err("error: no home directory; pass --to with a path");
+                return exit::USAGE;
+            }
+        },
+    };
+
+    if skill::state(&destination) == skill::State::Current {
+        out(&format!("already up to date at {}", destination.display()));
+        return exit::OK;
+    }
+
+    match skill::install(&destination) {
+        Ok(()) => {
+            out(&destination.display().to_string());
+            err("");
+            err("Installed. An agent that reads skills from there will pick it up.");
+            err("Re-run this after upgrading voicecast to keep it in step.");
+            exit::OK
+        }
+        Err(e) => {
+            err(&format!(
+                "error: could not write {}: {e}",
+                destination.display()
+            ));
+            exit::USAGE
+        }
+    }
 }
 
 /// Which devices to send to, with any group expanded.
@@ -1020,6 +1087,7 @@ fn voicecast_core_socket_name() -> String {
 }
 
 mod config;
+mod skill;
 
 // Frame helpers, mirroring `voicecast_core::ipc` for the same reason.
 mod frame;

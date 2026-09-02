@@ -185,6 +185,7 @@ async function refresh() {
   await refreshVoice();
   await refreshPolicy();
   await refreshSpaces();
+  await refreshSkill();
   await refreshHistory();
 
   const devices = await invoke("list_devices").catch(() => null);
@@ -355,6 +356,49 @@ async function refreshHistory() {
           }),
         ]),
   );
+}
+
+/**
+ * Show whether the agent skill is installed, and where.
+ *
+ * Hidden where it means nothing: an agent runs on a computer, not on the
+ * phone that receives the speech.
+ */
+async function refreshSkill() {
+  let skill;
+  try {
+    skill = await invoke("skill_status");
+  } catch {
+    return;
+  }
+  if (!skill) {
+    $("skill-section").hidden = true;
+    return;
+  }
+  $("skill-section").hidden = false;
+
+  const badge = $("skill-state");
+  const words = {
+    current: ["installed", "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300"],
+    stale: ["out of date", "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"],
+    absent: ["not installed", "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"],
+  };
+  const [word, colour] = words[skill.state] ?? words.absent;
+  badge.textContent = word;
+  badge.className = "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium " + colour;
+  $("skill-note").textContent =
+    skill.state === "stale" ? "this app has a newer version" : "";
+
+  if (document.activeElement !== $("skill-path")) {
+    $("skill-path").value = skill.path;
+  }
+  // Said plainly rather than discovered by a failed install: inside a
+  // sandbox the app genuinely cannot write outside the default location.
+  $("skill-hint").textContent = skill.sandboxed
+    ? "This app is sandboxed. For anywhere else, run: voicecast skill --install --path <dir>/SKILL.md"
+    : "Any path. Agents that keep skills elsewhere can be pointed at their own directory.";
+  $("skill-install").textContent =
+    skill.state === "absent" ? "Install the skill" : "Reinstall";
 }
 
 /** One row in the spaces list. */
@@ -650,6 +694,13 @@ $("leave").onclick = () =>
     if (!confirm("Leave this space? Other devices will stop reaching this one.")) return;
     say(await call("leave_space"));
     await refresh();
+  });
+
+$("skill-install").onclick = () =>
+  withButton($("skill-install"), "…", async () => {
+    const path = await call("install_skill", { path: $("skill-path").value });
+    say(`skill installed at ${path}`);
+    await refreshSkill();
   });
 
 $("tab-home").onclick = () => showScreen("home");

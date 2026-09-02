@@ -342,7 +342,45 @@
       </div>
     </section>
 
-    <!-- This device ---------------------------------------------------------- -->
+    <!-- Agent skill ---------------------------------------------------------- -->
+  <section id="skill-section" hidden>
+    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+      Agent skill
+    </h2>
+    <div class="space-y-3 rounded-xl border border-neutral-200 bg-white p-4
+                dark:border-neutral-800 dark:bg-neutral-900">
+      <p class="text-sm text-neutral-600 dark:text-neutral-300">
+        Teaches an agent when to speak to you, which device to use, and to say
+        who it is when it does.
+      </p>
+
+      <div class="flex items-center gap-2">
+        <span id="skill-state"
+          class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"></span>
+        <span id="skill-note" class="truncate text-xs text-neutral-500 dark:text-neutral-400"></span>
+      </div>
+
+      <div>
+        <label for="skill-path" class="mb-1 block text-xs text-neutral-500 dark:text-neutral-400">
+          Where to put it
+        </label>
+        <input id="skill-path" type="text" autocomplete="off" spellcheck="false"
+          class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 font-mono text-xs
+                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900" />
+        <p id="skill-hint" class="mt-1 text-xs text-neutral-500 dark:text-neutral-400"></p>
+      </div>
+
+      <button id="skill-install"
+        class="w-full rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium transition
+               hover:bg-neutral-100 active:scale-[0.99]
+               dark:border-neutral-700 dark:hover:bg-neutral-800">
+        Install the skill
+      </button>
+    </div>
+  </section>
+
+  <!-- This device ---------------------------------------------------------- -->
     <section>
       <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
         This device

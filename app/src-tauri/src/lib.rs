@@ -416,6 +416,155 @@ async fn list_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, Str
     }
 }
 
+/// The agent skill, compiled in so it can never drift from this build.
+const SKILL: &str = include_str!("../../../skills/voicecast/SKILL.md");
+
+/// Whether this build runs inside a Flatpak.
+///
+/// The macOS bundle and a plain build are not sandboxed and can write
+/// wherever the user says; a Flatpak can only write what its manifest grants.
+fn sandboxed() -> bool {
+    std::path::Path::new("/.flatpak-info").exists()
+}
+
+/// Where Claude Code looks for skills. Only a default.
+fn skill_default() -> Option<std::path::PathBuf> {
+    Some(
+        directories::BaseDirs::new()?
+            .home_dir()
+            .join(".claude/skills/voicecast/SKILL.md"),
+    )
+}
+
+/// Where a previous install put it, so it can be kept in step.
+fn skill_record() -> Option<std::path::PathBuf> {
+    voicecast_core::config_dir()
+        .ok()
+        .map(|d| d.join("skill-destination"))
+}
+
+/// Whether this build may write to `path`.
+///
+/// Inside a Flatpak an unshared write **appears to succeed and never reaches
+/// the host** — the app's home holds an overlay, not the real directory. So a
+/// sandboxed app that offered to install anywhere would report success and
+/// install nothing, which is the one outcome worse than refusing.
+///
+/// Only the default location is granted in the manifest. Anywhere else has to
+/// go through the command-line tool, which runs as the user with no sandbox.
+fn skill_writable(path: &std::path::Path) -> bool {
+    if !sandboxed() {
+        return true;
+    }
+    let Some(dirs) = directories::BaseDirs::new() else {
+        return false;
+    };
+    path.starts_with(dirs.home_dir().join(".claude"))
+}
+
+/// What an agent skill install looks like from here.
+#[derive(Serialize)]
+pub struct SkillStatus {
+    /// Where it would go, or where it went.
+    pub path: String,
+    /// "absent", "current" or "stale".
+    pub state: String,
+    /// Whether this build can write anywhere, or only the default.
+    pub sandboxed: bool,
+}
+
+/// Compare an installed copy against this build, by content.
+fn skill_state(path: &std::path::Path) -> &'static str {
+    match std::fs::read_to_string(path) {
+        Ok(text) if text == SKILL => "current",
+        Ok(_) => "stale",
+        Err(_) => "absent",
+    }
+}
+
+/// Where the skill is or would be, and whether it is current.
+#[tauri::command]
+fn skill_status() -> Option<SkillStatus> {
+    let path = skill_record()
+        .and_then(|r| std::fs::read_to_string(r).ok())
+        .map(|p| std::path::PathBuf::from(p.trim()))
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(skill_default)?;
+    Some(SkillStatus {
+        state: skill_state(&path).into(),
+        path: path.display().to_string(),
+        sandboxed: sandboxed(),
+    })
+}
+
+/// Write the skill where an agent will find it.
+///
+/// Refuses rather than pretending when the sandbox would swallow the write,
+/// and says which command does work.
+#[tauri::command]
+fn install_skill(path: Option<String>) -> Result<String, String> {
+    let destination = match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => std::path::PathBuf::from(shellexpand_home(p)),
+        None => skill_default().ok_or("no home directory on this system")?,
+    };
+
+    if !skill_writable(&destination) {
+        return Err(format!(
+            "this app is sandboxed and can only write to the default location. \
+             Run this instead:  voicecast skill --install --path {}",
+            destination.display()
+        ));
+    }
+
+    if let Some(dir) = destination.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    }
+    std::fs::write(&destination, SKILL)
+        .map_err(|e| format!("could not write {}: {e}", destination.display()))?;
+
+    // Remembered so a later launch can keep it in step, and so the interface
+    // reports on the copy that actually exists rather than the default.
+    if let Some(record) = skill_record() {
+        if let Some(dir) = record.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(record, destination.display().to_string());
+    }
+    Ok(destination.display().to_string())
+}
+
+/// Expand a leading `~`, which people type and `PathBuf` does not understand.
+fn shellexpand_home(path: &str) -> String {
+    let Some(rest) = path.strip_prefix("~/") else {
+        return path.to_string();
+    };
+    match directories::BaseDirs::new() {
+        Some(dirs) => dirs.home_dir().join(rest).display().to_string(),
+        None => path.to_string(),
+    }
+}
+
+/// Keep an installed skill in step with the app.
+///
+/// Only ever rewrites a copy this app installed and recorded — it never
+/// creates one, because putting a file into somebody's agent configuration is
+/// something they should have asked for.
+fn refresh_installed_skill() {
+    let Some(record) = skill_record() else { return };
+    let Ok(text) = std::fs::read_to_string(&record) else {
+        return;
+    };
+    let path = std::path::PathBuf::from(text.trim());
+    if path.as_os_str().is_empty() || skill_state(&path) != "stale" || !skill_writable(&path) {
+        return;
+    }
+    match std::fs::write(&path, SKILL) {
+        Ok(()) => eprintln!("updated the agent skill at {}", path.display()),
+        Err(e) => eprintln!("could not update the agent skill: {e}"),
+    }
+}
+
 /// What this device is saying right now.
 #[derive(Serialize)]
 pub struct NowPlaying {
@@ -831,6 +980,10 @@ pub fn run() {
             #[cfg(desktop)]
             install_cli_on_host();
 
+            // Only refreshes a copy this app was asked to install.
+            #[cfg(desktop)]
+            refresh_installed_skill();
+
             // Android has no XDG config directory, so tell the core where its
             // app-private storage is before anything tries to read a key.
             match app.path().app_data_dir() {
@@ -922,6 +1075,8 @@ pub fn run() {
             cli_expected_path,
             cli_on_path,
             install_cli,
+            skill_status,
+            install_skill,
             now_playing,
             pause_speech,
             resume_speech,
