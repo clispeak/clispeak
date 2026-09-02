@@ -1,6 +1,7 @@
 package com.voicecast.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -20,6 +21,30 @@ class MainActivity : TauriActivity() {
 
         requestNotificationPermission()
         NodeService.start(this)
+
+        capturePendingInvite(intent)
+    }
+
+    /**
+     * The activity is singleTask, so a scan while it is already open arrives
+     * here rather than through onCreate.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        capturePendingInvite(intent)
+    }
+
+    /**
+     * Hold an invite opened from a QR scan until the interface asks for it.
+     *
+     * The webview may not be ready when the intent arrives, so this parks the
+     * value rather than trying to hand it over immediately.
+     */
+    private fun capturePendingInvite(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme == "voicecast") {
+            Invites.pending = data.toString()
+        }
     }
 
     /**

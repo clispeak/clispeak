@@ -46,6 +46,12 @@ struct Shared {
     pending: Mutex<Option<Ticket>>,
     tx: tokio::sync::mpsc::UnboundedSender<Job>,
     queued: AtomicUsize,
+    /// When each peer was last reached, as unix seconds.
+    ///
+    /// Recorded from real contact rather than a separate heartbeat protocol:
+    /// every sync and every message already proves reachability, so a device
+    /// that is being used needs no extra traffic to look alive.
+    last_seen: Mutex<std::collections::HashMap<String, u64>>,
     on_show: Mutex<Option<WindowHook>>,
     on_quit: Mutex<Option<WindowHook>>,
 }
@@ -95,6 +101,7 @@ impl Node {
             pending: Mutex::new(None),
             tx,
             queued,
+            last_seen: Mutex::new(std::collections::HashMap::new()),
             on_show: Mutex::new(None),
             on_quit: Mutex::new(None),
         });
@@ -157,7 +164,7 @@ impl Node {
 
     /// Leave the space, keeping this device's identity.
     pub async fn leave(&self) -> Response {
-        leave(&self.shared).await
+        leave(&self.shared, &self.transport).await
     }
 
     /// Devices in this space.
@@ -178,6 +185,40 @@ impl Node {
     /// Stop whatever is being spoken.
     pub fn stop(&self) {
         self.shared.engine.stop();
+    }
+
+    /// Check in with every peer on a timer, so presence stays current.
+    ///
+    /// A minute is a compromise: often enough that a device which dropped off
+    /// shows as stale reasonably soon, rare enough that idle devices are not
+    /// kept awake by us. Real traffic already refreshes presence, so this only
+    /// matters when nothing is being said.
+    pub fn start_presence_checks(self: &Arc<Self>) {
+        let node = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                let me = node.shared.identity.id().to_string();
+                let peers: Vec<String> = {
+                    let roster = node.shared.roster.lock().await;
+                    roster
+                        .members()
+                        .filter(|m| m.endpoint_id != me)
+                        .map(|m| m.endpoint_id.clone())
+                        .collect()
+                };
+                for peer in peers {
+                    // Failure is the useful signal here: the peer simply stays
+                    // stale until it can be reached again.
+                    if let Ok(id) = peer.parse()
+                        && let Ok(conn) = node.transport.connect(id).await
+                    {
+                        let _ = sync_roster(&node.shared, &conn).await;
+                    }
+                }
+            }
+        });
     }
 
     /// Serve peers only.
@@ -283,7 +324,7 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
         Request::Devices => devices(shared).await,
         Request::Rename { name } => rename(shared, &name).await,
         Request::Revoke { name } => revoke(shared, &name).await,
-        Request::Leave => leave(shared).await,
+        Request::Leave => leave(shared, transport).await,
         Request::Show => match shared.on_show.lock().await.as_ref() {
             Some(hook) => {
                 hook();
@@ -492,6 +533,7 @@ async fn sync_roster(shared: &Arc<Shared>, conn: &iroh::endpoint::Connection) ->
     if let PeerMessage::RosterSync { members, revoked } = read_msg(&mut recv).await? {
         merge_from_peer(shared, members, revoked).await?;
     }
+    mark_seen(shared, &conn.remote_id().to_string()).await;
     Ok(())
 }
 
@@ -686,7 +728,36 @@ async fn revoke(shared: &Arc<Shared>, name: &str) -> Response {
 }
 
 /// Leave the space, keeping this device's identity.
-async fn leave(shared: &Arc<Shared>) -> Response {
+///
+/// Two actions, as `docs/architecture.md` requires: tell the others, then drop
+/// the roster locally. Doing only the second leaves this device still listed
+/// everywhere else — which is exactly how it looked when it was missing.
+///
+/// Telling them is best-effort; the local removal is not. Leaving must work
+/// with no network at all.
+async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>) -> Response {
+    let me = shared.identity.id().to_string();
+
+    // A roster carrying our own tombstone. Peers merging this drop us.
+    let (farewell, peers) = {
+        let roster = shared.roster.lock().await;
+        let mut goodbye = roster.clone();
+        goodbye.revoke(&me);
+        let peers: Vec<String> = roster
+            .members()
+            .filter(|m| m.endpoint_id != me)
+            .map(|m| m.endpoint_id.clone())
+            .collect();
+        (goodbye, peers)
+    };
+
+    let mut told = 0usize;
+    for peer in &peers {
+        if announce_departure(transport, peer, &farewell).await.is_ok() {
+            told += 1;
+        }
+    }
+
     let mut roster = shared.roster.lock().await;
     *roster = Roster::leave(shared.identity.secret(), &shared.name);
     if let Err(e) = roster.save(&shared.roster_path) {
@@ -694,19 +765,53 @@ async fn leave(shared: &Arc<Shared>) -> Response {
             message: e.to_string(),
         };
     }
+
+    let unreached = peers.len() - told;
     Response::Renamed {
-        name: "left the space".into(),
+        name: if unreached == 0 {
+            "left the space".into()
+        } else {
+            format!("left the space; {unreached} device(s) will find out when next reached")
+        },
     }
+}
+
+/// Push a roster carrying our own tombstone to one peer.
+async fn announce_departure(
+    transport: &Arc<Transport>,
+    peer_id: &str,
+    farewell: &Roster,
+) -> Result<()> {
+    let peer = peer_id.parse().context("bad endpoint id in roster")?;
+    let conn = transport.connect(peer).await?;
+    let (mut send, _recv) = conn.open_bi().await?;
+    write_msg(
+        &mut send,
+        &PeerMessage::RosterSync {
+            members: farewell.members().cloned().collect(),
+            revoked: farewell.tombstones(),
+        },
+    )
+    .await?;
+    send.finish().ok();
+    Ok(())
 }
 
 /// List the space's devices.
 async fn devices(shared: &Arc<Shared>) -> Response {
     let me = shared.identity.id().to_string();
+    let seen = shared.last_seen.lock().await.clone();
     let roster = shared.roster.lock().await;
     Response::Devices {
         devices: roster
             .members()
             .map(|m| DeviceInfo {
+                last_seen_secs: if m.endpoint_id == me {
+                    Some(0)
+                } else {
+                    seen.get(&m.endpoint_id)
+                        .map(|t| now_secs().saturating_sub(*t))
+                },
                 name: m.name.clone(),
                 endpoint_id: m.endpoint_id.clone(),
                 is_self: m.endpoint_id == me,
@@ -718,6 +823,8 @@ async fn devices(shared: &Arc<Shared>) -> Response {
 /// Serve one peer connection.
 async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> Result<()> {
     let remote = conn.remote_id();
+    // Anything reaching us proves that peer is alive right now.
+    mark_seen(shared, &remote.to_string()).await;
     while let Ok((mut send, mut recv)) = conn.accept_bi().await {
         match read_msg(&mut recv).await? {
             PeerMessage::JoinRequest {
@@ -815,6 +922,22 @@ async fn accept_join(
     }
     let members: Vec<Member> = r.members().cloned().collect();
     PeerMessage::JoinAccepted { member, members }
+}
+
+/// Note that a peer was reachable just now.
+async fn mark_seen(shared: &Arc<Shared>, peer: &str) {
+    shared
+        .last_seen
+        .lock()
+        .await
+        .insert(peer.to_string(), now_secs());
+}
+
+/// Unix seconds now.
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// A short, unique-enough message id.

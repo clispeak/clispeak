@@ -33,6 +33,16 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+
+            <!-- Scanning an invite QR opens this app. Without it the camera
+                 finds no handler for voicecast:// and reports "app not
+                 found", which makes the primary pairing flow a dead end. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="voicecast" android:host="join" />
+            </intent-filter>
         </activity>
 
         <service

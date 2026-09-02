@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
         .await
         .context("binding the peer-to-peer endpoint")?;
 
-    let node = Node::new(Arc::new(engine), identity, transport, name).await?;
+    let node = std::sync::Arc::new(Node::new(Arc::new(engine), identity, transport, name).await?);
+    node.start_presence_checks();
     node.serve().await
 }

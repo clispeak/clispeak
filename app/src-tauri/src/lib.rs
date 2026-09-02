@@ -144,6 +144,22 @@ async fn rename_device(state: State<'_, AppState>, name: String) -> Result<Strin
     }
 }
 
+/// An invite opened from a QR scan, if one is waiting.
+///
+/// Polled by the interface rather than pushed, because the scan can land
+/// before the webview exists.
+#[tauri::command]
+fn pending_invite() -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        voicecast_engine::take_pending_invite()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        None
+    }
+}
+
 #[tauri::command]
 async fn revoke_device(state: State<'_, AppState>, name: String) -> Result<String, String> {
     match state.node.revoke(&name).await {
@@ -292,6 +308,7 @@ pub fn run() {
                 match start_node().await {
                     Ok(node) => {
                         let node = Arc::new(node);
+                        node.start_presence_checks();
                         handle.manage(AppState {
                             node: Arc::clone(&node),
                         });
@@ -340,6 +357,7 @@ pub fn run() {
             request_battery_exemption,
             revoke_device,
             leave_space,
+            pending_invite,
             speak
         ])
         .on_window_event(|_window, _event| {

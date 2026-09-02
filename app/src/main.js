@@ -48,13 +48,37 @@ async function withButton(button, label, action) {
   }
 }
 
+/** A rough, readable age. Precision past "minutes" helps nobody here. */
+function describeAge(secs) {
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m`;
+  if (secs < 86400) return `${Math.round(secs / 3600)}h`;
+  return `${Math.round(secs / 86400)}d`;
+}
+
 /** One row in the device list. */
 function deviceRow(device) {
   const li = document.createElement("li");
-  li.className = "flex items-center justify-between gap-3 px-4 py-3";
+  li.className = "flex items-center gap-3 px-4 py-3";
+
+  // A dot rather than words: this is glanceable status, and the tooltip
+  // carries the detail for anyone who wants it. Three states, because "not
+  // seen yet" is genuinely different from "seen, but a while ago".
+  const secs = device.last_seen_secs;
+  const live = secs != null && secs < 180;
+  const dot = document.createElement("span");
+  dot.className =
+    "size-2 shrink-0 rounded-full " +
+    (live
+      ? "bg-emerald-500"
+      : secs == null
+        ? "bg-neutral-300 dark:bg-neutral-700"
+        : "bg-neutral-400 dark:bg-neutral-600");
+  dot.title =
+    secs == null ? "not seen yet" : live ? "active" : `last seen ${describeAge(secs)} ago`;
 
   const left = document.createElement("div");
-  left.className = "min-w-0";
+  left.className = "min-w-0 flex-1";
   const name = document.createElement("p");
   name.className = "truncate text-sm font-medium";
   name.textContent = device.name;
@@ -63,7 +87,8 @@ function deviceRow(device) {
   id.textContent = device.endpoint_id.slice(0, 16) + "…";
   left.append(name, id);
 
-  li.append(left);
+  li.append(dot, left);
+
   if (device.is_self) {
     const tag = document.createElement("span");
     tag.className =
@@ -207,5 +232,32 @@ $("battery-fix").onclick = () =>
     say("choose Allow, then come back");
   });
 
+/**
+ * Join automatically when the app was opened by scanning an invite.
+ *
+ * Polled rather than pushed: the scan can land before this script exists, so
+ * Kotlin parks the value and this collects it.
+ */
+async function collectScannedInvite() {
+  let ticket;
+  try {
+    ticket = await invoke("pending_invite");
+  } catch {
+    return;
+  }
+  if (!ticket) return;
+  try {
+    const members = await invoke("join_space", { ticket });
+    say(`joined from a scan — ${members} devices`);
+    await refresh();
+  } catch (e) {
+    say(String(e), "error");
+  }
+}
+
 refresh();
-setInterval(refresh, REFRESH_MS);
+collectScannedInvite();
+setInterval(() => {
+  refresh();
+  collectScannedInvite();
+}, REFRESH_MS);

@@ -46,6 +46,7 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
         for (name, slot) in [
             (SPEECH_CLASS_NAME, &SPEECH_CLASS),
             (BATTERY_CLASS_NAME, &BATTERY_CLASS),
+            (INVITES_CLASS_NAME, &INVITES_CLASS),
         ] {
             if let Ok(class) = env.find_class(name)
                 && let Ok(global) = env.new_global_ref(class)
@@ -63,6 +64,37 @@ fn speech_class() -> Result<&'static GlobalRef, EngineError> {
     SPEECH_CLASS.get().ok_or_else(|| {
         EngineError::Unavailable("the speech helper class was not found at load time".into())
     })
+}
+
+/// Fully-qualified name of the pending-invite holder.
+const INVITES_CLASS_NAME: &str = "com/voicecast/app/Invites";
+
+/// A global reference to the invite holder class. See [`SPEECH_CLASS`].
+static INVITES_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+
+/// Take an invite opened from a QR scan, if one is waiting.
+///
+/// Scanning launches the activity with the invite in its intent, which can
+/// happen before the interface exists — so Kotlin parks it and this collects
+/// it once, clearing it so a rotation does not rejoin.
+pub fn take_pending_invite() -> Option<String> {
+    let class = INVITES_CLASS.get()?;
+    AndroidEngine::with_env(|env| {
+        let value = env.call_static_method(
+            <&JClass>::from(class.as_obj()),
+            "take",
+            "()Ljava/lang/String;",
+            &[],
+        )?;
+        let obj: JObject = value.l()?;
+        if obj.is_null() {
+            return Ok(None);
+        }
+        let s: String = env.get_string(&JString::from(obj))?.into();
+        Ok(Some(s))
+    })
+    .ok()
+    .flatten()
 }
 
 /// Fully-qualified name of the battery-optimisation helper.

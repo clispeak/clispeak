@@ -304,4 +304,10 @@ pub struct DeviceInfo {
     pub endpoint_id: String,
     /// Whether this row is the device you are asking.
     pub is_self: bool,
+    /// Seconds since this device was last reached, if ever.
+    ///
+    /// `None` means never seen — a device that joined but has not been in
+    /// contact since. Absence of news is genuinely different from bad news.
+    #[serde(default)]
+    pub last_seen_secs: Option<u64>,
 }
