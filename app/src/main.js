@@ -23,15 +23,17 @@ let screen = "home";
 /**
  * Show one screen and mark its tab.
  *
- * Two screens rather than one long column: the app is mostly a receiver, and
- * what it is saying and what it has said are what you open it for. Everything
- * that is set once and left alone belongs behind a tab.
+ * Three screens rather than one long column: the app is mostly a receiver, and
+ * what it is saying and what it has said are what you open it for. Who can
+ * reach it is checked and changed often enough to deserve its own tab, and
+ * what is set once and left alone belongs behind the last one.
  */
 function showScreen(name) {
   screen = name;
   $("screen-home").hidden = name !== "home";
+  $("screen-spaces").hidden = name !== "spaces";
   $("screen-settings").hidden = name !== "settings";
-  for (const tab of [$("tab-home"), $("tab-settings")]) {
+  for (const tab of [$("tab-home"), $("tab-spaces"), $("tab-settings")]) {
     const active = tab.dataset.screen === name;
     tab.className =
       "flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition " +
@@ -79,26 +81,43 @@ async function call(cmd, args) {
  * Escape and the backdrop cancel, because the safe answer should be the
  * easiest one to give.
  */
-function ask(question) {
+function ask(question, { input = null } = {}) {
   const box = $("ask");
+  const field = $("ask-input");
   $("ask-text").textContent = question;
+  field.hidden = input === null;
+  field.value = input ?? "";
   box.hidden = false;
-  $("ask-yes").focus();
+  if (input === null) $("ask-yes").focus();
+  else {
+    field.focus();
+    field.select();
+  }
 
   return new Promise((resolve) => {
     const done = (answer) => {
       box.hidden = true;
       $("ask-yes").onclick = null;
       $("ask-no").onclick = null;
+      field.onkeydown = null;
       box.onclick = null;
       document.removeEventListener("keydown", onKey);
       resolve(answer);
     };
     const onKey = (e) => {
-      if (e.key === "Escape") done(false);
+      if (e.key === "Escape") done(input === null ? false : null);
     };
-    $("ask-yes").onclick = () => done(true);
-    $("ask-no").onclick = () => done(false);
+    // With a field, the answer is what was typed; without one, it is yes or no.
+    const yes = () => done(input === null ? true : field.value.trim() || null);
+    $("ask-yes").onclick = yes;
+    $("ask-no").onclick = () => done(input === null ? false : null);
+    // Enter accepts, so a rename does not need the mouse.
+    field.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        yes();
+      }
+    };
     // Only the backdrop itself, so a click inside the panel does not cancel.
     box.onclick = (e) => {
       if (e.target === box) done(false);
@@ -131,13 +150,15 @@ function describeAge(secs) {
 }
 
 /** One row in the device list. */
-function deviceRow(device) {
-  const li = document.createElement("li");
-  li.className = "flex items-center gap-3 px-4 py-3";
+function deviceRow(device, canManage) {
+  const li = document.createElement("div");
+  li.className =
+    "flex items-center gap-3 border-t border-neutral-200 px-3 py-2.5 " +
+    "dark:border-neutral-800";
 
-  // A dot rather than words: this is glanceable status, and the tooltip
-  // carries the detail for anyone who wants it. Three states, because "not
-  // seen yet" is genuinely different from "seen, but a while ago".
+  // A dot for the glance, with the same thing in words underneath. Three
+  // states, because "not seen yet" is genuinely different from "seen, but a
+  // while ago".
   const secs = device.last_seen_secs;
   const live = secs != null && secs < 180;
   const dot = document.createElement("span");
@@ -156,21 +177,24 @@ function deviceRow(device) {
   const name = document.createElement("p");
   name.className = "truncate text-sm font-medium";
   name.textContent = device.name;
-  const id = document.createElement("p");
-  id.className = "truncate font-mono text-xs text-neutral-500 dark:text-neutral-400";
-  id.textContent = device.endpoint_id.slice(0, 16) + "…";
-  left.append(name, id);
+  // Said in words as well as shown as a dot. A tooltip needs a pointer, and
+  // half the devices running this are phones.
+  const when = document.createElement("p");
+  when.className = "truncate text-xs text-neutral-500 dark:text-neutral-400";
+  when.textContent = device.is_self
+    ? "this device"
+    : secs == null
+      ? "not seen yet"
+      : live
+        ? "active now"
+        : `last seen ${describeAge(secs)} ago`;
+  left.append(name, when);
 
   li.append(dot, left);
 
-  if (device.is_self) {
-    const tag = document.createElement("span");
-    tag.className =
-      "shrink-0 rounded-full bg-neutral-200 px-2 py-0.5 text-xs text-neutral-600 " +
-      "dark:bg-neutral-800 dark:text-neutral-400";
-    tag.textContent = "this device";
-    li.append(tag);
-  } else {
+  // Removing acts on the default space in the node, so it is only offered
+  // where that is the space being looked at.
+  if (!device.is_self && canManage) {
     // Removing another device is destructive and easy to hit by accident on a
     // phone, so it asks first.
     const remove = document.createElement("button");
@@ -228,19 +252,6 @@ async function refresh() {
   await refreshSkill();
   await refreshHistory();
 
-  const devices = await invoke("list_devices").catch(() => null);
-  if (!devices) return;
-  const list = $("devices");
-  list.replaceChildren(
-    ...(devices.length
-      ? devices.map(deviceRow)
-      : [
-          Object.assign(document.createElement("li"), {
-            className: "px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400",
-            textContent: "No devices yet — add one below.",
-          }),
-        ]),
-  );
 }
 
 /**
@@ -442,74 +453,176 @@ async function refreshSkill() {
 }
 
 /** One row in the spaces list. */
-function spaceRow(space, several) {
-  const li = document.createElement("li");
-  li.className = "flex items-center gap-3 px-4 py-3";
+/** A small bordered button, the shape used throughout a space card. */
+function cardButton(label, { danger = false } = {}) {
+  const b = document.createElement("button");
+  b.className =
+    "shrink-0 rounded-lg px-2.5 py-1 text-xs transition " +
+    "focus-visible:outline-2 focus-visible:outline-offset-2 " +
+    (danger
+      ? "text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10"
+      : "border border-neutral-300 hover:bg-neutral-100 " +
+        "dark:border-neutral-700 dark:hover:bg-neutral-800");
+  b.textContent = label;
+  return b;
+}
 
-  const text = document.createElement("div");
-  text.className = "min-w-0 flex-1";
-  const name = document.createElement("p");
-  name.className = "truncate text-sm font-medium";
-  name.textContent = space.label;
-  const detail = document.createElement("p");
-  detail.className = "text-xs text-neutral-500 dark:text-neutral-400";
-  detail.textContent =
-    `${space.devices} device${space.devices === 1 ? "" : "s"}` +
-    (space.is_default ? " · default" : "");
-  text.append(name, detail);
-  li.append(text);
+/**
+ * One space, with the devices in it.
+ *
+ * The whole point of the layout: a device belongs to exactly one space, so it
+ * is drawn inside that space rather than in a list beside it.
+ *
+ * Only the default space can be fully managed. Inviting, removing a device and
+ * replacing a space all act on `spaces.current()` in the node, so offering them
+ * on another card would act on the wrong space — see issue #14. Rather than
+ * silently doing the wrong thing, the other cards say what to do instead.
+ */
+function spaceCard(space, devices, several) {
+  const card = document.createElement("div");
+  card.className =
+    "overflow-hidden rounded-xl border border-neutral-200 bg-white " +
+    "dark:border-neutral-800 dark:bg-neutral-900";
 
-  // Only offered where it would do something. A single space is always the
-  // default and cannot be dropped, so both controls would be dead.
-  if (!space.is_default) {
-    const useIt = document.createElement("button");
-    useIt.className =
-      "shrink-0 rounded-lg border border-neutral-300 px-3 py-1 text-xs transition " +
-      "hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800";
-    useIt.textContent = "Use";
-    useIt.onclick = () =>
-      withButton(useIt, "…", async () => {
+  // A tinted header, so the space reads as holding what follows rather than
+  // being the first row of it. Tinted on both themes: on a dark ground a
+  // lighter fill separates where a shadow cannot.
+  const head = document.createElement("div");
+  head.className =
+    "flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-3 py-2.5 " +
+    "dark:border-neutral-800 dark:bg-neutral-800/60";
+
+  const title = document.createElement("p");
+  title.className = "min-w-0 flex-1 truncate text-sm font-semibold";
+  title.textContent = space.label;
+  head.append(title);
+
+  if (space.is_default) {
+    const badge = document.createElement("span");
+    badge.className =
+      "shrink-0 rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-medium " +
+      "text-accent-600 dark:text-accent-400";
+    badge.textContent = "default";
+    head.append(badge);
+  } else {
+    const use = cardButton("Make default");
+    use.onclick = () =>
+      withButton(use, "…", async () => {
         await call("default_space", { label: space.label });
         say(`bare names now mean ${space.label}`);
         await refresh();
       });
-    li.append(useIt);
+    head.append(use);
   }
-  if (several) {
-    const drop = document.createElement("button");
-    drop.className =
-      "shrink-0 rounded-lg px-2 py-1 text-xs text-red-600 transition " +
-      "hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10";
-    drop.textContent = "Drop";
-    drop.onclick = () =>
-      withButton(drop, "…", async () => {
-        if (!(await ask(`Drop the space "${space.label}"?`))) return;
-        await call("drop_space", { label: space.label });
-        say(`dropped ${space.label}`);
+  card.append(head);
+
+  // Devices. Only the default space's members can be told apart from the rest,
+  // because `list_devices` reports a space only when there is more than one.
+  const mine = devices.filter((d) =>
+    d.space == null ? space.is_default : d.space === space.label,
+  );
+  if (mine.length) {
+    for (const device of mine) card.append(deviceRow(device, space.is_default));
+  } else {
+    const none = document.createElement("p");
+    none.className = "px-3 py-3 text-sm text-neutral-500 dark:text-neutral-400";
+    none.textContent = "No devices yet.";
+    card.append(none);
+  }
+
+  const foot = document.createElement("div");
+  foot.className =
+    "flex flex-wrap gap-2 border-t border-neutral-200 px-3 py-2 " +
+    "dark:border-neutral-800";
+
+  const rename = cardButton("Rename");
+  rename.onclick = () =>
+    withButton(rename, "…", async () => {
+      const to = await ask(`New name for "${space.label}"`, {
+        input: space.label,
+      });
+      if (!to || to === space.label) return;
+      await call("rename_space", { label: space.label, to });
+      say(`renamed to ${to}`);
+      await refresh();
+    });
+  foot.append(rename);
+
+  if (space.is_default) {
+    const leave = cardButton(`Leave ${space.label}`, { danger: true });
+    leave.onclick = () =>
+      withButton(leave, "…", async () => {
+        if (
+          !(await ask(
+            `Leave ${space.label}? The other devices are told, and stop ` +
+              "reaching this one.",
+          ))
+        )
+          return;
+        say(await call("leave_space"));
         await refresh();
       });
-    li.append(drop);
+
+    const rotate = cardButton(`Replace ${space.label}`, { danger: true });
+    rotate.onclick = () =>
+      withButton(rotate, "…", async () => {
+        if (
+          !(await ask(
+            `Replace ${space.label}? Every other device is locked out ` +
+              "immediately and has to be invited again.",
+          ))
+        )
+          return;
+        const left = await call("rotate_space");
+        say(
+          left.length
+            ? `space replaced — re-invite ${left.join(", ")}`
+            : "space replaced",
+        );
+        await refresh();
+      });
+    foot.append(leave, rotate);
+  } else if (several) {
+    // Named for what it does. Dropping a space is local and tells nobody, so
+    // the other devices go on believing this one is a member — which "Leave"
+    // would wrongly imply had been handled.
+    const forget = cardButton("Forget on this device", { danger: true });
+    forget.onclick = () =>
+      withButton(forget, "…", async () => {
+        if (
+          !(await ask(
+            `Forget ${space.label} on this device? Nothing is sent: the other ` +
+              "devices will still count this one as a member.",
+          ))
+        )
+          return;
+        await call("drop_space", { label: space.label });
+        say(`forgot ${space.label}`);
+        await refresh();
+      });
+    foot.append(forget);
   }
-  return li;
+  card.append(foot);
+
+  if (!space.is_default) {
+    const note = document.createElement("p");
+    note.className = "px-3 pb-2.5 text-xs text-neutral-500 dark:text-neutral-400";
+    note.textContent = `Make ${space.label} the default to add or remove devices in it.`;
+    card.append(note);
+  }
+  return card;
 }
 
-/**
- * Show the spaces this device belongs to.
- *
- * Always shown, even for the single space most devices have: this is where a
- * second one is created, and hiding the section until there are two made that
- * impossible to reach.
- */
 async function refreshSpaces() {
-  let spaces;
-  try {
-    spaces = await invoke("list_spaces");
-  } catch {
-    return;
-  }
-  $("spaces-section").hidden = false;
+  const [spaces, devices] = await Promise.all([
+    invoke("list_spaces").catch(() => null),
+    invoke("list_devices").catch(() => []),
+  ]);
+  if (!spaces) return;
   const several = spaces.length > 1;
-  $("spaces").replaceChildren(...spaces.map((s) => spaceRow(s, several)));
+  $("spaces").replaceChildren(
+    ...spaces.map((space) => spaceCard(space, devices, several)),
+  );
 }
 
 /** Minutes past midnight for an `HH:MM` string, or null if it is not one. */
@@ -729,16 +842,6 @@ $("rename-form").onsubmit = async (e) => {
   });
 };
 
-$("leave").onclick = () =>
-  withButton($("leave"), "…", async () => {
-    if (
-      !(await ask("Leave this space? Other devices will stop reaching this one."))
-    )
-      return;
-    say(await call("leave_space"));
-    await refresh();
-  });
-
 $("skill-install").onclick = () =>
   withButton($("skill-install"), "…", async () => {
     const path = await call("install_skill", { path: $("skill-path").value });
@@ -747,6 +850,7 @@ $("skill-install").onclick = () =>
   });
 
 $("tab-home").onclick = () => showScreen("home");
+$("tab-spaces").onclick = () => showScreen("spaces");
 $("tab-settings").onclick = () => showScreen("settings");
 
 $("np-pause").onclick = async () => {
@@ -787,24 +891,6 @@ $("new-space-form").onsubmit = async (e) => {
   say(`created ${label}`);
   await refresh();
 };
-
-$("rotate").onclick = () =>
-  withButton($("rotate"), "…", async () => {
-    if (
-      !(await ask(
-        "Replace this space? Every other device is locked out immediately " +
-          "and has to be invited again.",
-      ))
-    )
-      return;
-    const left = await call("rotate_space");
-    say(
-      left.length
-        ? `space replaced — re-invite ${left.join(", ")}`
-        : "space replaced",
-    );
-    await refresh();
-  });
 
 $("battery-fix").onclick = () =>
   withButton($("battery-fix"), "…", async () => {
