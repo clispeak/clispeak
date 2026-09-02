@@ -126,6 +126,71 @@ fn cli_on_path() -> bool {
         .unwrap_or(false)
 }
 
+/// Shell start-up files that might already put the CLI's directory on PATH.
+///
+/// Checked before writing anything, so a line someone wrote themselves is
+/// never duplicated — including the one this app may have written before.
+const PROFILES: &[&str] = &[
+    ".zshenv",
+    ".zprofile",
+    ".zshrc",
+    ".profile",
+    ".bash_profile",
+    ".bashrc",
+];
+
+/// Where the line goes when nothing supplies it already.
+///
+/// `.zprofile` because zsh is the login shell on every macOS since Catalina,
+/// and because it is read *after* `/etc/zprofile` runs `path_helper` — which
+/// rebuilds PATH from `/etc/paths` and would otherwise reorder the entry away.
+const PROFILE: &str = ".zprofile";
+
+/// Put the CLI's directory on the PATH for future shells.
+///
+/// Installing the tool is not enough on macOS. The default PATH is built from
+/// `/etc/paths`, which names no home directory, so `~/.local/bin/voicecast`
+/// exists and no shell can see it — and an agent, which is the whole reason
+/// the tool is installed, reports `command not found` with nothing to explain
+/// it. The alternative destination that *is* on the default PATH,
+/// `/usr/local/bin`, is root-owned and would turn installing this app into a
+/// password prompt.
+///
+/// Linux is left alone: `~/.local/bin` is on the default PATH there already.
+///
+/// Only ever appends, and only once. It cannot affect a shell that is already
+/// open, so [`cli_on_path`] still reports the truth for this session.
+#[cfg(target_os = "macos")]
+fn ensure_on_path(home: &std::path::Path, dir: &std::path::Path) -> Result<bool, String> {
+    // Matching on the text rather than on a marker comment: what matters is
+    // whether a shell will end up with this directory on its PATH, however
+    // it was written, not whether this app is the one that wrote it.
+    let needle = dir.strip_prefix(home).map_or_else(
+        |_| dir.display().to_string(),
+        |rest| format!("/{}", rest.display()),
+    );
+    for profile in PROFILES {
+        if let Ok(text) = std::fs::read_to_string(home.join(profile))
+            && text.contains(&needle)
+        {
+            return Ok(false);
+        }
+    }
+
+    let path = home.join(PROFILE);
+    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&format!(
+        "\n# Added by voicecast, so the `voicecast` command is on the PATH for\n\
+         # shells and for the agents that call it.\n\
+         export PATH=\"$HOME{needle}:$PATH\"\n"
+    ));
+    std::fs::write(&path, text).map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    Ok(true)
+}
+
 /// Whether the host copy of the CLI needs writing.
 ///
 /// Compared by content rather than a version string: the two must speak the
@@ -160,12 +225,34 @@ fn cli_needs_install() -> bool {
 /// drift apart and the CLI ends up talking a protocol the node no longer
 /// speaks — a failure that looks like a bug rather than a stale install.
 fn install_cli_on_host() {
-    if !cli_needs_install() {
-        return;
+    if cli_needs_install() {
+        match install_cli() {
+            Ok(path) => eprintln!("installed the command-line tool at {path}"),
+            Err(e) => eprintln!("could not install the command-line tool: {e}"),
+        }
     }
-    match install_cli() {
-        Ok(path) => eprintln!("installed the command-line tool at {path}"),
-        Err(e) => eprintln!("could not install the command-line tool: {e}"),
+
+    // Separate from the copy above, and not conditional on it: the tool can
+    // already be installed and up to date while still being unreachable,
+    // which is what happens on every launch after the first.
+    #[cfg(target_os = "macos")]
+    if bundled_cli().is_some()
+        && let Some(dir) = cli_destination()
+            .as_deref()
+            .and_then(std::path::Path::parent)
+    {
+        let home = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf());
+        match home
+            .ok_or_else(|| "no home directory".to_string())
+            .and_then(|home| ensure_on_path(&home, dir))
+        {
+            Ok(true) => eprintln!(
+                "added {} to the PATH in ~/{PROFILE}; open a new terminal to pick it up",
+                dir.display()
+            ),
+            Ok(false) => {}
+            Err(e) => eprintln!("could not put {} on the PATH: {e}", dir.display()),
+        }
     }
 }
 
@@ -914,5 +1001,78 @@ fn reveal(app: &tauri::AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    /// A throwaway home directory, named so parallel tests cannot collide.
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "voicecast-path-{}-{label}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).expect("scratch home");
+        dir
+    }
+
+    /// The line is added when no profile puts the directory on the PATH.
+    #[test]
+    fn writes_a_line_when_nothing_supplies_it() {
+        let home = scratch("fresh");
+        let added = ensure_on_path(&home, &home.join(".local/bin")).expect("ensure");
+        assert!(added);
+
+        let written = std::fs::read_to_string(home.join(PROFILE)).expect("profile");
+        assert!(
+            written.contains(r#"export PATH="$HOME/.local/bin:$PATH""#),
+            "{written}"
+        );
+
+        // Running again must not append a second copy: the first line is now
+        // itself the thing that satisfies the check.
+        let again = ensure_on_path(&home, &home.join(".local/bin")).expect("ensure");
+        assert!(!again);
+        let after = std::fs::read_to_string(home.join(PROFILE)).expect("profile");
+        assert_eq!(written, after);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A line the user wrote themselves, in any profile, is left alone.
+    #[test]
+    fn leaves_an_existing_line_alone() {
+        let home = scratch("existing");
+        std::fs::write(
+            home.join(".zshrc"),
+            "export PATH=\"$HOME/.local/bin:$PATH\"\n",
+        )
+        .expect("zshrc");
+
+        let added = ensure_on_path(&home, &home.join(".local/bin")).expect("ensure");
+        assert!(!added);
+        assert!(!Path::new(&home.join(PROFILE)).exists());
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// An existing profile keeps its contents, and does not lose a newline.
+    #[test]
+    fn appends_without_clobbering() {
+        let home = scratch("append");
+        std::fs::write(home.join(PROFILE), "export EDITOR=vim").expect("profile");
+
+        assert!(ensure_on_path(&home, &home.join(".local/bin")).expect("ensure"));
+
+        let written = std::fs::read_to_string(home.join(PROFILE)).expect("profile");
+        assert!(written.starts_with("export EDITOR=vim\n"), "{written}");
+        assert!(written.contains("$HOME/.local/bin"), "{written}");
+
+        std::fs::remove_dir_all(&home).ok();
     }
 }
