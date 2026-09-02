@@ -54,8 +54,11 @@ cargo test --workspace
 cd app && npx tailwindcss -i src/input.css -o src/styles.css --minify
 ```
 
-The CSS is committed and the app loads it directly — editing `index.html`
-classes without rebuilding leaves them inert, and the symptom is silent.
+`app/src/styles.css` is generated and **not** committed. Tauri's
+`beforeBuildCommand` rebuilds it, so `tauri build` and `tauri android build`
+are covered — but a plain `cargo build -p voicecast-app`, which is how the
+Flatpak is packaged, is not. Add a class in `index.html`, package it that way,
+and the class is inert with nothing to say so.
 
 **On a memory-constrained machine**, wrap cargo so an OOM kills the build and
 not your session: `systemd-run --user --scope -p MemoryMax=3G -p
