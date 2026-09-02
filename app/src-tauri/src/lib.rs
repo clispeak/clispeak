@@ -37,7 +37,14 @@ pub struct NodeStatus {
 
 /// Where the command-line tool should live on the host.
 ///
-/// `~/.local/bin` because it is on the default PATH and needs no privileges.
+/// `~/.local/bin` on every desktop: it needs no privileges, which is what
+/// keeps installing the app a drag-and-drop rather than a password prompt.
+///
+/// On Linux it is on the default PATH. On macOS it is **not** — the default
+/// there comes from `/etc/paths`, which lists `/usr/local/bin` and nothing
+/// under a home directory. Writing to `/usr/local/bin` needs an administrator,
+/// so the app installs where it can and reports whether the result is
+/// actually reachable; see [`cli_on_path`].
 fn cli_destination() -> Option<std::path::PathBuf> {
     Some(
         directories::BaseDirs::new()?
@@ -46,25 +53,36 @@ fn cli_destination() -> Option<std::path::PathBuf> {
     )
 }
 
-/// Whether the app is running inside a Flatpak sandbox.
+/// The copy of the CLI the app carries, if this build carries one.
 ///
-/// Only then is installing a copy of the CLI meaningful: outside one it is
-/// already alongside the app, wherever the package put it.
-fn in_flatpak() -> bool {
-    std::path::Path::new("/.flatpak-info").exists()
-}
-
-/// The copy of the CLI carried inside the sandbox.
-fn bundled_cli() -> &'static std::path::Path {
-    std::path::Path::new("/app/libexec/voicecast")
+/// Two packages do. A Flatpak keeps it in the sandbox at `/app/libexec`,
+/// unreachable from the host. A macOS `.app` keeps it in `Contents/MacOS`
+/// beside the app binary, where it works but is not on anyone's PATH.
+/// Either way the copy has to be put somewhere a shell will find it.
+///
+/// A plain `cargo run`, or a distribution package that installed the tool
+/// itself, carries nothing and needs nothing.
+fn bundled_cli() -> Option<std::path::PathBuf> {
+    let flatpak = std::path::PathBuf::from("/app/libexec/voicecast");
+    if flatpak.exists() {
+        return Some(flatpak);
+    }
+    if cfg!(target_os = "macos") {
+        // `Contents/MacOS/voicecast-app` sits beside `Contents/MacOS/voicecast`,
+        // which is where Tauri puts a bundled sidecar binary.
+        let exe = std::env::current_exe().ok()?;
+        let beside = exe.parent()?.join("voicecast");
+        if beside.exists() && beside != exe {
+            return Some(beside);
+        }
+    }
+    None
 }
 
 /// Whether the command-line tool is available to agents on this machine.
 #[tauri::command]
 fn cli_status() -> Option<String> {
-    if !in_flatpak() {
-        return None;
-    }
+    bundled_cli()?;
     let dest = cli_destination()?;
     dest.exists().then(|| dest.display().to_string())
 }
@@ -72,7 +90,7 @@ fn cli_status() -> Option<String> {
 /// Whether offering to install the CLI makes sense here.
 #[tauri::command]
 fn cli_installable() -> bool {
-    in_flatpak() && cli_status().is_none()
+    bundled_cli().is_some() && cli_status().is_none()
 }
 
 /// Where the CLI is expected to be, whether or not it is there yet.
@@ -81,10 +99,31 @@ fn cli_installable() -> bool {
 /// install failed, rather than leaving a missing `voicecast` unexplained.
 #[tauri::command]
 fn cli_expected_path() -> Option<String> {
-    in_flatpak()
-        .then(cli_destination)
-        .flatten()
-        .map(|p| p.display().to_string())
+    bundled_cli()?;
+    cli_destination().map(|p| p.display().to_string())
+}
+
+/// Whether the directory the CLI is installed into is on the PATH.
+///
+/// The install can succeed and still leave `voicecast` unusable, which on
+/// macOS is the normal case rather than an edge one: `~/.local/bin` is not on
+/// the default PATH there. An agent would report "command not found" and
+/// nothing would explain why, so the app says so itself.
+///
+/// Read from this process's own PATH, which for an app launched from Finder
+/// is the bare system default — deliberately the pessimistic reading, since
+/// that is the environment a GUI-launched agent would inherit.
+#[tauri::command]
+fn cli_on_path() -> bool {
+    let Some(dest) = cli_destination() else {
+        return false;
+    };
+    let Some(dir) = dest.parent() else {
+        return false;
+    };
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|p| p == dir))
+        .unwrap_or(false)
 }
 
 /// Whether the host copy of the CLI needs writing.
@@ -96,8 +135,11 @@ fn cli_needs_install() -> bool {
     let Some(dest) = cli_destination() else {
         return false;
     };
-    let Ok(bundled) = std::fs::read(bundled_cli()) else {
-        // Nothing to install from.
+    // Nothing to install from: not a package that carries the tool.
+    let Some(source) = bundled_cli() else {
+        return false;
+    };
+    let Ok(bundled) = std::fs::read(source) else {
         return false;
     };
     match std::fs::read(&dest) {
@@ -118,7 +160,7 @@ fn cli_needs_install() -> bool {
 /// drift apart and the CLI ends up talking a protocol the node no longer
 /// speaks — a failure that looks like a bug rather than a stale install.
 fn install_cli_on_host() {
-    if !in_flatpak() || !cli_needs_install() {
+    if !cli_needs_install() {
         return;
     }
     match install_cli() {
@@ -135,10 +177,8 @@ fn install_cli_on_host() {
 /// and the two still reach each other over an abstract socket.
 #[tauri::command]
 fn install_cli() -> Result<String, String> {
-    let source = bundled_cli();
-    if !source.exists() {
-        return Err("this build does not carry a copy of the command-line tool".into());
-    }
+    let source =
+        bundled_cli().ok_or("this build does not carry a copy of the command-line tool")?;
     let dest = cli_destination().ok_or("no home directory")?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
@@ -791,6 +831,7 @@ pub fn run() {
             cli_status,
             cli_installable,
             cli_expected_path,
+            cli_on_path,
             install_cli,
             now_playing,
             pause_speech,

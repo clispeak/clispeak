@@ -27,8 +27,12 @@
     "active": true,
     "targets": "all",
     "icon": [
+      "icons/icon.icns",
       "icons/icon.png",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   }
 }
