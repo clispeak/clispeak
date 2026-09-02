@@ -150,7 +150,7 @@ function describeAge(secs) {
 }
 
 /** One row in the device list. */
-function deviceRow(device, canManage) {
+function deviceRow(device, space) {
   const li = document.createElement("div");
   li.className =
     "flex items-center gap-3 border-t border-neutral-200 px-3 py-2.5 " +
@@ -192,9 +192,9 @@ function deviceRow(device, canManage) {
 
   li.append(dot, left);
 
-  // Removing acts on the default space in the node, so it is only offered
-  // where that is the space being looked at.
-  if (!device.is_self && canManage) {
+  // Removing names its space now, so it is offered on every card rather than
+  // only the default one.
+  if (!device.is_self) {
     // Removing another device is destructive and easy to hit by accident on a
     // phone, so it asks first.
     const remove = document.createElement("button");
@@ -206,7 +206,7 @@ function deviceRow(device, canManage) {
     remove.onclick = () =>
       withButton(remove, "…", async () => {
         if (!(await ask(`Remove ${device.name} from this space?`))) return;
-        say(await call("revoke_device", { name: device.name }));
+        say(await call("revoke_device", { name: device.name, space }));
         await refresh();
       });
     li.append(remove);
@@ -522,7 +522,7 @@ function spaceCard(space, devices, several) {
     d.space == null ? space.is_default : d.space === space.label,
   );
   if (mine.length) {
-    for (const device of mine) card.append(deviceRow(device, space.is_default));
+    for (const device of mine) card.append(deviceRow(device, space.label));
   } else {
     const none = document.createElement("p");
     none.className = "px-3 py-3 text-sm text-neutral-500 dark:text-neutral-400";
@@ -547,6 +547,15 @@ function spaceCard(space, devices, several) {
       await refresh();
     });
   foot.append(rename);
+
+  // Inviting names its space, so the button can sit on the card it belongs
+  // to rather than acting on whichever space happens to be default.
+  const add = cardButton(`Add a device`);
+  add.onclick = () =>
+    withButton(add, "…", async () => {
+      await showInvite(space.label);
+    });
+  foot.append(add);
 
   if (space.is_default) {
     const leave = cardButton(`Leave ${space.label}`, { danger: true });
@@ -573,7 +582,7 @@ function spaceCard(space, devices, several) {
           ))
         )
           return;
-        const left = await call("rotate_space");
+        const left = await call("rotate_space", { space: space.label });
         say(
           left.length
             ? `space replaced — re-invite ${left.join(", ")}`
@@ -582,7 +591,28 @@ function spaceCard(space, devices, several) {
         await refresh();
       });
     foot.append(leave, rotate);
-  } else if (several) {
+  } else {
+    const rotate = cardButton(`Replace ${space.label}`, { danger: true });
+    rotate.onclick = () =>
+      withButton(rotate, "…", async () => {
+        if (
+          !(await ask(
+            `Replace ${space.label}? Every other device is locked out ` +
+              "immediately and has to be invited again.",
+          ))
+        )
+          return;
+        const left = await call("rotate_space", { space: space.label });
+        say(
+          left.length
+            ? `space replaced — re-invite ${left.join(", ")}`
+            : "space replaced",
+        );
+        await refresh();
+      });
+    foot.append(rotate);
+  }
+  if (!space.is_default && several) {
     // Named for what it does. Dropping a space is local and tells nobody, so
     // the other devices go on believing this one is a member — which "Leave"
     // would wrongly imply had been handled.
@@ -603,13 +633,6 @@ function spaceCard(space, devices, several) {
     foot.append(forget);
   }
   card.append(foot);
-
-  if (!space.is_default) {
-    const note = document.createElement("p");
-    note.className = "px-3 pb-2.5 text-xs text-neutral-500 dark:text-neutral-400";
-    note.textContent = `Make ${space.label} the default to add or remove devices in it.`;
-    card.append(note);
-  }
   return card;
 }
 
@@ -797,16 +820,30 @@ $("speak-form").onsubmit = async (e) => {
   });
 };
 
+/**
+ * Show an invite for one space.
+ *
+ * The space travels on the ticket, so what the button said when it was
+ * pressed is what the joining device gets — even if the default changes
+ * before the code is scanned.
+ */
+async function showInvite(space) {
+  const { url, qr, expires_in } = await call("make_invite", { space });
+  // Trusted: the SVG is produced by our own Rust side, not user input.
+  $("qr").innerHTML = qr;
+  $("qr").hidden = !qr;
+  $("ticket").textContent = url;
+  $("invite-for").textContent = space ? `Joins ${space}.` : "";
+  $("expiry").textContent = `Expires in ${Math.max(1, Math.round(expires_in / 60))} min. Single use.`;
+  $("invite-out").hidden = false;
+  say("");
+}
+
+// The unqualified button invites into the default space. Each space card has
+// its own, which names the space it belongs to.
 $("invite").onclick = () =>
   withButton($("invite"), "…", async () => {
-    const { url, qr, expires_in } = await call("make_invite");
-    // Trusted: the SVG is produced by our own Rust side, not user input.
-    $("qr").innerHTML = qr;
-    $("qr").hidden = !qr;
-    $("ticket").textContent = url;
-    $("expiry").textContent = `Expires in ${Math.max(1, Math.round(expires_in / 60))} min. Single use.`;
-    $("invite-out").hidden = false;
-    say("");
+    await showInvite();
   });
 
 $("copy").onclick = async () => {

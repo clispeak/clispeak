@@ -83,6 +83,13 @@ macOS `.app`, and `npx @tauri-apps/cli android build --apk` for Android.
 
 ## Conventions
 
+**A limitation is a debt in three places.** When something cannot yet be done,
+it gets written into the README and said in the interface as well as tracked as
+an issue. Whoever removes the limitation owes all three in the same change —
+otherwise the code gains a capability while two documents go on denying it. That
+has already happened once here, one commit apart, and was caught by luck rather
+than process.
+
 **Docs are part of the change.** `docs/decisions.md` is numbered and
 append-only: a decision records what was chosen, *why*, and what it costs.
 `docs/build-plan.md` tracks milestones. If a change alters behaviour the docs

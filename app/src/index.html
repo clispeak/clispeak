@@ -142,8 +142,8 @@
         Add a device
       </h2>
       <p class="mb-2 text-xs text-neutral-500 dark:text-neutral-400">
-        An invite always adds to the default space, and joining one always enters
-        it. Make a space the default first to pair into it.
+        Each space has its own "Add a device". The invite carries the space
+        with it, so scanning it joins the one you asked for.
       </p>
 
       <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
@@ -171,7 +171,9 @@
               Copy
             </button>
           </div>
-          <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
+          <p id="invite-for" class="mt-1 text-center text-xs font-medium
+                                  text-neutral-700 dark:text-neutral-200"></p>
+        <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
         </div>
 
         <div class="my-4 flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-600">
