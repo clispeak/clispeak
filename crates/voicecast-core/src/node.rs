@@ -1932,19 +1932,34 @@ async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
             message: "that space is no longer held".into(),
         };
     };
+    let label = spaces.label(&space).to_string();
     let devices: Vec<String> = roster
         .members()
         .filter(|m| m.endpoint_id != me)
         .map(|m| m.name.clone())
         .collect();
 
-    spaces.replace_current(Roster::found(shared.identity.secret(), &shared.name));
+    // The space that was asked for, not whichever is default. Getting this
+    // wrong destroyed the default space and left the named one intact — with
+    // its keys, which is the security failure, since replacing a space is how
+    // a device that is no longer trusted is locked out.
+    if !spaces.replace(
+        &space,
+        Roster::found(shared.identity.secret(), &shared.name),
+    ) {
+        return Response::Error {
+            message: "that space is no longer held".into(),
+        };
+    }
     if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
         };
     }
-    Response::Rotated { devices }
+    Response::Rotated {
+        space: label,
+        devices,
+    }
 }
 
 /// A local name for a space this device has just joined.

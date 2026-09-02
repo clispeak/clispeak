@@ -718,7 +718,7 @@ async fn rotate_space(
     space: Option<String>,
 ) -> Result<Vec<String>, String> {
     match state.node.rotate(space.as_deref()).await {
-        Response::Rotated { devices } => Ok(devices),
+        Response::Rotated { devices, .. } => Ok(devices),
         other => Err(describe(other)),
     }
 }
