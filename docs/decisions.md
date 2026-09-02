@@ -350,6 +350,13 @@ default, so the manifest also grants `--own-name=org.kde.StatusNotifierItem-2-1`
 `--talk-name=org.kde.StatusNotifierWatcher`. Without those the icon silently
 never appears, with no error anywhere.
 
+The app installs the command-line tool onto the host PATH itself, on first
+launch, rather than offering it behind a button. The tool is the whole point
+of the node — it is how an agent reaches it — so leaving it uninstalled until
+someone finds a control means `voicecast` is simply missing from the PATH.
+The same pass rewrites the copy whenever its bytes differ from the bundled
+one, which is what keeps a Flatpak update from leaving a stale CLI behind.
+
 **Consequences.** Piper is looked up in several roots now — the user data
 directory first, then `/app/share/voicecast`, then `/usr/share/voicecast` —
 so a user-installed voice still wins over the bundled one. A tray that fails

@@ -75,38 +75,55 @@ fn cli_installable() -> bool {
     in_flatpak() && cli_status().is_none()
 }
 
-/// Whether the installed copy still matches the one this app ships.
+/// Where the CLI is expected to be, whether or not it is there yet.
+///
+/// Reported so the interface can say what went wrong when the automatic
+/// install failed, rather than leaving a missing `voicecast` unexplained.
+#[tauri::command]
+fn cli_expected_path() -> Option<String> {
+    in_flatpak()
+        .then(cli_destination)
+        .flatten()
+        .map(|p| p.display().to_string())
+}
+
+/// Whether the host copy of the CLI needs writing.
 ///
 /// Compared by content rather than a version string: the two must speak the
 /// same protocol, and "different bytes" is exactly the question. Reading a
 /// few megabytes once at startup is cheaper than diagnosing a mismatch.
-fn cli_is_stale() -> bool {
+fn cli_needs_install() -> bool {
     let Some(dest) = cli_destination() else {
         return false;
     };
-    if !dest.exists() {
+    let Ok(bundled) = std::fs::read(bundled_cli()) else {
+        // Nothing to install from.
         return false;
-    }
-    match (std::fs::read(bundled_cli()), std::fs::read(&dest)) {
-        (Ok(bundled), Ok(installed)) => bundled != installed,
-        // If the bundled copy is unreadable there is nothing to update to.
-        _ => false,
+    };
+    match std::fs::read(&dest) {
+        Ok(installed) => bundled != installed,
+        // Absent, or unreadable and therefore not usable as it stands.
+        Err(_) => true,
     }
 }
 
-/// Keep the installed CLI in step with the app.
+/// Put the command-line tool on the host PATH and keep it there in step.
 ///
-/// Runs on every launch. A Flatpak update replaces the app but cannot touch a
-/// file already copied to the host, so without this the two drift apart and
-/// the CLI ends up talking a protocol the node no longer speaks — a failure
-/// that looks like a bug rather than a stale install.
-fn refresh_installed_cli() {
-    if !in_flatpak() || !cli_is_stale() {
+/// Runs on every launch, and installs rather than only refreshing: the tool
+/// is how an agent reaches this node, so an app that merely offers it leaves
+/// `voicecast` missing from the PATH until someone finds the button.
+///
+/// A Flatpak update replaces the app but cannot touch a file already copied
+/// to the host, so the same pass rewrites a stale copy. Without that the two
+/// drift apart and the CLI ends up talking a protocol the node no longer
+/// speaks — a failure that looks like a bug rather than a stale install.
+fn install_cli_on_host() {
+    if !in_flatpak() || !cli_needs_install() {
         return;
     }
     match install_cli() {
-        Ok(path) => eprintln!("updated the command-line tool at {path}"),
-        Err(e) => eprintln!("could not update the command-line tool: {e}"),
+        Ok(path) => eprintln!("installed the command-line tool at {path}"),
+        Err(e) => eprintln!("could not install the command-line tool: {e}"),
     }
 }
 
@@ -458,10 +475,11 @@ async fn start_node() -> anyhow::Result<Node> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // A Flatpak update replaces the app but not a copy already on the
-            // host, so bring it back into step before anything uses it.
+            // The CLI lives on the host, not in the sandbox. Put it there on
+            // first launch, and rewrite it when a Flatpak update has moved
+            // the app on without it.
             #[cfg(desktop)]
-            refresh_installed_cli();
+            install_cli_on_host();
 
             // Android has no XDG config directory, so tell the core where its
             // app-private storage is before anything tries to read a key.
@@ -551,6 +569,7 @@ pub fn run() {
             pending_invite,
             cli_status,
             cli_installable,
+            cli_expected_path,
             install_cli,
             voice_config,
             set_voice,
