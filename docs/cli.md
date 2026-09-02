@@ -109,8 +109,8 @@ than a fragment.
 
 **`high` does not override receiver policy.** A muted device stays silent and
 reports `muted`. Whether high-priority messages may break through quiet hours
-is a per-device toggle, **off by default**, and set on the receiver. Otherwise
-"urgent" becomes meaningless the first time an agent marks everything urgent.
+is a toggle on the receiver, **off by default**. Otherwise "urgent" becomes
+meaningless the first time an agent marks everything urgent.
 
 ## Control
 
@@ -322,16 +322,64 @@ message.
 ## Receiver-side settings
 
 Not reachable from the CLI of *another* device — these live on each device, in
-its own app UI:
+its own app UI, and in a handful of local commands:
 
 - Display name
 - Voice and engine
-- Volume
 - Mute (indefinite, manual)
 - Quiet hours, and whether `high` may break through (default: no)
-- **Per space**: separate mute, quiet hours, volume, and optionally voice
+- **Per space**: separate mute and quiet hours
 - Voice model download, with fallback state and reason shown when degraded
 - Space membership; revoke other devices
+
+Volume is not implemented at any level yet.
+
+### Mute and quiet hours
+
+```
+$ voicecast mute                       # this device: silent until unmuted
+$ voicecast unmute
+$ voicecast quiet 22:00-07:00          # this device, every day
+$ voicecast quiet 22:00-07:00 --high   # let urgent messages through
+$ voicecast quiet off
+$ voicecast quiet                      # show what is set, changing nothing
+```
+
+Each takes `--space` to act on one space instead of the whole device:
+
+```
+$ voicecast mute --space work          # work goes quiet here; nothing else does
+$ voicecast quiet 18:00-09:00 --space work
+$ voicecast unmute --space work
+```
+
+Note the asymmetry with `revoke`, `leave` and `rotate`, where omitting
+`--space` means *the default space*. Here it means **the device**, because the
+device-wide switch is the one most people ever touch.
+
+**A space can be quieter than its device, never louder.** Both policies are
+consulted and either can refuse, so muting the device silences every space, and
+a per-space setting only ever adds silence. This means there is no way to hear
+one space while the device is muted — `high` is the mechanism for that, and
+`docs/decisions.md` #29 records why the trade went this way.
+
+To have work go quiet in the evening while home still speaks, leave the
+device's own quiet hours off and set a window on `work` alone.
+
+**Text spoken locally is governed by the device policy only.** Speech this
+device originates is not *in* a space, so muting `work` does not silence an
+agent running here; muting the device does.
+
+`voicecast quiet` with nothing set prints the device policy first, then one
+block per space that restricts something:
+
+```
+muted:   no
+quiet:   off
+
+work (on top of the above)
+  quiet:   18:00-09:00
+```
 
 ## Config
 

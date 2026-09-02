@@ -309,9 +309,22 @@ enum Command {
     /// Local to the device it is run on: one device cannot mute another. A
     /// sender states urgency, the device that makes the noise decides whether
     /// noise is welcome.
-    Mute,
+    Mute {
+        /// Mute one space rather than the whole device.
+        ///
+        /// Without it the whole device goes quiet, which is what "mute"
+        /// means to anyone who has never thought about spaces. A space can
+        /// only add silence: muting one cannot make it speak through a
+        /// device that is muted.
+        #[arg(long)]
+        space: Option<String>,
+    },
     /// Let this device speak again.
-    Unmute,
+    Unmute {
+        /// Unmute one space rather than the whole device.
+        #[arg(long)]
+        space: Option<String>,
+    },
     /// Name a set of devices, so `--to phones` reaches all of them.
     ///
     /// Local to this machine: groups expand to device names before anything
@@ -323,7 +336,7 @@ enum Command {
     },
     /// List the groups defined on this machine.
     Groups,
-    /// Show, set, or clear this device's quiet hours.
+    /// Show, set, or clear quiet hours, for this device or one space.
     Quiet {
         /// `22:00-07:00`, or `off`. Omit to show the current window.
         window: Option<String>,
@@ -333,6 +346,12 @@ enum Command {
         /// time an agent marks every message urgent.
         #[arg(long)]
         high: bool,
+        /// Set the window for one space rather than the whole device.
+        ///
+        /// A space's window is added to the device's, never subtracted from
+        /// it: quiet on either counts as quiet.
+        #[arg(long)]
+        space: Option<String>,
     },
 }
 
@@ -489,9 +508,19 @@ async fn run() -> anyhow::Result<u8> {
         Some(Command::Replay { msg_id }) => Request::Replay {
             msg_id: msg_id.clone(),
         },
-        Some(Command::Mute) => Request::SetMute { muted: true },
-        Some(Command::Unmute) => Request::SetMute { muted: false },
-        Some(Command::Quiet { window, high }) => match quiet_request(window.as_deref(), *high) {
+        Some(Command::Mute { space }) => Request::SetMute {
+            muted: true,
+            space: space.clone(),
+        },
+        Some(Command::Unmute { space }) => Request::SetMute {
+            muted: false,
+            space: space.clone(),
+        },
+        Some(Command::Quiet {
+            window,
+            high,
+            space,
+        }) => match quiet_request(window.as_deref(), *high, space.clone()) {
             Ok(req) => req,
             Err(code) => return Ok(code),
         },
@@ -621,11 +650,29 @@ fn edit_groups(mut config: config::Config, action: &GroupAction) -> u8 {
     }
 }
 
+/// A quiet window as a person reads it, or `off`.
+///
+/// Shared by the device line and each space's, so the two cannot drift into
+/// describing the same thing two ways.
+fn window(from: Option<String>, to: Option<String>, high_breaks_through: bool) -> String {
+    match (from, to) {
+        (Some(from), Some(to)) => format!(
+            "{from}-{to}{}",
+            if high_breaks_through {
+                "  (high breaks through)"
+            } else {
+                ""
+            }
+        ),
+        _ => "off".to_string(),
+    }
+}
+
 /// Turn a `22:00-07:00` argument into a request, or explain what went wrong.
 ///
 /// No argument means "show me", which is a plain read rather than a write of
 /// the current value — asking a question should never change the answer.
-fn quiet_request(window: Option<&str>, high: bool) -> Result<Request, u8> {
+fn quiet_request(window: Option<&str>, high: bool, space: Option<String>) -> Result<Request, u8> {
     let Some(window) = window else {
         return Ok(Request::Policy);
     };
@@ -634,6 +681,7 @@ fn quiet_request(window: Option<&str>, high: bool) -> Result<Request, u8> {
             from: None,
             to: None,
             high_breaks_through: false,
+            space,
         });
     }
     let Some((from, to)) = window.split_once('-') else {
@@ -648,6 +696,7 @@ fn quiet_request(window: Option<&str>, high: bool) -> Result<Request, u8> {
         from: Some(from.trim().to_string()),
         to: Some(to.trim().to_string()),
         high_breaks_through: high,
+        space,
     })
 }
 
@@ -919,20 +968,29 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
             quiet_from,
             quiet_to,
             high_breaks_through,
+            spaces,
         } => {
             out(&format!("muted:   {}", if muted { "yes" } else { "no" }));
-            match (quiet_from, quiet_to) {
-                (Some(from), Some(to)) => {
+            out(&format!(
+                "quiet:   {}",
+                window(quiet_from, quiet_to, high_breaks_through)
+            ));
+            // Only spaces that restrict something appear, and each says what
+            // it adds rather than repeating the device line. A reader has to
+            // be able to tell "work is quiet as well" from "work is all there
+            // is" — they mute a device differently.
+            for space in spaces {
+                out("");
+                out(&format!("{} (on top of the above)", space.label));
+                if space.muted {
+                    out("  muted:   yes");
+                }
+                if space.quiet_from.is_some() {
                     out(&format!(
-                        "quiet:   {from}-{to}{}",
-                        if high_breaks_through {
-                            "  (high breaks through)"
-                        } else {
-                            ""
-                        }
+                        "  quiet:   {}",
+                        window(space.quiet_from, space.quiet_to, space.high_breaks_through)
                     ));
                 }
-                _ => out("quiet:   off"),
             }
             exit::OK
         }

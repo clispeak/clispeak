@@ -6,6 +6,7 @@
 //! agent marking everything urgent must not be able to wake the house.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use voicecast_proto::{Priority, Status};
 
 /// How many messages already waiting counts as "deep".
@@ -93,6 +94,80 @@ impl Policy {
     }
 }
 
+/// This device's policy, and any per-space overrides on top of it.
+///
+/// The device policy is a floor, not a default: an override can only make a
+/// space *quieter*, never louder. Mute means mute — a space that could undo it
+/// would turn the one switch everybody understands into a switch that works
+/// most of the time, which is worse than not having per-space settings at all.
+/// The cost is stated in `docs/decisions.md` #29: there is no way to let one
+/// space through while the device is muted, and `high` remains the mechanism
+/// for "reach me anyway".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Policies {
+    /// Applies to everything this device speaks.
+    ///
+    /// Flattened so a `policy.json` written before spaces existed still loads:
+    /// its `muted` and `quiet` keys land here and `spaces` comes up empty.
+    #[serde(flatten)]
+    pub device: Policy,
+    /// Extra restrictions for individual spaces, keyed by space id.
+    ///
+    /// A space with nothing to say is absent rather than present-and-empty, so
+    /// "has an override" is a question the map itself answers.
+    #[serde(default)]
+    pub spaces: BTreeMap<String, Policy>,
+}
+
+impl Policies {
+    /// Why a message arriving in `space` will not be spoken, or `None`.
+    ///
+    /// Both policies get a say and either can refuse, which is what makes the
+    /// device policy a floor. The device is asked first so its reason is the
+    /// one reported: someone who muted the whole device wants to hear "muted",
+    /// not the name of whichever space the message happened to arrive in.
+    pub fn verdict(
+        &self,
+        space: Option<&str>,
+        priority: Priority,
+        minute: u16,
+        queued: usize,
+    ) -> Option<Status> {
+        if let Some(status) = self.device.verdict(priority, minute, queued) {
+            return Some(status);
+        }
+        let over = space.and_then(|id| self.spaces.get(id))?;
+        over.verdict(priority, minute, queued)
+    }
+
+    /// The override for `space`, if it has one.
+    pub fn space(&self, space: &str) -> Option<&Policy> {
+        self.spaces.get(space)
+    }
+
+    /// Set a space's override, dropping it entirely when it restricts nothing.
+    ///
+    /// Pruning matters for more than tidiness: an override that says "not
+    /// muted, no quiet hours" is indistinguishable in effect from having none,
+    /// and keeping it would make the interface report a space as configured
+    /// when nothing about it differs.
+    pub fn set_space(&mut self, space: &str, policy: Policy) {
+        if policy == Policy::default() {
+            self.spaces.remove(space);
+        } else {
+            self.spaces.insert(space.to_string(), policy);
+        }
+    }
+
+    /// Forget a space's override, as when the space itself is gone.
+    ///
+    /// Left behind, it would silently apply again to a *new* space that
+    /// happened to be founded with the same id — which rotating produces.
+    pub fn forget(&mut self, space: &str) {
+        self.spaces.remove(space);
+    }
+}
+
 /// Minutes past local midnight, right now.
 ///
 /// Local rather than UTC because quiet hours are about when the person is
@@ -124,11 +199,11 @@ fn path() -> Result<std::path::PathBuf, crate::IdentityError> {
     Ok(crate::config_dir()?.join("policy.json"))
 }
 
-/// Load this device's policy, falling back to "say everything".
+/// Load this device's policies, falling back to "say everything".
 ///
 /// A missing or unreadable file is not an error: a device that has never been
 /// configured should speak, not sit silently for a reason nobody can see.
-pub fn load() -> Policy {
+pub fn load() -> Policies {
     path()
         .ok()
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -136,8 +211,8 @@ pub fn load() -> Policy {
         .unwrap_or_default()
 }
 
-/// Persist the policy.
-pub fn save(policy: &Policy) -> Result<(), crate::IdentityError> {
+/// Persist the policies.
+pub fn save(policy: &Policies) -> Result<(), crate::IdentityError> {
     let p = path()?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| crate::IdentityError::Store(e.to_string()))?;
@@ -239,6 +314,164 @@ mod tests {
         let p = Policy::default();
         assert_eq!(p.verdict(Priority::Normal, 0, 0), None);
         assert_eq!(p.verdict(Priority::High, 720, 0), None);
+    }
+
+    /// A space with no override behaves exactly as the device does.
+    #[test]
+    fn a_space_without_an_override_follows_the_device() {
+        let mut ps = Policies::default();
+        ps.device.quiet = Some(quiet("22:00", "07:00", false));
+        let night = parse_time("23:00").unwrap();
+        let noon = parse_time("12:00").unwrap();
+        assert_eq!(
+            ps.verdict(Some("work"), Priority::Normal, night, 0),
+            Some(Status::QuietHours)
+        );
+        assert_eq!(ps.verdict(Some("work"), Priority::Normal, noon, 0), None);
+        // And an unknown space id is the same as none at all.
+        assert_eq!(ps.verdict(None, Priority::Normal, noon, 0), None);
+    }
+
+    /// The case the feature exists for: one space quiet while another speaks.
+    #[test]
+    fn an_override_silences_only_its_own_space() {
+        let mut ps = Policies::default();
+        ps.set_space(
+            "work",
+            Policy {
+                muted: false,
+                quiet: Some(quiet("18:00", "09:00", false)),
+            },
+        );
+        let evening = parse_time("20:00").unwrap();
+        assert_eq!(
+            ps.verdict(Some("work"), Priority::Normal, evening, 0),
+            Some(Status::QuietHours)
+        );
+        assert_eq!(ps.verdict(Some("home"), Priority::Normal, evening, 0), None);
+        assert_eq!(ps.verdict(None, Priority::Normal, evening, 0), None);
+    }
+
+    /// The floor. An override may add silence and never remove it.
+    #[test]
+    fn a_space_cannot_undo_the_device_policy() {
+        let mut ps = Policies::default();
+        ps.device.muted = true;
+        // As permissive an override as can be written.
+        ps.set_space(
+            "home",
+            Policy {
+                muted: false,
+                quiet: Some(quiet("00:00", "00:00", true)),
+            },
+        );
+        for prio in [Priority::Low, Priority::Normal, Priority::High] {
+            assert_eq!(
+                ps.verdict(Some("home"), prio, 720, 0),
+                Some(Status::Muted),
+                "a space override must not speak through a muted device"
+            );
+        }
+    }
+
+    /// Muting one space leaves the device — and every other space — alone.
+    #[test]
+    fn muting_a_space_is_not_muting_the_device() {
+        let mut ps = Policies::default();
+        ps.set_space(
+            "work",
+            Policy {
+                muted: true,
+                quiet: None,
+            },
+        );
+        assert_eq!(
+            ps.verdict(Some("work"), Priority::High, 720, 0),
+            Some(Status::Muted)
+        );
+        assert_eq!(ps.verdict(Some("home"), Priority::High, 720, 0), None);
+        assert_eq!(ps.verdict(None, Priority::High, 720, 0), None);
+    }
+
+    /// The device's reason wins, so "muted" is never reported as "quiet hours".
+    #[test]
+    fn the_device_reason_is_the_one_reported() {
+        let mut ps = Policies::default();
+        ps.device.muted = true;
+        ps.set_space(
+            "work",
+            Policy {
+                muted: false,
+                quiet: Some(quiet("00:00", "23:59", false)),
+            },
+        );
+        assert_eq!(
+            ps.verdict(Some("work"), Priority::Normal, 720, 0),
+            Some(Status::Muted)
+        );
+    }
+
+    /// An override that restricts nothing is not stored, so the interface
+    /// never shows a space as configured when nothing about it differs.
+    #[test]
+    fn an_empty_override_is_dropped_rather_than_kept() {
+        let mut ps = Policies::default();
+        ps.set_space(
+            "work",
+            Policy {
+                muted: true,
+                quiet: None,
+            },
+        );
+        assert!(ps.space("work").is_some());
+        ps.set_space("work", Policy::default());
+        assert!(ps.space("work").is_none());
+        assert!(ps.spaces.is_empty(), "no empty entry should linger");
+    }
+
+    /// Forgetting matters because rotating mints a space with a fresh id and
+    /// a stale override would apply to it unasked.
+    #[test]
+    fn forgetting_a_space_removes_its_override() {
+        let mut ps = Policies::default();
+        ps.set_space(
+            "work",
+            Policy {
+                muted: true,
+                quiet: None,
+            },
+        );
+        ps.forget("work");
+        assert_eq!(ps.verdict(Some("work"), Priority::Normal, 720, 0), None);
+    }
+
+    /// A `policy.json` written before spaces existed must still load, or an
+    /// upgrade would silently unmute a device somebody muted on purpose.
+    #[test]
+    fn a_policy_file_from_before_spaces_still_loads() {
+        let old = r#"{"muted":true,"quiet":{"from":1320,"to":420,"high_breaks_through":true}}"#;
+        let ps: Policies = serde_json::from_str(old).expect("old policy.json should load");
+        assert!(ps.device.muted);
+        assert_eq!(ps.device.quiet.unwrap().from, 1320);
+        assert!(ps.device.quiet.unwrap().high_breaks_through);
+        assert!(ps.spaces.is_empty());
+    }
+
+    /// And the new shape round-trips, overrides included.
+    #[test]
+    fn policies_round_trip_through_json() {
+        let mut ps = Policies::default();
+        ps.device.quiet = Some(quiet("22:00", "07:00", true));
+        ps.set_space(
+            "work",
+            Policy {
+                muted: true,
+                quiet: None,
+            },
+        );
+        let text = serde_json::to_string(&ps).unwrap();
+        let back: Policies = serde_json::from_str(&text).unwrap();
+        assert_eq!(ps, back);
     }
 
     #[test]

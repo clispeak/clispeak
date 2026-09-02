@@ -24,7 +24,7 @@ pub use identity::{
     save_voice_settings, set_config_dir, set_device_name,
 };
 pub use node::{Node, WindowHook};
-pub use policy::{Policy, QuietHours};
+pub use policy::{Policies, Policy, QuietHours};
 pub use roster::{Roster, RosterError, verify};
 pub use spaces::{SpaceInfo, Spaces};
 pub use ticket::{Ticket, qr_svg};
