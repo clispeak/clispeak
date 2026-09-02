@@ -370,17 +370,37 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
         Request::Status => Response::Status {
             device_id: shared.identity.id().to_string(),
             key_store: shared.identity.location().to_string(),
-            engine: shared
-                .engine
-                .voices()
-                .first()
-                .map_or("unknown", |v| &v.name)
-                .to_string(),
+            engine: current_voice_name(&shared.engine),
             fallback: shared.engine.tier() == voicecast_engine::Tier::Fallback,
             queued: shared.queued.load(Ordering::SeqCst),
         },
     };
     write_frame(&mut s, &response).await
+}
+
+/// The name of the voice actually in use.
+///
+/// Resolved from the engine's current selection rather than whichever voice
+/// happens to come first: with one voice those agreed, and with many the
+/// status line and the picker disagreed on screen.
+fn current_voice_name(engine: &Arc<dyn SpeechEngine>) -> String {
+    let voices = engine.voices();
+    // No fallback to the first voice. On a device offering a hundred of
+    // them that names one we are not using, which is worse than admitting we
+    // do not know yet — the engine may still be starting.
+    engine
+        .current_voice()
+        .and_then(|id| voices.iter().find(|v| v.id == id))
+        .map_or_else(
+            || {
+                if voices.is_empty() {
+                    "starting…".to_string()
+                } else {
+                    "default voice".to_string()
+                }
+            },
+            |v| v.name.clone(),
+        )
 }
 
 /// This node's health.

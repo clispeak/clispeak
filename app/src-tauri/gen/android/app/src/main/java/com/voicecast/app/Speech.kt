@@ -44,6 +44,11 @@ object Speech {
                 }
                 ready = true
                 failure = null
+                // Apply anything chosen before the engine existed.
+                // TextToSpeech initialises asynchronously, so a preference
+                // restored at startup arrives before there is anything to
+                // apply it to — and was silently dropped.
+                applyPreferences()
                 Log.i(TAG, "speech engine ready")
             } else {
                 failure = "this device has no working text-to-speech engine"
@@ -70,17 +75,62 @@ object Speech {
     fun voices(): String {
         val engine = tts ?: return ""
         return try {
-            engine.voices
-                .orEmpty()
-                .filter { !it.isNetworkConnectionRequired }
-                .sortedBy { it.name }
-                .joinToString("\n") { v ->
-                    val locale = v.locale?.displayName ?: ""
-                    "${v.name}\t${locale.ifEmpty { v.name }}"
-                }
+            val language = Locale.getDefault().language
+            val usable = engine.voices.orEmpty().filter { !it.isNetworkConnectionRequired }
+
+            // This device offers 133 voices across dozens of languages. A
+            // dropdown of all of them is unusable, and a voice in the wrong
+            // language reading English is worse than having no choice — so
+            // only the device's own language is offered. If somehow none
+            // match, fall back to everything rather than an empty picker.
+            val matching = usable.filter { it.locale?.language == language }
+            val offered = matching.ifEmpty { usable }
+
+            offered
+                .sortedWith(
+                    // The exact locale first, then the rest of the language.
+                    compareBy(
+                        { if (it.locale?.toString() == Locale.getDefault().toString()) 0 else 1 },
+                        { it.locale?.toString() ?: "" },
+                        { it.name },
+                    ),
+                )
+                .joinToString("\n") { v -> "${v.name}\t${label(v)}" }
         } catch (_: Exception) {
             // Some engines throw rather than return an empty list.
             ""
+        }
+    }
+
+    /**
+     * A label that actually distinguishes one voice from another.
+     *
+     * Android names voices like `en-us-x-iom-local`, which is unreadable, and
+     * the locale alone is useless — most devices ship several voices per
+     * language, so labelling by locale makes the list look like a language
+     * picker that does nothing. The variant token is the only thing that
+     * differs, so it has to be shown.
+     */
+    private fun label(voice: android.speech.tts.Voice): String {
+        // en-us-x-iom-local -> iom
+        val variant = voice.name
+            .split("-")
+            .dropWhile { it != "x" }
+            .drop(1)
+            .firstOrNull()
+            ?.uppercase()
+        // The list is already filtered to one language, so repeating the
+        // locale on every row costs width and wraps each entry onto two
+        // lines. Show it only where it actually differs from this device's.
+        val here = Locale.getDefault().toString()
+        val elsewhere = voice.locale?.toString() != here
+        val place = voice.locale?.getDisplayCountry(Locale.getDefault()).orEmpty()
+
+        return when {
+            variant.isNullOrBlank() && elsewhere -> "Default ($place)"
+            variant.isNullOrBlank() -> "Default voice"
+            elsewhere && place.isNotEmpty() -> "Voice $variant ($place)"
+            else -> "Voice $variant"
         }
     }
 
@@ -88,27 +138,40 @@ object Speech {
     @JvmStatic
     fun currentVoice(): String = voiceName ?: tts?.voice?.name.orEmpty()
 
-    /** Choose a voice by name. */
+    /**
+     * Choose a voice by name.
+     *
+     * Remembered even when the engine is not ready yet, and applied once it
+     * is. Refusing here would lose a preference restored at startup, which is
+     * exactly when the engine is still initialising.
+     */
     @JvmStatic
     fun setVoice(name: String): Boolean {
-        val engine = tts ?: return false
+        voiceName = name
+        val engine = tts ?: return true
         val match = engine.voices.orEmpty().firstOrNull { it.name == name } ?: return false
-        val ok = engine.setVoice(match) == TextToSpeech.SUCCESS
-        if (ok) voiceName = name
-        return ok
+        return engine.setVoice(match) == TextToSpeech.SUCCESS
     }
 
     /** The speaking rate. */
     @JvmStatic
     fun rate(): Float = rate
 
-    /** Set the speaking rate. */
+    /** Set the speaking rate. Remembered even before the engine is ready. */
     @JvmStatic
     fun setRate(value: Float): Boolean {
-        val engine = tts ?: return false
-        val ok = engine.setSpeechRate(value) == TextToSpeech.SUCCESS
-        if (ok) rate = value
-        return ok
+        rate = value
+        val engine = tts ?: return true
+        return engine.setSpeechRate(value) == TextToSpeech.SUCCESS
+    }
+
+    /** Apply whatever was chosen, now that there is an engine to apply it to. */
+    private fun applyPreferences() {
+        val engine = tts ?: return
+        engine.setSpeechRate(rate)
+        voiceName?.let { name ->
+            engine.voices.orEmpty().firstOrNull { it.name == name }?.let { engine.setVoice(it) }
+        }
     }
 
     /** Whether speech can be attempted right now. */
