@@ -37,10 +37,14 @@ jobs:
             name: macos
             # Unsigned: signing needs a certificate in a keychain we do not
             # have. macOS will warn on first open until that is sorted.
-            artefacts: app/src-tauri/target/release/bundle/dmg/*.dmg
+            # The workspace target directory is at the repository root, not
+            # under the Tauri crate — the bundler writes there like any other
+            # cargo output. Getting this wrong built the bundle successfully
+            # and then failed the upload, which reads as a build failure.
+            artefacts: target/release/bundle/dmg/*.dmg
           - os: windows-latest
             name: windows
-            artefacts: app/src-tauri/target/release/bundle/nsis/*.exe
+            artefacts: target/release/bundle/nsis/*.exe
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
