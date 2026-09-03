@@ -39,7 +39,7 @@ compiled on all five targets and passed every gate:
 
 The socket row says *name*, not path, on purpose: it is a namespaced name, the
 platform decides where it lands, and on Linux there is no file anywhere (#43,
-decision 34). The budget is measured rather than documented — 83 bytes bound
+decision 35). The budget is measured rather than documented — 83 bytes bound
 and 84 refused on a Mac, plus a `/tmp/` prefix confirmed with `lsof`, against a
 documented `sun_path` of 104. The missing 16 bytes are unexplained, probably
 headroom inside `interprocess`'s own check. Measure against 83; it is the

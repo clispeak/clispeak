@@ -894,7 +894,7 @@ tracked in #41 and worth doing before anyone downloads this.
 and `-keep … { *; }` is broader than the members actually called — deliberately,
 because the narrower form breaks silently the next time a signature changes.
 
-## 33. A report names the device, not just the label it was addressed by
+## 34. A report names the device, not just the label it was addressed by
 
 `TargetResult` carried `device`, and `device` is a label: local, freely
 chosen, and not unique. So the report could say `spoken` about a device the
@@ -944,7 +944,7 @@ twice. `Here` now collapses on identity and merges the shadow lists. Four tests
 hold that down, because it is the kind of regression that is invisible until
 someone hears it.
 
-## 34. The socket is a name, and the node says so
+## 35. The socket is a name, and the node says so
 
 `voicecastd` printed `listening on /tmp/vc-d.sock` and bound
 `/tmp//tmp/vc-d.sock`. Both are true from where the code sat and neither

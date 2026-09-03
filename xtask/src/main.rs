@@ -68,15 +68,61 @@ fn portability() -> anyhow::Result<()> {
 
     frontend_dialogs()?;
     let jni = jni_keep_rules()?;
+    let decisions = decision_numbers()?;
 
     // The counts are said out loud because a gate that passed and a gate that
     // never ran print the same thing otherwise — which is how the JNI check
     // came to be doubted the day after it was written, reasonably.
     println!(
-        "portability ok: {} crates clean, {jni} JNI classes kept",
+        "portability ok: {} crates clean, {jni} JNI classes kept, {decisions} decisions numbered",
         PORTABLE.len()
     );
     Ok(())
+}
+
+/// Fail if `docs/decisions.md` numbers its decisions with a gap or a repeat.
+///
+/// The file is append-only and cited by number from CLAUDE.md, issues and
+/// commit messages, so a number has to name exactly one decision. Two agents
+/// appending on parallel branches each picked the next free number, both
+/// were 33, and the rebase kept both: for a day "decision 33" meant two
+/// things and "decision 34" pointed one past where it was written. Nothing
+/// read the sequence, so nothing noticed. Returns how many were checked.
+fn decision_numbers() -> anyhow::Result<usize> {
+    let path = Path::new("docs/decisions.md");
+    let text = std::fs::read_to_string(path)?;
+    let mut expected = 1usize;
+    let mut findings = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let Some(rest) = line.strip_prefix("## ") else {
+            continue;
+        };
+        let Some((number, _)) = rest.split_once(". ") else {
+            continue;
+        };
+        let Ok(number) = number.trim().parse::<usize>() else {
+            continue;
+        };
+        if number != expected {
+            findings.push(format!(
+                "  {}:{}: decision {number}, expected {expected}",
+                path.display(),
+                i + 1
+            ));
+            // Resume from what was found, so one slip reports once rather
+            // than as every heading after it.
+            expected = number;
+        }
+        expected += 1;
+    }
+    if !findings.is_empty() {
+        eprintln!("decisions must be numbered consecutively, each number once:");
+        for f in &findings {
+            eprintln!("{f}");
+        }
+        anyhow::bail!("renumber the later decision and update anything that cites it");
+    }
+    Ok(expected - 1)
 }
 
 /// Fail if the frontend calls a blocking dialog the webview may not have.
