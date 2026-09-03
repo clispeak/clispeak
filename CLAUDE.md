@@ -34,8 +34,16 @@ compiled on all five targets and passed every gate:
 | `/etc/hostname` | a Linux file, so macOS and Windows called every device "this device" (#38) |
 | `Command::new("npx")` | resolves `npx.cmd` on no Windows box |
 | `target/release/voicecast` | has no `.exe` |
-| `sun_path` | 104 bytes on macOS; a long socket path refuses to bind |
+| `sun_path` | a socket *name* over ~83 bytes refuses to bind on macOS, and the platform prepends a prefix you did not write |
 | `isMinifyEnabled` | true only for release, so R8 deleted the Kotlin the engine calls (#41) |
+
+The socket row says *name*, not path, on purpose: it is a namespaced name, the
+platform decides where it lands, and on Linux there is no file anywhere (#43,
+decision 34). The budget is measured rather than documented — 83 bytes bound
+and 84 refused on a Mac, plus a `/tmp/` prefix confirmed with `lsof`, against a
+documented `sun_path` of 104. The missing 16 bytes are unexplained, probably
+headroom inside `interprocess`'s own check. Measure against 83; it is the
+number that decides whether a node starts.
 
 A file path, a binary name, a separator, a length limit, a build flag. None is
 platform-*shaped*; a `cfg` on any of them would have been louder and would
@@ -102,6 +110,14 @@ Two nodes on one machine: override `VOICECAST_SOCKET` and
 `VOICECAST_CONFIG_DIR`. Both are read by the CLI *and* the node, and
 forgetting the socket override makes every command talk to the first node,
 which looks like two unrelated bugs.
+
+**`VOICECAST_SOCKET` is a name, not a path, and it must be short** — under
+about 83 bytes on macOS, where the platform then prepends `/tmp/`. Point it at
+a scratch directory and the node refuses to bind for a reason that names the
+limit and not the string. Scratchpad paths here are around 100 bytes on their
+own, so this is the default way to hit it, not an edge case. Use
+`VOICECAST_SOCKET=vc-2.sock`, and put only `VOICECAST_CONFIG_DIR` somewhere
+deep.
 
 Platform packages: `packaging/flatpak/` for Linux, `cargo xtask bundle` for a
 macOS `.app`, and `npx @tauri-apps/cli android build --apk` for Android.
