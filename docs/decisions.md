@@ -2330,6 +2330,14 @@ its replacement's example output, and the central claim that the free
 certificate fixes anything. The file was written by someone reasoning
 carefully about a platform they could not run.
 
+**Section 2's Developer ID example is marked unverified rather than left to
+read as a transcript.** Nobody has run `security find-identity -v -p
+codesigning` against a real Developer ID certificate; the line it promises is
+an expectation. Reasoning says `-v` is right there — Apple's root is trusted,
+so the certificate is valid as well as usable — and reasoning of exactly that
+quality is what produced both errors above. The box comes out when someone
+pastes in the literal output.
+
 **Cost of the change.** Nobody gets a free fix for #29 any more, because there
 is not one. An afternoon was spent finding that out, which is cheaper than
 each future reader spending one.

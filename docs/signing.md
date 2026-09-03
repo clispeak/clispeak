@@ -124,9 +124,10 @@ If that says `Authority=voicecast dev`, it is working. If it says
 `find-identity` with no flags reports zero, *then* the certificate type was
 not Code Signing — that is the one field the dialog defaults wrong.
 
-(Section 2 below uses `-v` deliberately: a Developer ID certificate chains to
-Apple's trusted root, so there it is valid *and* usable, and `-v` is the
-narrower, better check.)
+(Section 2 below uses `-v` deliberately, because a Developer ID certificate
+chains to Apple's trusted root and is therefore valid as well as usable. That
+is reasoning about a case nobody has run yet, and section 2 says so where it
+says it.)
 
 ## Using it
 
@@ -267,8 +268,20 @@ Confirm what you have:
 security find-identity -v -p codesigning
 ```
 
-The line you want reads `Developer ID Application: Your Name (TEAMID)`. That
-whole string, quotes excluded, is `APPLE_SIGNING_IDENTITY`.
+> **Not yet verified.** Nobody has run this against a real Developer ID
+> certificate. The expectation is a line reading
+> `Developer ID Application: Your Name (TEAMID)`, and that whole string —
+> quotes excluded — being `APPLE_SIGNING_IDENTITY`. It is an expectation, not
+> a transcript, and this file has already shipped two plausible inventions in
+> this exact spot: first that `-v` reporting zero meant the certificate type
+> was wrong, then a replacement example composed rather than run. Both read
+> as authoritative and both were wrong. Replace this box with the literal
+> output the first time someone runs it.
+
+`-v` is right *here*, unlike in the self-signed section above: a Developer ID
+certificate chains to Apple's trusted root, so it is valid as well as usable
+and the narrower check is the better one. That much is reasoning too — sound,
+and about a case nobody has executed.
 
 ## 3. Get notarisation credentials
 
