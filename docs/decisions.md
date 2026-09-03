@@ -1468,7 +1468,7 @@ overstate itself in the first place. The same reasoning as the JNI class count
 in decision 33: a gate that passed and a gate that never ran should not print
 the same sentence.
 
-## 51. Policy is asked again at the moment of speaking
+## 50. Policy is asked again at the moment of speaking
 
 A message was checked against policy once, when it was accepted, and a queue
 takes time to drain. So a message accepted at 21:59 from behind a long
