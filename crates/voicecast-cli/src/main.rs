@@ -435,6 +435,31 @@ async fn run() -> anyhow::Result<u8> {
     if cli.quiet {
         QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+
+    // Refused rather than ignored. `--to` is global, so clap accepted it on
+    // every subcommand including the ones that can never honour it — and
+    // `voicecast --to Phone mute` muted the machine it ran on, printed
+    // `muted: yes` and exited 0, having said nothing about the device it was
+    // given (#121). A flag that names one device and changes another is
+    // worth failing over.
+    //
+    // Only an explicit flag. `default_target` in the config reaches the same
+    // `target()` call, and tripping on that would break every local command
+    // for anyone who has set one.
+    if cli.to.is_some()
+        && let Some(name) = ignores_to(&cli.command)
+    {
+        err(&format!(
+            "error: '--to' names a device to speak on, and `{name}` only ever \
+acts on this device."
+        ));
+        err("");
+        err(&format!(
+            "It would have run here and said nothing about the device you named. Drop the flag:  voicecast {name}"
+        ));
+        return Ok(exit::USAGE);
+    }
+
     let config = config::load();
 
     // Neither does the skill: it is compiled in, so printing or installing
@@ -815,6 +840,55 @@ fn long_flags() -> Vec<(String, bool)> {
 /// Rewriting rather than reordering silently: which of two readings was meant
 /// is genuinely ambiguous in general, and this project's rule is that an
 /// error carries a fix that can be run verbatim.
+/// The subcommand's name, unless it is one `--to` actually reaches.
+///
+/// `None` for the commands that fan out to the devices `--to` resolves:
+/// speaking (bare text or `say`), and the four controls that act on whatever
+/// is playing. Everything else acts on this device only, and used to accept
+/// `--to` in silence (#121).
+///
+/// Written out rather than given a catch-all arm on purpose. A command added
+/// later will not compile until somebody says which side of this line it is
+/// on, which is the whole point — the bug was a command quietly inheriting a
+/// flag nobody had thought about it having.
+fn ignores_to(command: &Option<Command>) -> Option<&'static str> {
+    match command {
+        // Speaks, or acts on what is being spoken. These are what `--to` is
+        // for.
+        None
+        | Some(Command::Say { .. })
+        | Some(Command::Stop { .. })
+        | Some(Command::Skip)
+        | Some(Command::Pause)
+        | Some(Command::Resume) => None,
+
+        // Reports or changes something about this device alone.
+        Some(Command::Status) => Some("status"),
+        Some(Command::Queue) => Some("queue"),
+        Some(Command::History { .. }) => Some("history"),
+        Some(Command::Replay { .. }) => Some("replay"),
+        Some(Command::Mute { .. }) => Some("mute"),
+        Some(Command::Unmute { .. }) => Some("unmute"),
+        Some(Command::Quiet { .. }) => Some("quiet"),
+        Some(Command::Rename { .. }) => Some("rename"),
+        Some(Command::Show) => Some("show"),
+        Some(Command::Quit) => Some("quit"),
+        Some(Command::Skill { .. }) => Some("skill"),
+        Some(Command::Group { .. }) => Some("group"),
+        Some(Command::Groups) => Some("groups"),
+
+        // About spaces and membership, which are not a device to speak on.
+        Some(Command::Invite { .. }) => Some("invite"),
+        Some(Command::Join { .. }) => Some("join"),
+        Some(Command::Preview { .. }) => Some("preview"),
+        Some(Command::Devices) => Some("devices"),
+        Some(Command::Revoke { .. }) => Some("revoke"),
+        Some(Command::Leave { .. }) => Some("leave"),
+        Some(Command::Space { .. }) => Some("space"),
+        Some(Command::Rotate { .. }) => Some("rotate"),
+    }
+}
+
 fn flags_first(argv: &[String]) -> Option<String> {
     let known = long_flags();
     let mut flags: Vec<String> = Vec::new();
@@ -1570,7 +1644,7 @@ use frame::{read_frame, write_frame};
 
 #[cfg(test)]
 mod display_tests {
-    use super::{first_line, flags_first, plain, short_id};
+    use super::{Command, first_line, flags_first, ignores_to, plain, short_id};
 
     fn argv(line: &str) -> Vec<String> {
         line.split(' ').map(str::to_string).collect()
@@ -1676,6 +1750,34 @@ mod display_tests {
         assert_eq!(flags_first(&argv("--to Phone hello")), None);
         assert_eq!(flags_first(&argv("hello there")), None);
         assert_eq!(flags_first(&argv("hello --priorty high")), None);
+    }
+
+    #[test]
+    fn to_is_refused_only_where_it_means_nothing() {
+        // What `--to` is for: speaking, and the controls that act on what is
+        // being spoken. These fan out to the devices it resolves.
+        assert_eq!(ignores_to(&None), None, "bare text speaks");
+        assert_eq!(ignores_to(&Some(Command::Say { text: Vec::new() })), None);
+        assert_eq!(ignores_to(&Some(Command::Stop { id: None })), None);
+        assert_eq!(ignores_to(&Some(Command::Skip)), None);
+        assert_eq!(ignores_to(&Some(Command::Pause)), None);
+        assert_eq!(ignores_to(&Some(Command::Resume)), None);
+
+        // The one that muted the wrong device: `--to Phone mute` silenced the
+        // machine it ran on, printed `muted: yes` and exited 0 (#121).
+        assert_eq!(
+            ignores_to(&Some(Command::Mute { space: None })),
+            Some("mute")
+        );
+        assert_eq!(
+            ignores_to(&Some(Command::Unmute { space: None })),
+            Some("unmute")
+        );
+
+        // Reporting commands answered about this device while naming another.
+        assert_eq!(ignores_to(&Some(Command::Status)), Some("status"));
+        assert_eq!(ignores_to(&Some(Command::Queue)), Some("queue"));
+        assert_eq!(ignores_to(&Some(Command::Devices)), Some("devices"));
     }
 
     #[test]
