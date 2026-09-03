@@ -5,10 +5,22 @@ on:
     branches: [main]
   pull_request:
 
-# A newer push supersedes an in-flight run on the same ref.
+# A newer push supersedes an in-flight run on the same ref — on a branch.
+#
+# Never on `main`. Cancelling there means a commit can land with no verdict at
+# all, which from the outside looks exactly like a commit that passed: the run
+# page shows "cancelled", nobody reads it, and the next person to branch
+# inherits the breakage. That happened on three consecutive pushes to main and
+# was found by a teammate whose own pull request went red on a line they had
+# never touched (#91).
+#
+# It costs Linux minutes on a fast series of pushes and buys a verdict for
+# every commit on the branch everyone else starts from. The rule this project
+# opens with is "check the CI run, not your terminal", and that rule needs
+# there to *be* a run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always

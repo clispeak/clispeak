@@ -3,6 +3,7 @@
 mod bundle;
 mod piper;
 
+use anyhow::Context as _;
 use std::path::{Path, PathBuf};
 
 /// Crates that must stay portable across all five targets.
@@ -12,6 +13,13 @@ fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("portability") => portability(),
+        // Everything, in one command, because the alternative is a chain
+        // assembled by hand at the shell — and this week that chain has
+        // short-circuited so an edit never ran, used `;` where `&&` was meant
+        // so a failing gate did not stop a push, and simply omitted clippy so
+        // a lint reached `main` (#91). Each was a different mistake with the
+        // same shape: the check was fine and the wiring around it was not.
+        Some("check") => check(),
         // Puts Piper and a voice where the engine looks for them, so a
         // freshly cloned checkout can speak without hunting for downloads.
         Some("piper") => {
@@ -25,10 +33,57 @@ fn main() -> anyhow::Result<()> {
         // is what makes a Mac install a single drag with nothing to follow.
         Some("bundle") => bundle::bundle(&bundle::workspace_root()?),
         _ => {
-            eprintln!("usage: cargo xtask <portability | piper [dir] | bundle>");
+            eprintln!("usage: cargo xtask <check | portability | piper [dir] | bundle>");
             Ok(())
         }
     }
+}
+
+/// Every gate, in order, stopping at the first that fails.
+///
+/// The order is cheapest-first, so a formatting slip is reported in a second
+/// rather than after a full test run. Each step prints its own name before
+/// running, because a gate that passed and a gate that never ran otherwise
+/// look identical in a scrollback — the same reasoning as the counts printed
+/// by `portability`.
+fn check() -> anyhow::Result<()> {
+    let steps: &[(&str, &[&str])] = &[
+        ("fmt", &["fmt", "--all", "--check"]),
+        (
+            "clippy",
+            &[
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ),
+        ("test", &["test", "--workspace"]),
+    ];
+    for (name, args) in steps {
+        eprintln!("== {name}");
+        let status = std::process::Command::new(cargo())
+            .args(*args)
+            .status()
+            .with_context(|| format!("running cargo {name}"))?;
+        if !status.success() {
+            anyhow::bail!("{name} failed");
+        }
+    }
+    // Last because it is this binary's own work and needs the others' output
+    // in the scrollback above it when it fails.
+    eprintln!("== portability");
+    portability()?;
+    eprintln!();
+    eprintln!("all gates passed");
+    Ok(())
+}
+
+/// The cargo that invoked us, so a rustup shim is not re-resolved from PATH.
+fn cargo() -> std::ffi::OsString {
+    std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into())
 }
 
 /// Fail if a portable crate has grown a `#[cfg(target_os)]`.

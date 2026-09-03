@@ -96,11 +96,24 @@ for `voicecast-core` from it; duplicate the handful of bytes instead, as
 ## Checks
 
 ```bash
+cargo run -p xtask -- check     # fmt, clippy, tests, portability, in that order
+cd app && npx tailwindcss -i src/input.css -o src/styles.css --minify
+```
+
+**Run the one command, not the four it wraps.** Assembling the chain by hand
+has failed three times in one week, each differently and each silently: a
+`&&` that short-circuited so an edit never ran while the previous output still
+printed; a `;` where `&&` was meant, so a failing gate did not stop a push; and
+a chain that simply omitted clippy, which is how a lint reached `main` (#91).
+The gates were fine every time. The wiring around them was not.
+
+Where it matters, the individual commands are still what CI runs:
+
+```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p xtask -- portability
 cargo test --workspace
-cd app && npx tailwindcss -i src/input.css -o src/styles.css --minify
+cargo run -p xtask -- portability
 ```
 
 `app/src/styles.css` is generated and **not** committed. Tauri's
