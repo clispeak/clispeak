@@ -116,6 +116,17 @@ The Gradle project reads `keystore.properties` if it is there, and builds
 unsigned if it is not. It is gitignored at any depth under `gen/android`, and
 it must stay that way.
 
+**The keystore itself was not ignored by anything until now**, which mattered
+because this page tells you to put a path to it inside a directory that git
+tracks — and the obvious place to keep the file is that same directory.
+`*.jks`, `*.keystore` and `*.p12` are now ignored from the repository root,
+deliberately not from Tauri's generated ignore file under `gen/android/`, so
+regenerating the Android project cannot silently take the protection away.
+Keep the keystore outside the repository anyway; the ignore rule is the
+second line of defence, not the first. Committing one is not a leak you clean
+up afterwards — the key cannot be rotated, so anyone who has cloned the
+repository holds your app's identity permanently.
+
 Create it **next to `build.gradle.kts`**, at
 `app/src-tauri/gen/android/app/keystore.properties`. The path matters and is
 easy to get wrong: `file()` in a Gradle build script resolves against the

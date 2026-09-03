@@ -122,6 +122,19 @@ cargo test --workspace
 cargo run -p xtask -- portability
 ```
 
+**Open a pull request as a draft, and mark it ready when you want the
+verdict.** The five-target build skips draft pull requests; the Linux job —
+fmt, clippy, portability, the whole test suite — runs on every push either
+way. So push as often as you like and pay for the expensive answer once, at
+the point the rule actually applies. The rule has not moved: nothing merges
+without all five green, and marking ready is what asks.
+
+The number that forced this: one day cost 3,649 billed Linux-equivalent
+minutes, more than a month's included allowance, and macOS alone was 59% of
+it while doing under two minutes of real work per job. A macOS minute bills at
+ten times a Linux one. Cutting the number of runs is the only lever that
+reaches that; making the jobs faster is not (#101).
+
 `app/src/styles.css` is generated and **not** committed. Tauri's
 `beforeBuildCommand` rebuilds it, so `tauri build` and `tauri android build`
 are covered — but a plain `cargo build -p voicecast-app`, which is how the

@@ -249,7 +249,18 @@ jobs:
       # job's `codesign -d -r-` check.
       - name: Check what signed it
         run: |
-          apk=$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -1)
+          # Exactly one, not the first of several. A split build or a
+          # leftover in an unclean workspace would otherwise have this
+          # report on an arbitrary file, which is a check that passes about
+          # something other than what ships.
+          out=app/src-tauri/gen/android/app/build/outputs/apk
+          count=$(find "$out" -name '*.apk' | wc -l)
+          if [ "$count" != "1" ]; then
+            echo "expected one APK under $out, found $count:"
+            find "$out" -name '*.apk'
+            exit 1
+          fi
+          apk=$(find "$out" -name '*.apk')
           echo "artefact: $apk"
           signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
           if [ "${{ steps.signing.outputs.signed }}" != "true" ]; then
@@ -261,10 +272,18 @@ jobs:
           fi
           "$signer" verify --print-certs "$apk"
 
+      # `run: |`, not a plain scalar. Written without the pipe, YAML folds
+      # the two lines into one and the `\` survives as a literal backslash,
+      # so the shell reads `\ ` as an escaped space and the second path
+      # becomes an argument with a leading space — a file that does not
+      # exist. `-f` makes that silent, and the step reports success having
+      # removed only the keystore and left the file holding the three
+      # passwords in plain text. Reproduced, not reasoned about.
       - name: Remove the keystore
         if: always()
-        run: rm -f app/src-tauri/gen/android/app/release.jks \
-                   app/src-tauri/gen/android/app/keystore.properties
+        run: |
+          rm -f app/src-tauri/gen/android/app/release.jks \
+                app/src-tauri/gen/android/app/keystore.properties
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

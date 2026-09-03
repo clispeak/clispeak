@@ -1921,6 +1921,12 @@ indistinguishable from a signed one unless something asks. `apksigner verify
 artefact's name still contains `unsigned`, so "we meant not to sign" and "the
 secrets did not arrive" cannot be confused with each other.
 
+**Signing keys are ignored from the repository root**, not from Tauri's
+generated ignore file under `gen/android/`, which already covered
+`keystore.properties` and covered the keystore itself with nothing at all. A
+generated file can be regenerated; a rule that can be silently taken away is
+not a rule. `*.jks`, `*.keystore` and `*.p12`.
+
 **Costs.** Four secrets to set up, a keystore Patrick has to back up himself,
 and a signing path exercised only on tags — so a mistake in it surfaces at
 release time. The `versionCode` is still Tauri's, which Play requires to

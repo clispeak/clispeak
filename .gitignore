@@ -11,3 +11,16 @@ target/
 # Staged into the app bundle by `cargo xtask bundle`, not authored here.
 app/src-tauri/speech/
 app/src-tauri/binaries/
+
+# Signing keys, never. An Android keystore cannot be rotated after an app is
+# published — the certificate *is* the app's identity to Play and to the
+# on-device installer — so a committed one is not a leak you clean up, it is
+# the end of the update path for every install. `keystore.properties` is
+# already covered by Tauri's generated ignore file under `gen/android/`; the
+# keystore itself was covered by nothing, and `docs/signing-android.md` tells
+# you to put one in a directory that is otherwise tracked. This is here at
+# the root rather than in the generated file so regenerating the Android
+# project cannot quietly take it away.
+*.jks
+*.keystore
+*.p12
