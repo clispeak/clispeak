@@ -1197,7 +1197,20 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
                 // whoever read it to install what they already had, while the
                 // sentence that named the real fault went to stderr, which for
                 // an app launched from Finder is nowhere at all.
-                Arc::new(voicecast_engine::SilentEngine::new(piper.reason()))
+                //
+                // Rediscovering rather than Silent: discovery ran once and
+                // the answer was kept for the life of the process, so the
+                // first-run path was "install Piper, be told Piper is not
+                // installed" by a node whose statement had stopped being true
+                // (#84). This keeps looking.
+                Arc::new(voicecast_engine::Rediscovering::new(
+                    piper.reason(),
+                    Box::new(|| {
+                        voicecast_engine::PiperEngine::discover()
+                            .ok()
+                            .map(|e| Arc::new(e) as Arc<dyn SpeechEngine>)
+                    }),
+                ))
             }
         }
     }
@@ -1622,7 +1635,7 @@ mod report_tests {
     fn an_unexpected_reply_is_also_an_error() {
         // A reply this build has never seen must not be read as "nothing
         // configured" either — that is the same lie by another route.
-        assert!(matches!(PolicyView::try_from(Response::Done), Err(_)));
+        assert!(PolicyView::try_from(Response::Done).is_err());
     }
 
     #[test]

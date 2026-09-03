@@ -27,7 +27,8 @@ guessed at.
 
 Windows now speaks with Piper, the same engine as Linux and macOS, so a
 message sounds the same wherever it lands. There is no installer yet: Piper
-has to be put in place with `cargo xtask piper`, and Windows also needs the
+has to be put in place with `cargo xtask piper` — a running node picks it up
+within a couple of seconds, without a restart — and Windows also needs the
 Microsoft Visual C++ Redistributable, which it does not ship and which Piper
 links against.
 

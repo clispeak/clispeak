@@ -6,6 +6,7 @@
 //! `#[cfg]` in the middle of business logic.
 
 mod child;
+mod rediscovering;
 mod silent;
 
 #[cfg(target_os = "android")]
@@ -15,6 +16,7 @@ pub use android::{
     AndroidEngine, is_battery_exempt, request_battery_exemption, take_pending_invite,
 };
 
+pub use rediscovering::Rediscovering;
 pub use silent::SilentEngine;
 
 // espeak-ng is a Unix binary; there is no such thing to spawn on a phone.

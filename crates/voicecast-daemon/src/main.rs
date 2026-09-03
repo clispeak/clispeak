@@ -9,12 +9,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use voicecast_core::{Identity, Node, Transport};
 use voicecast_engine::{EngineError, PiperEngine, SpeechEngine};
-// The floor engine differs by platform, and only one of them exists per
-// build; importing both unconditionally is what broke Windows last time.
+// What stands in when Piper is missing differs by platform, and only one of
+// these exists per build; importing both unconditionally is what broke
+// Windows last time.
 #[cfg(target_os = "linux")]
 use voicecast_engine::EspeakEngine;
 #[cfg(not(target_os = "linux"))]
-use voicecast_engine::SilentEngine;
+use voicecast_engine::Rediscovering;
 use voicecast_keystore::DesktopKeyStore;
 
 /// The best engine this platform has.
@@ -79,7 +80,17 @@ fn fallback(piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
 /// spaces and still answers for itself.
 #[cfg(not(target_os = "linux"))]
 fn fallback(piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
-    Ok(Arc::new(SilentEngine::new(piper.reason())))
+    // Keeps looking rather than staying silent for the life of the process:
+    // a daemon told "Piper is not installed" should stop saying so once it
+    // is (#84).
+    Ok(Arc::new(Rediscovering::new(
+        piper.reason(),
+        Box::new(|| {
+            PiperEngine::discover()
+                .ok()
+                .map(|e| Arc::new(e) as Arc<dyn SpeechEngine>)
+        }),
+    )))
 }
 
 #[tokio::main]
