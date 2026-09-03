@@ -1,9 +1,19 @@
 /* Tailwind v4 needs no config file; the theme is declared here. */
-@import "tailwindcss";
+/* `source(none)` because the automatic scan is not what anyone here thinks
+   it is. Without it Tailwind walks the project itself, the listed `@source`
+   lines are additive and change nothing, and the scan reaches `tests/` — so a
+   class written in the harness stub lands in the shipped stylesheet, which
+   was measured rather than guessed. The list read as the thing that decided
+   the source set while not being it, which is how `modal.js` came to look
+   like a latent lost-classes bug: with the scan on, it was covered; with the
+   list load-bearing, it was not, and neither state was the one the comment
+   described.
 
-/* Sources are listed explicitly because there is no bundler to infer them. */
+   Now the list decides, and it is a glob, so splitting another file out of
+   `main.js` cannot quietly drop its classes. */
+@import "tailwindcss" source(none);
 @source "./index.html";
-@source "./main.js";
+@source "./*.js";
 
 /* Dark mode follows the system *unless* the app is told otherwise.
    `data-theme` on <html> is always one of system, light or dark, so there is
