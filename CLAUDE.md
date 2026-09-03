@@ -52,6 +52,7 @@ compiled on all five targets and passed every gate:
 | `sun_path` | a socket *name* over ~83 bytes refuses to bind on macOS, and the platform prepends a prefix you did not write |
 | `isMinifyEnabled` | true only for release, so R8 deleted the Kotlin the engine calls (#41) |
 | `file("keystore.properties")` | resolves against the Gradle *module*, so a copy one directory up is read as absent and the APK ships unsigned (#31) |
+| `base64 -d` | decodes on Linux; macOS spells the short flag `-D`, so the same line writes an empty file on the runner that signs the app |
 
 The socket row says *name*, not path, on purpose: it is a namespaced name, the
 platform decides where it lands, and on Linux there is no file anywhere (#43,
@@ -102,9 +103,22 @@ for `voicecast-core` from it; duplicate the handful of bytes instead, as
 ## Checks
 
 ```bash
-cargo run -p xtask -- check     # fmt, clippy, tests, portability, in that order
+cargo run -p xtask -- check     # conflicts, workflows, fmt, clippy, tests, portability
 cd app && npx tailwindcss -i src/input.css -o src/styles.css --minify
 ```
+
+**The first two are not cargo, and they run first on purpose.** `conflicts`
+fails on an unresolved merge marker in any tracked file, and `workflows` fails
+on a multi-line `run:` step that is not a literal `|` block. Both exist
+because a gate ran, passed, and said nothing about the thing it protects:
+`check` used to report `all gates passed` on a tree holding a live
+`<<<<<<< HEAD`, since the numbering check reads headings and nothing else
+opens a `.md` file (#103). And YAML folds both the plain form and `>` into one
+line, so a shell continuation survives as a literal backslash and the next
+path becomes an argument with a leading space — which left a keystore's
+passwords on disk while `rm -f` exited 0 (#102). Markers first, because every
+other gate's verdict is meaningless on a half-merged tree and would be
+*reported* anyway.
 
 **Run the one command, not the four it wraps.** Assembling the chain by hand
 has failed three times in one week, each differently and each silently: a

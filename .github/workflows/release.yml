@@ -69,12 +69,52 @@ jobs:
       # so there is no keychain script here to get wrong. `xtask bundle` reads
       # the same identity for the Piper binaries beside the app, so one
       # variable covers the whole bundle. See docs/signing.md.
+      # `tauri-bundler` only ever hands `notarytool` a *path* to the App
+      # Store Connect key — it never passes the contents — so the file has to
+      # exist before the build and nothing places it for us. On a Mac the
+      # bundler would find it under `~/.appstoreconnect/private_keys`; a
+      # runner has no such directory, so we write it and say where.
+      #
+      # The secret is `APPLE_API_KEY_P8` and not `..._PATH` on purpose: it
+      # holds the file, and a secret named for a path would be a path to
+      # nothing. See docs/signing.md.
+      - name: Stage the notarisation key
+        id: notary
+        env:
+          P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "$P8" ]; then
+            echo "no APPLE_API_KEY_P8; the app will not be notarised"
+            echo "notarising=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p private_keys
+          # `--decode`, not `-d`. This job runs on macOS, whose `base64`
+          # spells the short flag `-D`; the Android job's `-d` is correct
+          # only because it runs on Linux. The long form is the one both
+          # accept, and getting it wrong here would write an empty key and
+          # fail later, somewhere else.
+          printf '%s' "$P8" | base64 --decode > private_keys/AuthKey.p8
+          echo "notarising=true" >> "$GITHUB_OUTPUT"
+
       - name: Build the bundle
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Absent, the bundler logs a warning and produces a signed but
+          # un-notarised app. That is the quiet failure the step after this
+          # one exists to catch.
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ steps.notary.outputs.notarising == 'true' && format('{0}/private_keys/AuthKey.p8', github.workspace) || '' }}
         run: cargo run -p xtask -- bundle
+
+      # Before the checks below, so a failure there still takes the key with
+      # it. `always()` covers cancellation too.
+      - name: Remove the notarisation key
+        if: always()
+        run: rm -rf private_keys
 
       # Read back what was actually produced, rather than trusting that the
       # variables took effect.
@@ -122,6 +162,34 @@ jobs:
               exit 1
               ;;
           esac
+
+      # Signing and notarisation are two things and Gatekeeper wants both. A
+      # Developer ID signature on its own is still refused, and the bundler
+      # only *warns* when notarisation credentials are missing — so a release
+      # can be correctly signed, cleanly built, and rejected on every machine
+      # that downloads it, with nothing in the run saying so.
+      #
+      # `stapler validate` asks the artefact rather than the log. It is the
+      # notarisation equivalent of reading the designated requirement back.
+      - name: Say whether it is notarised
+        env:
+          NOTARISING: ${{ steps.notary.outputs.notarising }}
+        run: |
+          app=target/release/bundle/macos/voicecast.app
+          if xcrun stapler validate "$app"; then
+            echo "Notarised, and the ticket is stapled: Gatekeeper is"
+            echo "satisfied offline, without asking Apple at open time."
+            exit 0
+          fi
+          if [ "$NOTARISING" = "true" ]; then
+            echo "::error::notarisation credentials were supplied but the" \
+                 "app carries no stapled ticket. It will be refused on any" \
+                 "Mac that downloads it."
+            exit 1
+          fi
+          echo "::warning::Not notarised, as configured. Gatekeeper will" \
+               "refuse this on a machine that downloads it — this artefact" \
+               "is for us, not for anyone else (#29)."
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
