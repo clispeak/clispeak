@@ -5,6 +5,22 @@
 @source "./index.html";
 @source "./main.js";
 
+/* Dark mode follows the system *unless* the app is told otherwise.
+   `data-theme` on <html> is always one of system, light or dark, so there is
+   no unset state to reason about. The point of the override is being able to
+   see the other theme without changing an OS setting — which is how the light
+   theme went unlooked-at for the whole build. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where([data-theme="system"], [data-theme="system"] *) {
+      @slot;
+    }
+  }
+}
+
 @theme {
   /* One accent, used for the primary action only, so "the button that does
      the thing" is never ambiguous. */
@@ -25,6 +41,15 @@
      explicit or the app borrows the host's theme and looks broken. */
   html {
     color-scheme: light dark;
+  }
+  /* Tells the webview which way to paint the scrollbars, the caret and any
+     control we have not styled ourselves. It has to track the override, or a
+     page forced light keeps a dark scrollbar and a dark text cursor. */
+  html[data-theme="light"] {
+    color-scheme: light;
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
   }
   body {
     /* Safe areas matter on a phone: content otherwise slides under the
@@ -109,11 +134,18 @@
     border-radius: 9999px;
     background: var(--color-accent-600);
   }
+  /* Written out rather than using the `dark:` variant, because this is base
+     CSS on a pseudo-element and there is no class to hang a variant on. It
+     has to mirror the variant above exactly, override included — a slider
+     that stayed dark on a page forced light would be the one control that
+     ignored the setting. */
+  [data-theme="dark"] input[type="range"]::-webkit-slider-runnable-track,
+  [data-theme="dark"] input[type="range"]::-moz-range-track {
+    background: var(--color-neutral-700);
+  }
   @media (prefers-color-scheme: dark) {
-    input[type="range"]::-webkit-slider-runnable-track {
-      background: var(--color-neutral-700);
-    }
-    input[type="range"]::-moz-range-track {
+    [data-theme="system"] input[type="range"]::-webkit-slider-runnable-track,
+    [data-theme="system"] input[type="range"]::-moz-range-track {
       background: var(--color-neutral-700);
     }
   }

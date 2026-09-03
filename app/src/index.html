@@ -1,10 +1,21 @@
 <!doctype html>
-<html lang="en" class="h-full">
+<html lang="en" class="h-full" data-theme="system">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>voicecast</title>
 <link rel="stylesheet" href="styles.css" />
+<!-- Before the stylesheet is applied to anything visible, so a device set to
+     light does not flash the dark theme on every launch. Inline and tiny for
+     the same reason: a module at the end of <body> runs too late to matter.
+     `system` is already on <html>, so a browser with storage disabled — or a
+     throw from reading it — lands on the OS setting rather than nothing. -->
+<script>
+  try {
+    var t = localStorage.getItem("voicecast-theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
 </head>
 <body class="flex h-full flex-col overflow-hidden bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 antialiased">
 
@@ -178,6 +189,37 @@
 <!-- Settings: everything that is set once and then left alone. -->
 <main id="screen-settings" hidden class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
   <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
+
+    <!-- Appearance. Above the doze warning would bury it; below the device
+         name would bury this. It sits here because it is the one setting on
+         this screen with an immediate visible result. -->
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Appearance
+      </h2>
+      <div class="rounded-xl border border-neutral-200 bg-white p-4
+                  dark:border-neutral-800 dark:bg-neutral-900">
+        <div id="theme-picker" role="group" aria-label="Theme"
+          class="flex gap-1 rounded-lg bg-neutral-100 p-1 dark:bg-neutral-800">
+          <button type="button" data-theme-choice="system"
+            class="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition">
+            System
+          </button>
+          <button type="button" data-theme-choice="light"
+            class="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition">
+            Light
+          </button>
+          <button type="button" data-theme-choice="dark"
+            class="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition">
+            Dark
+          </button>
+        </div>
+        <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+          Only on this device, and nothing is sent. System follows the phone or
+          desktop setting.
+        </p>
+      </div>
+    </section>
 
     <!-- Doze warning. Hidden unless it applies, which is Android only. ------- -->
     <section id="battery" hidden

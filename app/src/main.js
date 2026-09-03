@@ -1264,6 +1264,60 @@ function showJoin(prefill = "") {
 
 $("join-open").onclick = () => showJoin();
 
+/**
+ * Which theme this device shows: "system", "light" or "dark".
+ *
+ * Kept in `localStorage` rather than in the node, because it is a property of
+ * this screen and not of this device's identity — nothing about it belongs on
+ * the wire, and a node-side setting would have to cross five platforms to say
+ * what one webview should paint. The trade is that clearing site data forgets
+ * it, which falls back to following the system.
+ *
+ * `<html data-theme>` is set by an inline script in the document head as well
+ * as here. That is not duplication: this runs after first paint, and doing it
+ * only here flashes the wrong theme on every launch.
+ */
+function applyTheme(choice) {
+  document.documentElement.dataset.theme = choice;
+  for (const b of document.querySelectorAll("[data-theme-choice]")) {
+    const on = b.dataset.themeChoice === choice;
+    b.className =
+      "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition " +
+      (on
+        ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
+        : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100");
+    b.setAttribute("aria-pressed", String(on));
+  }
+}
+
+{
+  // Reads back what the head script already applied, so the buttons agree
+  // with the page rather than with a default.
+  let saved = "system";
+  try {
+    saved = localStorage.getItem("voicecast-theme") ?? "system";
+  } catch {
+    // Storage can be unavailable outright — a webview with site data off, or
+    // a private context. Following the system is the right answer then, and
+    // it is what the markup already says.
+  }
+  applyTheme(["light", "dark"].includes(saved) ? saved : "system");
+
+  for (const b of document.querySelectorAll("[data-theme-choice]")) {
+    b.onclick = () => {
+      const choice = b.dataset.themeChoice;
+      applyTheme(choice);
+      try {
+        // "system" is stored rather than removed, so a later default change
+        // cannot silently move a device that had chosen to follow the OS.
+        localStorage.setItem("voicecast-theme", choice);
+      } catch {
+        say("this device will not remember that until it is restarted", "error");
+      }
+    };
+  }
+}
+
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
   const name = $("name-input").value.trim();
