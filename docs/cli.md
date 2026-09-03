@@ -213,14 +213,13 @@ discarding the message.
 ```
 $ voicecast devices                    # names, platform, status, voice, last seen
 $ voicecast invite                     # QR + ticket to add a device
-$ voicecast invite --print-only        # ticket only, for pasting over SSH
+$ voicecast invite | pbcopy            # the ticket alone, for pasting over SSH
 $ voicecast join <ticket>              # join a space from this device
 $ voicecast invite --space work        # invite into a named space
 $ voicecast revoke <name>
 $ voicecast revoke <name> --space work
 $ voicecast rename <new>                 # this device's own label
 $ voicecast status                     # this node: identity, engine, queue
-$ voicecast init                       # first run: identity + new space
 ```
 
 `status` names the engine, and when the engine cannot speak it says why on the
@@ -252,6 +251,15 @@ start one with: voicecastd, or open the voicecast app
 
 Exit code 5 either way. The macOS lines appear only on macOS: naming a dialog
 that cannot exist sends the reader hunting for somewhere that is not there.
+
+There is no `init`. A node creates its identity and founds its own space the
+first time it starts, so there is nothing for a separate command to do — and
+one that did nothing would be worse than its absence.
+
+`invite` needs no `--print-only` either. The ticket goes to stdout on its own;
+the expiry note and the instruction for the other device go to stderr. So
+piping it somewhere already yields the bare code, which is what that flag was
+for.
 
 ## Spaces
 
