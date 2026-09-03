@@ -4,6 +4,9 @@
 platforms on a `v*` tag and leaves the result as a draft. What is left is not
 engineering: licensing (#24), how a private repository serves public downloads
 (#23), a download page (#25), and the two signing credentials (#29, #31).
+The macOS half of that is written down in `docs/signing.md`: what the
+certificate fixes, how to make one, and why the self-signed one belongs on a
+development machine and not in a repository secret.
 
 This file was written before any of it existed and said so for months after it
 did, which is how an agent came to start building the release chain a second

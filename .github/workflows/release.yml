@@ -62,14 +62,70 @@ jobs:
         # that morning with nothing recording which. The drift it hid is
         # exactly what should fail the run (#70).
         run: npm ci
+      # Signed only if all three secrets exist; an unsigned build otherwise,
+      # which is the state today and is not an error. The Tauri CLI does the
+      # keychain work itself given a certificate — create, unlock, import with
+      # `-T /usr/bin/codesign`, set the partition list, delete on the way out —
+      # so there is no keychain script here to get wrong. `xtask bundle` reads
+      # the same identity for the Piper binaries beside the app, so one
+      # variable covers the whole bundle. See docs/signing.md.
       - name: Build the bundle
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: cargo run -p xtask -- bundle
+
+      # Read back what was actually produced, rather than trusting that the
+      # variables took effect.
+      #
+      # An app configured to sign that silently did not is indistinguishable
+      # from a signed one without reading the designated requirement — an
+      # ad-hoc signature is still a signature, and `codesign -v` passes on it.
+      # That shape has cost this repository a fortnight more than once: the
+      # reason exists and something between it and the reader drops it. So the
+      # run prints the requirement either way, and fails only for the one
+      # combination that is a lie — secrets present, artefact still ad-hoc.
+      - name: Say how the bundle is signed
+        env:
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          app=target/release/bundle/macos/voicecast.app
+          codesign -dv --verbose=2 "$app" 2>&1 || true
+          requirement=$(codesign -d -r- "$app" 2>&1 | tail -1)
+          echo "designated requirement: $requirement"
+          case "$requirement" in
+            *cdhash*)
+              if [ -n "$IDENTITY" ]; then
+                echo "::error::APPLE_SIGNING_IDENTITY is set to '$IDENTITY'" \
+                     "but the app is still ad-hoc signed — its identity is a" \
+                     "build hash, so a keychain grant will not survive the" \
+                     "next build. The certificate did not reach codesign."
+                exit 1
+              fi
+              echo "::warning::Unsigned (ad-hoc). Gatekeeper will warn on" \
+                   "first open, and the keychain grant holding the device" \
+                   "identity is asked for again after every rebuild (#29)."
+              ;;
+            *"designated =>"*)
+              echo "Signed with a certificate: the requirement names an" \
+                   "identifier and an issuer, so later builds satisfy it."
+              ;;
+            *)
+              # Not a third state of the signature — a signature that could
+              # not be read at all, because the app is not where this step
+              # looked. Matching a bare `*)` as "signed" was the first shape
+              # of this step, and a deliberately wrong path made it announce
+              # a signed build for an app that did not exist.
+              echo "::error::could not read a designated requirement from" \
+                   "$app: $requirement"
+              exit 1
+              ;;
+          esac
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos
-          # Unsigned: signing needs a certificate in a keychain we do not
-          # have. macOS warns on first open until that is sorted.
-          #
           # The workspace target directory is at the repository root, not
           # under the Tauri crate — the bundler writes there like any other
           # cargo output. Getting this wrong built the bundle and then failed
