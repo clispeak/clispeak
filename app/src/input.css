@@ -171,3 +171,26 @@
     }
   }
 }
+
+/* iOS zooms the whole page when a control smaller than 16px takes focus, and
+   `width=device-width` never zooms back out — so the interface is left
+   magnified and half off-screen until the app is restarted. Patrick hit it on
+   the join dialog, whose ticket field is `text-xs` and whose name field is
+   `text-sm`: 12px and 14px, both under the threshold.
+
+   Deliberately outside `@layer base`. A base rule loses to a Tailwind utility
+   — this file already says so about the select's `pr-9` — and `text-xs` on
+   the element is exactly the utility that would win. Unlayered CSS beats
+   layered, which is the only way a rule like this holds without `!important`.
+
+   `pointer: coarse` rather than a platform check: 16px is the right minimum
+   for a control someone taps, on any touch device, and Android gets it for
+   the same reason it gets 44px targets. A desktop with a mouse keeps the
+   smaller type the layout was designed around. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
