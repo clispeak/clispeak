@@ -279,6 +279,44 @@ beside it removes the failure rather than reporting it.
 and a `voicecast` a **new** shell can find, with no terminal step and no admin
 prompt at any point.
 
+**Where it stands.** The engine half is done — Piper runs on Windows and is
+audible. The installer does not exist, and the reason it stalled is now
+removed: CI produces an NSIS artefact on every tag, so there is something to
+download and test. That matters more than convenience. Any Windows machine
+able to *build* an installer has the MSVC Build Tools, and those install the
+very runtime whose absence is the bug — so the build machine is by
+construction one where the failure cannot reproduce. Building in CI and
+testing a downloaded artefact on a clean VM is the only honest arrangement.
+Tracked as #30 and #20, the latter being whether we may redistribute the CRT
+at all.
+
+### M11 — Publishing
+
+Every platform builds. Nothing can be downloaded. That gap is the whole of
+what is left before anyone but us runs this.
+
+The release workflow packages four platforms on a `v*` tag and leaves the
+result as a **draft** on purpose. A private repository's releases are not
+public downloads, and more to the point, we redistribute Piper — which carries
+espeak-ng, ONNX Runtime, a phonemiser and a voice model, in an archive
+containing no licence text at all. Publishing before that is understood would
+be a decision made by accident.
+
+None of this is engineering. Each item is a call only Patrick can make:
+
+| | |
+|---|---|
+| #24 | what we may redistribute, and under what licence the binaries go out |
+| #23 | how a private repo serves public downloads |
+| #25 | a page offering the latest build per platform |
+| #29 | a macOS signing identity, so a rebuild stops prompting the keychain |
+| #31 | an Android signing key, before an APK is offered to anyone |
+| #20 | whether the MSVC runtime may ship inside the Windows installer |
+| #5  | branch protection, so main cannot go red unnoticed again |
+
+*Exit:* a person who has never seen this repository can install it on their own
+machine, from a link, and be spoken to.
+
 ---
 
 ## Testing strategy
