@@ -443,7 +443,13 @@ fn conflict_markers() -> anyhow::Result<()> {
     // this file, on prose describing a merge, and on any diff pasted into a
     // document — a gate that cries wolf is a gate that gets worked around,
     // and a gate that is worked around is not a gate.
-    let starts = ["<<<<<<< ", ">>>>>>> "];
+    //
+    // `|||||||` is diff3's base section. A conflict is caught without it,
+    // since the other three are always present, but leaving it out would mean
+    // reporting three of a diff3 conflict's four lines — and a report that
+    // silently accounts for part of what is wrong is the habit this gate
+    // exists to break.
+    let starts = ["<<<<<<< ", ">>>>>>> ", "||||||| "];
     let mut findings = Vec::new();
 
     for file in tracked_files()? {
@@ -456,7 +462,8 @@ fn conflict_markers() -> anyhow::Result<()> {
             continue;
         };
         for (i, line) in text.lines().enumerate() {
-            if starts.iter().any(|m| line.starts_with(m)) || line == "=======" {
+            let bare = line == "=======" || line == "|||||||";
+            if starts.iter().any(|m| line.starts_with(m)) || bare {
                 findings.push(format!("  {}:{}: {}", file.display(), i + 1, line));
             }
         }
@@ -494,6 +501,7 @@ fn conflict_markers() -> anyhow::Result<()> {
 fn workflow_run_steps() -> anyhow::Result<()> {
     let mut findings = Vec::new();
     let mut checked = 0usize;
+    let mut spanning = 0usize;
 
     for file in tracked_files()? {
         if file.parent() != Some(Path::new(".github/workflows")) {
@@ -509,6 +517,9 @@ fn workflow_run_steps() -> anyhow::Result<()> {
             let indent = before.len();
             let value = after.trim();
             if value.is_empty() || value.starts_with('|') {
+                if !value.is_empty() {
+                    spanning += 1;
+                }
                 // A literal block scalar, or a key whose value is on the
                 // following lines — `run: |` is the only accepted spelling
                 // and an empty value cannot fold anything.
@@ -546,7 +557,11 @@ fn workflow_run_steps() -> anyhow::Result<()> {
         }
         anyhow::bail!("a multi-line `run:` must use `|`");
     }
-    println!("workflows ok: {checked} run steps, every multi-line one literal");
+    // Both numbers, because "26 run steps, every multi-line one literal" was
+    // generous about what it had inspected: the count was of every `run:`
+    // key, most of them one-liners the rule does not apply to. A count exists
+    // to prove the gate looked at something, so it should say at what.
+    println!("workflows ok: {spanning} of {checked} run steps span lines, all literal");
     Ok(())
 }
 
@@ -556,9 +571,15 @@ fn workflow_run_steps() -> anyhow::Result<()> {
 /// comment and a `run` that is part of a longer word.
 fn split_run_key(line: &str) -> Option<(&str, &str)> {
     let trimmed = line.trim_start();
-    let indent = &line[..line.len() - trimmed.len()];
-    // A step's first key carries the list dash; the rest do not.
+    // A step's first key carries the list dash; the rest do not — and the
+    // dash counts toward the key's column. Measuring the indent before it put
+    // `- run:` two columns to the left of where it is, so every sibling key
+    // of a *one-line* run step read as "deeper than the key", which is the
+    // test for a folding plain scalar. Any step written dash-first with
+    // `name:` or `if:` after it would have been flagged for a fold that is
+    // not there. None exists here yet, so it passed at 26 while being wrong.
     let body = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+    let indent = &line[..line.len() - body.len()];
     let rest = body.strip_prefix("run:")?;
     // `run:x` is not valid YAML for a mapping key, and `running:` must not
     // match — the strip above already rules the second out, but a key with no
