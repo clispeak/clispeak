@@ -2605,11 +2605,39 @@ all day, so it was tested. Installed the rebuilt bundle and spoke a message:
 history records it `spoken`, not `NoEngine`. A signature that notarises and an
 app that cannot speak would have been a worse outcome than the bug.
 
-**Ad-hoc keeps `--timestamp=none`.** An ad-hoc signature cannot be
-timestamped, an ad-hoc bundle is not going to be notarised, and failing the
-local build over it would be a gate against something nobody was attempting.
-The hardened runtime is applied either way, so the local build exercises the
-same loader restrictions the shipped one will.
+**Both flags are conditional, and the second one is not a nicety.** An ad-hoc
+signature cannot be timestamped, which is the easy half. The hardened runtime
+is the half that nearly shipped a worse bug than the one being fixed.
+
+The runtime enables library validation, which requires a loaded library to
+carry the same team identifier as the process loading it. Under a Developer ID
+`piper` and its three dylibs share a team and it works — measured. **Under an
+ad-hoc signature neither has a team at all, and macOS does not read that as a
+match:**
+
+```text
+Library not loaded: @rpath/libespeak-ng.1.dylib
+Reason: code signature not valid for use in process:
+        mapping process and mapped file (non-platform) have different Team IDs
+```
+
+Applying it unconditionally would have made the app mute for every build
+without a certificate — every other developer's local build, and the artefact
+CI produces today, since `release.yml` builds unsigned while no secrets are
+set. A strictly wider blast radius than the notarisation rejection it fixes,
+and the identical failure the signed path had just been protected from.
+
+**The cost of the condition is real and is the other side of the trade.** A
+local ad-hoc build no longer exercises the loader restrictions the shipped one
+has, so a hardened-runtime problem can only be found on a signed build. That
+is worse coverage, and it is still the right way round: a signed build is
+testable on this machine, and a mute app on every unsigned build is not
+something to trade for coverage.
+
+**Found by review, not by the test.** The mechanism was reasoned correctly and
+then verified in exactly one of the two configurations the change affects — the
+one that does not ship. The lead asked which case had actually been run, which
+is a different question from whether the reasoning was right.
 
 **Costs.** Signing now needs the network, because a secure timestamp is
 fetched from Apple. That is a new way for `xtask bundle` to fail on a plane,
