@@ -2258,12 +2258,19 @@ async fn revoke(shared: &Arc<Shared>, name: &str, space: Option<&str>) -> Respon
     let me = shared.identity.id().to_string();
     let mut spaces = shared.spaces.lock().await;
 
-    let Some(target) = spaces
-        .get(&space)
-        .and_then(|r| r.by_name(name))
-        .map(|m| m.endpoint_id.clone())
-    else {
-        return Response::error(format!("no device named '{name}' in this space"));
+    let target = {
+        let Some(roster) = spaces.get(&space) else {
+            return Response::error(format!("no device named '{name}' in this space"));
+        };
+        match pick_device(
+            roster
+                .members()
+                .map(|m| (m.name.as_str(), m.endpoint_id.as_str())),
+            name,
+        ) {
+            Ok(id) => id,
+            Err(message) => return Response::error(message),
+        }
     };
     if target == me {
         return Response::error("that is this device — use `voicecast leave` instead");
@@ -3051,6 +3058,71 @@ async fn mark_seen(shared: &Arc<Shared>, peer: &str) {
 /// slicing a `str` at a byte offset panics on a multi-byte boundary and this
 /// runs inline on the node's own IPC task — so being wrong once cost the
 /// whole node rather than one bad line of output (#52).
+/// Which device a `revoke` selector means, or why it means none.
+///
+/// Pure, because the interesting behaviour is entirely in the choosing and a
+/// `Roster` inside a `Shared` inside a `Node` is a great deal of scaffolding
+/// to stand up in order to assert a `match`.
+///
+/// **A name that matches two devices is refused, not guessed.**
+/// `Roster::by_name` returns the first current member, so `revoke` used to be
+/// a coin toss that reported success — and the case is ordinary rather than
+/// exotic: re-pairing a phone after a rebuild leaves the old entry beside the
+/// new one, both answering to the same label. Removing the device you had
+/// just paired, and being told it worked, is the failure this project exists
+/// to avoid.
+///
+/// **An endpoint id is accepted, and that matters as much as the refusal.**
+/// The other half of a name clash is usually the *dead* device, and a dead
+/// device cannot be renamed — so an escape hatch that says "rename one of
+/// them" would leave a stale member that nothing can remove (#39).
+fn pick_device<'a>(
+    members: impl Iterator<Item = (&'a str, &'a str)>,
+    selector: &str,
+) -> Result<String, String> {
+    let mut by_name = Vec::new();
+    let mut by_id = Vec::new();
+    for (name, id) in members {
+        if name == selector {
+            by_name.push(id);
+        }
+        // A prefix, because `voicecast devices` prints a short id and that is
+        // what someone reading it will type back.
+        if id.starts_with(selector) {
+            by_id.push(id);
+        }
+    }
+
+    // A name wins over an id prefix: a name is what a person meant to type,
+    // and a selector cannot be both without somebody naming a device after a
+    // key.
+    match (by_name.as_slice(), by_id.as_slice()) {
+        ([only], _) => Ok((*only).to_string()),
+        (several @ [_, _, ..], _) => {
+            // One line, deliberately. The CLI escapes control characters in
+            // anything a node sends — newlines included — so a message
+            // written across several lines arrives carrying a literal `\n`,
+            // which the sibling error in `resolve` has been doing since it
+            // was written (#135).
+            let ids = several
+                .iter()
+                .map(|id| short_id(id))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "more than one device is called '{selector}' in this space \
+                 ({ids}). Revoke by id instead: voicecast revoke <id>"
+            ))
+        }
+        ([], [only]) => Ok((*only).to_string()),
+        ([], several @ [_, _, ..]) => Err(format!(
+            "'{selector}' is a prefix of {} device ids here. Give more of it.",
+            several.len()
+        )),
+        ([], []) => Err(format!("no device named '{selector}' in this space")),
+    }
+}
+
 fn short_id(id: &str) -> String {
     id.chars().take(16).collect()
 }
@@ -3120,6 +3192,55 @@ mod tests {
                 c.chars().count()
             );
         }
+    }
+
+    #[test]
+    fn revoke_refuses_a_name_that_means_two_devices() {
+        let members = || {
+            [
+                ("Phone", "aaaa1111aaaa1111aaaa"),
+                ("Phone", "bbbb2222bbbb2222bbbb"),
+                ("Laptop", "cccc3333cccc3333cccc"),
+            ]
+            .into_iter()
+        };
+
+        // The case that made this worth fixing: a phone re-paired after a
+        // rebuild, sitting beside the entry it replaced. `by_name` returned
+        // whichever came first and reported success (#39).
+        let e = super::pick_device(members(), "Phone").expect_err("should refuse");
+        assert!(e.contains("more than one"), "{e}");
+        assert!(
+            e.contains("aaaa1111aaaa1111") && e.contains("bbbb2222bbbb2222"),
+            "it must name both candidates: {e}"
+        );
+        // The message has to survive the CLI's control-character escaping,
+        // which turns a newline into a literal backslash-n (#135).
+        assert!(!e.contains('\n'), "the message must be one line: {e}");
+
+        assert_eq!(
+            super::pick_device(members(), "Laptop").expect("unambiguous"),
+            "cccc3333cccc3333cccc"
+        );
+
+        // An id is accepted, whole or as the prefix `devices` prints — the
+        // only way to remove the dead half of a name clash, because a dead
+        // device cannot be renamed.
+        assert_eq!(
+            super::pick_device(members(), "bbbb2222bbbb2222").expect("by short id"),
+            "bbbb2222bbbb2222bbbb"
+        );
+        assert_eq!(
+            super::pick_device(members(), "aaaa1111aaaa1111aaaa").expect("by whole id"),
+            "aaaa1111aaaa1111aaaa"
+        );
+
+        // A prefix that cannot separate them says so rather than choosing.
+        let e = super::pick_device([("A", "ff11"), ("B", "ff22")].into_iter(), "ff")
+            .expect_err("ambiguous prefix");
+        assert!(e.contains("prefix"), "{e}");
+
+        assert!(super::pick_device(members(), "nobody").is_err());
     }
 
     #[test]
