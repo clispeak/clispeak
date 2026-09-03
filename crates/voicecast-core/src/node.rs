@@ -26,7 +26,7 @@ use voicecast_text::chunk;
 
 use crate::history::{Entry, History};
 use crate::ipc::{read_frame, socket_name, write_frame};
-use crate::policy::{self, Policy};
+use crate::policy::{self, Policies};
 use crate::queue::{Job, Speaker, words_in};
 use crate::spaces::Spaces;
 use crate::transport::{read_msg, write_msg};
@@ -109,7 +109,7 @@ struct Shared {
     ///
     /// A plain mutex, not the async one: it is consulted from the synchronous
     /// enqueue path, and holding it spans a copy of a handful of bytes.
-    policy: std::sync::Mutex<Policy>,
+    policy: std::sync::Mutex<Policies>,
     on_show: Mutex<Option<WindowHook>>,
     on_quit: Mutex<Option<WindowHook>>,
 }
@@ -341,24 +341,27 @@ impl Node {
         &self.shared.name
     }
 
-    /// This device's speaking policy.
-    pub fn policy(&self) -> Response {
-        policy_response(&self.shared)
+    /// This device's speaking policy, and any per-space overrides.
+    pub async fn policy(&self) -> Response {
+        policy_response(&self.shared).await
     }
 
-    /// Silence this device, or let it speak again.
-    pub fn set_mute(&self, muted: bool) -> Response {
-        set_mute(&self.shared, muted)
+    /// Silence this device, or one space on it, or let it speak again.
+    ///
+    /// `space` is `None` for the whole device — not for the default space.
+    pub async fn set_mute(&self, muted: bool, space: Option<&str>) -> Response {
+        set_mute(&self.shared, muted, space).await
     }
 
-    /// Set or clear the daily quiet window.
-    pub fn set_quiet(
+    /// Set or clear a daily quiet window, device-wide or for one space.
+    pub async fn set_quiet(
         &self,
         from: Option<String>,
         to: Option<String>,
         high_breaks_through: bool,
+        space: Option<&str>,
     ) -> Response {
-        set_quiet(&self.shared, from, to, high_breaks_through)
+        set_quiet(&self.shared, from, to, high_breaks_through, space).await
     }
 
     /// Stop whatever is being spoken here, and drop the queue behind it.
@@ -630,13 +633,14 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
             let _ = history.save(&shared.history_path);
             Response::Done
         }
-        Request::Policy => policy_response(shared),
-        Request::SetMute { muted } => set_mute(shared, muted),
+        Request::Policy => policy_response(shared).await,
+        Request::SetMute { muted, space } => set_mute(shared, muted, space.as_deref()).await,
         Request::SetQuiet {
             from,
             to,
             high_breaks_through,
-        } => set_quiet(shared, from, to, high_breaks_through),
+            space,
+        } => set_quiet(shared, from, to, high_breaks_through, space.as_deref()).await,
         Request::Status => status(shared),
     };
     write_frame(&mut s, &response).await
@@ -669,7 +673,10 @@ fn current_voice_name(engine: &Arc<dyn SpeechEngine>) -> String {
 
 /// This node's health.
 fn status(shared: &Arc<Shared>) -> Response {
-    let policy = *shared.policy.lock().expect("policy lock");
+    // The device policy alone. Per-space overrides do not belong on a health
+    // line: it would have to report several answers to "is this muted", and
+    // the app's settings screen is where that question is actually asked.
+    let policy = shared.policy.lock().expect("policy lock").device;
     Response::Status {
         device_id: shared.identity.id().to_string(),
         key_store: shared.identity.location().to_string(),
@@ -725,8 +732,9 @@ async fn speak(shared: &Arc<Shared>, transport: &Arc<Transport>, ask: SpeakReque
         wait,
         voice,
         timeout: timeout_secs.map(std::time::Duration::from_secs),
-        // Typed here, so this device is the origin.
+        // Typed here, so this device is the origin, and in no space.
         from: None,
+        space: None,
     };
     let msg_id = outgoing.msg_id.clone();
     let targets = deliver(shared, transport, &outgoing, targets).await;
@@ -810,6 +818,12 @@ struct Outgoing {
     timeout: Option<std::time::Duration>,
     /// The device it came from, for the history. `None` means this one.
     from: Option<String>,
+    /// The space it arrived in, which selects the receiver's policy.
+    ///
+    /// `None` for text typed or piped in here: speech this device originates
+    /// is not *in* a space, so only the device policy governs it. Muting one
+    /// space must not silence the local agent, and muting the device must.
+    space: Option<String>,
 }
 
 /// One resolved destination for a message.
@@ -1091,8 +1105,9 @@ fn enqueue(
     chunks: Vec<String>,
     p: Priority,
     voice: Option<String>,
+    space: Option<&str>,
 ) -> Response {
-    enqueue_inner(shared, msg_id, chunks, p, voice, None)
+    enqueue_inner(shared, msg_id, chunks, p, voice, space, None)
 }
 
 /// Queue chunks, optionally with a channel signalled when speaking ends.
@@ -1105,14 +1120,18 @@ fn enqueue_inner(
     chunks: Vec<String>,
     p: Priority,
     voice: Option<String>,
+    space: Option<&str>,
     done: Option<tokio::sync::oneshot::Sender<Status>>,
 ) -> Response {
     // Policy comes first. A muted device has no business reporting a broken
     // engine: the sender needs to hear the reason that actually applies, and
     // "muted" is both truer and more actionable than "no engine".
+    //
+    // The space is passed rather than looked up because only the caller knows
+    // it: a peer message carries one, and text typed here belongs to none.
     let refusal = {
         let policy = shared.policy.lock().expect("policy lock");
-        policy.verdict(p, policy::local_minute(), shared.speaker.depth())
+        policy.verdict(space, p, policy::local_minute(), shared.speaker.depth())
     };
     if let Some(status) = refusal {
         return Response::Finished { status };
@@ -1153,6 +1172,7 @@ async fn speak_here(
         voice,
         timeout,
         from,
+        space,
     } = outgoing;
     let (p, wait) = (*p, *wait);
 
@@ -1168,7 +1188,10 @@ async fn speak_here(
             at: now_secs(),
             status: Status::Queued,
             priority: p,
-            space: None,
+            // Recorded so the history can say which space a message came in,
+            // and so a per-space refusal can be read back to the space it
+            // applied to rather than looking like a device-wide one.
+            space: space.clone(),
         },
     );
 
@@ -1182,7 +1205,14 @@ async fn speak_here(
     };
 
     if !wait {
-        return match enqueue(shared, msg_id.clone(), chunks.clone(), p, voice.clone()) {
+        return match enqueue(
+            shared,
+            msg_id.clone(),
+            chunks.clone(),
+            p,
+            voice.clone(),
+            space.as_deref(),
+        ) {
             Response::Accepted { .. } => (Status::Queued, None, None),
             Response::Error { message } => (settle(Status::NoEngine), None, Some(message)),
             // A policy refusal — muted, quiet hours, or dropped chatter. It
@@ -1202,6 +1232,7 @@ async fn speak_here(
         chunks.clone(),
         p,
         voice.clone(),
+        space.as_deref(),
         Some(tx),
     ) {
         Response::Accepted { .. } => {}
@@ -1356,25 +1387,97 @@ async fn send_control(
     }
 }
 
-/// This device's policy, in the shape the CLI and the app read.
-fn policy_response(shared: &Arc<Shared>) -> Response {
-    let p = *shared.policy.lock().expect("policy lock");
+/// This device's policy and its per-space overrides, as the CLI and app read.
+///
+/// Overrides are labelled rather than keyed by id, and a space whose override
+/// outlived it is skipped: a row naming a space this device no longer holds
+/// would be a control with nothing behind it.
+async fn policy_response(shared: &Arc<Shared>) -> Response {
+    let policies = shared.policy.lock().expect("policy lock").clone();
+    let p = policies.device;
+    let spaces = {
+        let held = shared.spaces.lock().await;
+        let mut rows: Vec<voicecast_proto::SpacePolicy> = policies
+            .spaces
+            .iter()
+            .filter(|(id, _)| held.get(id).is_some())
+            .map(|(id, over)| voicecast_proto::SpacePolicy {
+                label: held.label(id).to_string(),
+                muted: over.muted,
+                quiet_from: over.quiet.map(|q| policy::format_time(q.from)),
+                quiet_to: over.quiet.map(|q| policy::format_time(q.to)),
+                high_breaks_through: over.quiet.is_some_and(|q| q.high_breaks_through),
+            })
+            .collect();
+        // By label, because that is the order they are shown in. The map is
+        // ordered by space id, which is a hash and means nothing to a reader.
+        rows.sort_by(|a, b| a.label.cmp(&b.label));
+        rows
+    };
     Response::Policy {
         muted: p.muted,
         quiet_from: p.quiet.map(|q| policy::format_time(q.from)),
         quiet_to: p.quiet.map(|q| policy::format_time(q.to)),
         high_breaks_through: p.quiet.is_some_and(|q| q.high_breaks_through),
+        spaces,
     }
 }
 
-/// Silence this device, or let it speak again.
+/// Drop a space's policy override, for a space that no longer exists.
+///
+/// Best effort: failing to persist this leaves a stale entry that
+/// `policy_response` already filters out of what anyone can see, so a write
+/// error here is not worth failing the operation the caller actually asked for.
+fn forget_policy(shared: &Arc<Shared>, space: &str) {
+    let mut p = shared.policy.lock().expect("policy lock");
+    if p.space(space).is_none() {
+        return;
+    }
+    p.forget(space);
+    let _ = policy::save(&p);
+}
+
+/// Which policy a request is editing: the device's, or one space's.
+///
+/// Returns the space id, or `None` for the device. An unknown label is an
+/// error rather than a quiet fall back to the device policy — silently muting
+/// a whole device because a space name was mistyped is the worst outcome
+/// available here.
+async fn policy_target(
+    shared: &Arc<Shared>,
+    space: Option<&str>,
+) -> Result<Option<String>, Response> {
+    let Some(label) = space else {
+        return Ok(None);
+    };
+    match space_named(shared, Some(label)).await {
+        Ok(id) => Ok(Some(id)),
+        Err(message) => Err(Response::Error { message }),
+    }
+}
+
+/// Silence this device or one of its spaces, or let it speak again.
 ///
 /// Muting stops what is being said now as well as what comes next. Letting
 /// the current message run to the end would be a strange reading of "quiet".
-fn set_mute(shared: &Arc<Shared>, muted: bool) -> Response {
+/// A space mute stops the current message too — this device cannot tell which
+/// space the sound already leaving the speaker belongs to, and stopping is the
+/// safe way to be wrong.
+async fn set_mute(shared: &Arc<Shared>, muted: bool, space: Option<&str>) -> Response {
+    let target = match policy_target(shared, space).await {
+        Ok(target) => target,
+        Err(response) => return response,
+    };
     {
         let mut p = shared.policy.lock().expect("policy lock");
-        p.muted = muted;
+        match &target {
+            None => p.device.muted = muted,
+            Some(id) => {
+                let mut over = p.space(id).copied().unwrap_or_default();
+                over.muted = muted;
+                p.set_space(id, over);
+            }
+        }
         if let Err(e) = policy::save(&p) {
             return Response::Error {
                 message: format!("could not save the policy: {e}"),
@@ -1384,16 +1487,21 @@ fn set_mute(shared: &Arc<Shared>, muted: bool) -> Response {
     if muted {
         shared.engine.stop();
     }
-    policy_response(shared)
+    policy_response(shared).await
 }
 
-/// Set or clear the daily quiet window.
-fn set_quiet(
+/// Set or clear a daily quiet window, device-wide or for one space.
+async fn set_quiet(
     shared: &Arc<Shared>,
     from: Option<String>,
     to: Option<String>,
     high_breaks_through: bool,
+    space: Option<&str>,
 ) -> Response {
+    let target = match policy_target(shared, space).await {
+        Ok(target) => target,
+        Err(response) => return response,
+    };
     let quiet = match (from, to) {
         (Some(f), Some(t)) => {
             let (Some(from), Some(to)) = (policy::parse_time(&f), policy::parse_time(&t)) else {
@@ -1411,15 +1519,23 @@ fn set_quiet(
         // and guessing the other end would silence a device by accident.
         _ => None,
     };
-    let mut p = shared.policy.lock().expect("policy lock");
-    p.quiet = quiet;
-    if let Err(e) = policy::save(&p) {
-        return Response::Error {
-            message: format!("could not save the policy: {e}"),
-        };
+    {
+        let mut p = shared.policy.lock().expect("policy lock");
+        match &target {
+            None => p.device.quiet = quiet,
+            Some(id) => {
+                let mut over = p.space(id).copied().unwrap_or_default();
+                over.quiet = quiet;
+                p.set_space(id, over);
+            }
+        }
+        if let Err(e) = policy::save(&p) {
+            return Response::Error {
+                message: format!("could not save the policy: {e}"),
+            };
+        }
     }
-    drop(p);
-    policy_response(shared)
+    policy_response(shared).await
 }
 
 /// Recent messages, newest first.
@@ -1890,6 +2006,10 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&
     } else if let Err(message) = spaces.remove(&space) {
         return Response::Error { message };
     }
+    // The id is gone either way — removed, or re-keyed by refounding. An
+    // override left behind would apply again to whatever space is founded
+    // with that id next, which is silence nobody asked for.
+    forget_policy(shared, &space);
     if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
@@ -1956,6 +2076,10 @@ async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
             message: e.to_string(),
         };
     }
+    // Rotating mints a space with a new id, so the old override names nothing.
+    // Dropped rather than carried across: the new space has different members
+    // and a setting somebody chose for the old one is a guess about the new.
+    forget_policy(shared, &space);
     Response::Rotated {
         space: label,
         devices,
@@ -2054,6 +2178,7 @@ async fn leave_space(shared: &Arc<Shared>, label: &str) -> Response {
     if let Err(message) = spaces.remove(&id) {
         return Response::Error { message };
     }
+    forget_policy(shared, &id);
     if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
@@ -2191,12 +2316,15 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 // sent in, and nothing else: an unpaired device cannot make
                 // this one speak, and membership of one space grants nothing
                 // in another.
-                let allowed = match space_for(shared, space, &remote).await {
+                // The resolved id is kept, not just the yes/no: it is also
+                // what selects this space's receiver policy further down.
+                let in_space = space_for(shared, space, &remote).await;
+                let allowed = match &in_space {
                     Some(id) => shared
                         .spaces
                         .lock()
                         .await
-                        .get(&id)
+                        .get(id)
                         .is_some_and(|r| r.allows(&remote)),
                     None => false,
                 };
@@ -2241,6 +2369,7 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                     voice,
                     timeout: timeout_secs.map(std::time::Duration::from_secs),
                     from,
+                    space: in_space,
                 };
                 let (status, _took, _detail) = speak_here(shared, &outgoing).await;
                 write_msg(&mut send, &PeerMessage::Report { status }).await?;

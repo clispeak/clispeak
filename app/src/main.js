@@ -678,49 +678,159 @@ function insideWindow(from, to, minute) {
 }
 
 /**
+ * Which policy the Quiet controls are editing: `null` for this device, or a
+ * space label.
+ *
+ * Held here rather than read off the selector each time, because the selector
+ * is rebuilt whenever the spaces change and a rebuild would otherwise silently
+ * move the controls to a different policy under the reader's hands.
+ */
+/**
+ * What the time fields show for a policy with no window of its own.
+ *
+ * A neutral starting point, deliberately not carried over from whichever
+ * scope was looked at last.
+ */
+const DEFAULT_QUIET = { from: "22:00", to: "07:00" };
+
+let policyScope = null;
+
+/** Whether right now falls inside a policy's quiet window. */
+function inQuietHours(policy) {
+  const now = new Date();
+  const minute = now.getHours() * 60 + now.getMinutes();
+  const from = minutesOf(policy.from);
+  const to = minutesOf(policy.to);
+  return from != null && to != null && insideWindow(from, to, minute);
+}
+
+/**
  * Show whether this device will speak, and why not when it will not.
  *
  * The banner is the point of the section. Both controls can be set to
  * something reasonable and the device still be silent right now, and a person
  * wondering why nothing is coming out deserves to be told rather than left to
  * work it out from a clock and two time fields.
+ *
+ * With more than one space there are several answers to "will it speak", so
+ * the controls edit one policy at a time and say which. A mute switch that
+ * silently applies to something other than what is named beside it is the
+ * failure this whole section exists to avoid.
  */
 async function refreshPolicy() {
   let policy;
+  let spaces;
   try {
-    policy = await invoke("policy");
+    [policy, spaces] = await Promise.all([
+      invoke("policy"),
+      invoke("list_spaces").catch(() => []),
+    ]);
   } catch {
     return;
   }
 
-  if (document.activeElement !== $("mute")) $("mute").checked = policy.muted;
+  // A scope naming a space this device has since left falls back to the
+  // device, rather than editing a policy nothing can reach.
+  const labels = spaces.map((s) => s.label);
+  if (policyScope != null && !labels.includes(policyScope)) policyScope = null;
 
-  const hasWindow = policy.from != null && policy.to != null;
+  $("scope-row").hidden = labels.length < 2;
+  const picker = $("policy-scope");
+  // Left alone while open, or the list would close under the user's finger.
+  if (document.activeElement !== picker) {
+    picker.replaceChildren(
+      Object.assign(document.createElement("option"), {
+        value: "",
+        textContent: "This device",
+        selected: policyScope == null,
+      }),
+      ...labels.map((label) =>
+        Object.assign(document.createElement("option"), {
+          value: label,
+          textContent: label,
+          selected: label === policyScope,
+        }),
+      ),
+    );
+  }
+
+  // What the controls show: the device's own policy, or the selected space's
+  // override. A space with no override reads as "nothing extra", which is
+  // exactly what it is.
+  const forSpace = policyScope != null;
+  const shown = forSpace
+    ? (policy.spaces.find((s) => s.label === policyScope) ?? {
+        muted: false,
+        from: null,
+        to: null,
+        high_breaks_through: false,
+      })
+    : policy;
+
+  $("mute-label").textContent = forSpace ? `Mute ${policyScope}` : "Mute";
+  $("mute-note").textContent = forSpace
+    ? `Nothing sent in ${policyScope} is spoken here. Other spaces are unaffected.`
+    : "Silent until you turn this off. Nothing breaks through.";
+  $("quiet-note").textContent = forSpace
+    ? `Silent every day between these times, for ${policyScope} only.`
+    : "Silent every day between these times.";
+
+  // Said outright rather than left to be inferred from a checkbox that turns
+  // out to change nothing: a space adds silence and never removes it.
+  const note = $("scope-note");
+  if (!forSpace) {
+    note.hidden = true;
+  } else if (policy.muted) {
+    note.textContent =
+      `This device is muted, so ${policyScope} is silent whatever you set here. ` +
+      "Unmute the device to hear any of it.";
+    note.hidden = false;
+  } else {
+    note.textContent =
+      "Adds to this device's settings. A space can be quieter than the device, " +
+      "never louder.";
+    note.hidden = false;
+  }
+
+  if (document.activeElement !== $("mute")) $("mute").checked = shown.muted;
+
+  const hasWindow = shown.from != null && shown.to != null;
   if (document.activeElement !== $("quiet-on")) $("quiet-on").checked = hasWindow;
   $("quiet-controls").hidden = !$("quiet-on").checked;
-  if (hasWindow) {
-    if (document.activeElement !== $("quiet-from")) $("quiet-from").value = policy.from;
-    if (document.activeElement !== $("quiet-to")) $("quiet-to").value = policy.to;
+  // Reset when there is no window, rather than leaving whatever was there.
+  // With one policy the fields could only ever hold their own values; with a
+  // scope selector they hold the *previous* scope's, and switching from a
+  // space with a window to one without left the old times in place — so
+  // ticking the box would have saved a window the reader never chose for it.
+  if (document.activeElement !== $("quiet-from")) {
+    $("quiet-from").value = hasWindow ? shown.from : DEFAULT_QUIET.from;
+  }
+  if (document.activeElement !== $("quiet-to")) {
+    $("quiet-to").value = hasWindow ? shown.to : DEFAULT_QUIET.to;
   }
   if (document.activeElement !== $("quiet-high")) {
-    $("quiet-high").checked = policy.high_breaks_through;
+    $("quiet-high").checked = shown.high_breaks_through;
   }
 
-  const now = new Date();
-  const minute = now.getHours() * 60 + now.getMinutes();
-  const from = minutesOf(policy.from);
-  const to = minutesOf(policy.to);
-  const quietNow = from != null && to != null && insideWindow(from, to, minute);
-
+  // The banner answers "will this device speak", which is a question about
+  // the device however the controls happen to be scoped. Spaces silenced on
+  // their own are named, because the only other evidence is messages that
+  // never arrive.
   const banner = $("silent-banner");
+  const hushed = policy.spaces
+    .filter((s) => s.muted || inQuietHours(s))
+    .map((s) => s.label);
   if (policy.muted) {
     banner.textContent = "This device is muted. Nothing will be spoken.";
     banner.hidden = false;
-  } else if (quietNow && policy.high_breaks_through) {
+  } else if (inQuietHours(policy) && policy.high_breaks_through) {
     banner.textContent = "Quiet hours — only urgent messages will be spoken.";
     banner.hidden = false;
-  } else if (quietNow) {
+  } else if (inQuietHours(policy)) {
     banner.textContent = `Quiet hours until ${policy.to}. Nothing will be spoken.`;
+    banner.hidden = false;
+  } else if (hushed.length) {
+    banner.textContent = `Silent in ${hushed.join(", ")}. Everything else will be spoken.`;
     banner.hidden = false;
   } else {
     banner.hidden = true;
@@ -734,6 +844,7 @@ async function saveQuiet() {
     from: on ? $("quiet-from").value : null,
     to: on ? $("quiet-to").value : null,
     highBreaksThrough: $("quiet-high").checked,
+    space: policyScope,
   });
   await refreshPolicy();
 }
@@ -777,16 +888,26 @@ async function refreshVoice() {
   $("rate-value").textContent = `${Number(config.rate).toFixed(2)}×`;
 }
 
+$("policy-scope").onchange = async () => {
+  // An empty value is the device. Stored as null so every reader asks the
+  // same question — "is a space selected" — instead of comparing with "".
+  policyScope = $("policy-scope").value || null;
+  await refreshPolicy();
+};
+
 $("mute").onchange = async () => {
-  await call("set_mute", { muted: $("mute").checked });
-  say($("mute").checked ? "muted" : "unmuted");
+  const muted = $("mute").checked;
+  await call("set_mute", { muted, space: policyScope });
+  const what = policyScope ?? "this device";
+  say(muted ? `${what} muted` : `${what} unmuted`);
   await refreshPolicy();
 };
 
 $("quiet-on").onchange = async () => {
   $("quiet-controls").hidden = !$("quiet-on").checked;
   await saveQuiet();
-  say($("quiet-on").checked ? "quiet hours set" : "quiet hours off");
+  const forWhat = policyScope ? ` for ${policyScope}` : "";
+  say($("quiet-on").checked ? `quiet hours set${forWhat}` : `quiet hours off${forWhat}`);
 };
 
 // `change` rather than `input`: a time field fires while it is being typed

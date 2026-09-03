@@ -308,6 +308,26 @@ pub struct PolicyView {
     pub to: Option<String>,
     /// Whether `high` may break through the window.
     pub high_breaks_through: bool,
+    /// Per-space restrictions layered on top of the above.
+    ///
+    /// Only spaces that restrict something appear, so the interface can ask
+    /// "does this space differ" of the list itself.
+    pub spaces: Vec<SpacePolicyView>,
+}
+
+/// One space's extra restrictions, named as the person sees it.
+#[derive(Serialize)]
+pub struct SpacePolicyView {
+    /// This device's own name for the space.
+    pub label: String,
+    /// Silenced indefinitely, for this space alone.
+    pub muted: bool,
+    /// Quiet window start as `HH:MM`, if this space sets one.
+    pub from: Option<String>,
+    /// Quiet window end as `HH:MM`, if this space sets one.
+    pub to: Option<String>,
+    /// Whether `high` may break through *this space's* window.
+    pub high_breaks_through: bool,
 }
 
 impl From<Response> for PolicyView {
@@ -318,11 +338,22 @@ impl From<Response> for PolicyView {
                 quiet_from,
                 quiet_to,
                 high_breaks_through,
+                spaces,
             } => Self {
                 muted,
                 from: quiet_from,
                 to: quiet_to,
                 high_breaks_through,
+                spaces: spaces
+                    .into_iter()
+                    .map(|s| SpacePolicyView {
+                        label: s.label,
+                        muted: s.muted,
+                        from: s.quiet_from,
+                        to: s.quiet_to,
+                        high_breaks_through: s.high_breaks_through,
+                    })
+                    .collect(),
             },
             // Any other reply means the write failed. Reporting "not muted"
             // would be a lie the interface then shows as settled state, so
@@ -332,32 +363,45 @@ impl From<Response> for PolicyView {
                 from: None,
                 to: None,
                 high_breaks_through: false,
+                spaces: Vec::new(),
             },
         }
     }
 }
 
-/// This device's speaking policy.
+/// This device's speaking policy, and any per-space overrides.
 #[tauri::command]
-fn policy(state: State<'_, AppState>) -> PolicyView {
-    state.node.policy().into()
+async fn policy(state: State<'_, AppState>) -> Result<PolicyView, String> {
+    Ok(state.node.policy().await.into())
 }
 
-/// Silence this device, or let it speak again.
+/// Silence this device, or one space on it, or let it speak again.
 #[tauri::command]
-fn set_mute(state: State<'_, AppState>, muted: bool) -> PolicyView {
-    state.node.set_mute(muted).into()
+async fn set_mute(
+    state: State<'_, AppState>,
+    muted: bool,
+    space: Option<String>,
+) -> Result<PolicyView, String> {
+    match state.node.set_mute(muted, space.as_deref()).await {
+        Response::Error { message } => Err(message),
+        other => Ok(other.into()),
+    }
 }
 
-/// Set or clear the daily quiet window.
+/// Set or clear a daily quiet window, device-wide or for one space.
 #[tauri::command]
-fn set_quiet(
+async fn set_quiet(
     state: State<'_, AppState>,
     from: Option<String>,
     to: Option<String>,
     high_breaks_through: bool,
+    space: Option<String>,
 ) -> Result<PolicyView, String> {
-    match state.node.set_quiet(from, to, high_breaks_through) {
+    match state
+        .node
+        .set_quiet(from, to, high_breaks_through, space.as_deref())
+        .await
+    {
         Response::Error { message } => Err(message),
         other => Ok(other.into()),
     }

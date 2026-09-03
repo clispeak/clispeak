@@ -241,6 +241,15 @@ pub enum Request {
     SetMute {
         /// Whether to be silent.
         muted: bool,
+        /// Which space to mute, or `None` for the whole device.
+        ///
+        /// Note that `None` means *the device* here, not the default space —
+        /// unlike [`Request::Revoke`] and its neighbours, where an absent
+        /// space means "the default one". The asymmetry is deliberate: the
+        /// device-wide switch is the one most people ever touch, so it is the
+        /// one that needs no argument.
+        #[serde(default)]
+        space: Option<String>,
     },
     /// Set or clear the daily quiet window.
     SetQuiet {
@@ -252,6 +261,11 @@ pub enum Request {
         /// Whether `high` may break through. Off unless asked for.
         #[serde(default)]
         high_breaks_through: bool,
+        /// Which space the window belongs to, or `None` for the whole device.
+        ///
+        /// Same reading as [`Request::SetMute::space`].
+        #[serde(default)]
+        space: Option<String>,
     },
 }
 
@@ -403,6 +417,13 @@ pub enum Response {
         /// Whether `high` may break through quiet hours.
         #[serde(default)]
         high_breaks_through: bool,
+        /// Per-space restrictions on top of the device policy.
+        ///
+        /// Only spaces that actually restrict something appear. Defaulted so
+        /// a reader built before this existed sees the device policy and
+        /// nothing else, rather than failing to parse.
+        #[serde(default)]
+        spaces: Vec<SpacePolicy>,
     },
     /// The node could not do it.
     Error {
@@ -616,6 +637,29 @@ pub struct SpaceRow {
     pub is_default: bool,
     /// Whether this device founded it.
     pub founded_here: bool,
+}
+
+/// One space's extra restrictions, on top of the device policy.
+///
+/// Carries the *label* rather than the space id, because this is what a person
+/// reads. The id never appears in the interface, and a control that acts on a
+/// space has to be able to say which one out loud.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpacePolicy {
+    /// This device's own name for the space.
+    pub label: String,
+    /// Silenced indefinitely, for this space alone.
+    #[serde(default)]
+    pub muted: bool,
+    /// Quiet window start, `HH:MM` local, if this space sets one.
+    #[serde(default)]
+    pub quiet_from: Option<String>,
+    /// Quiet window end, `HH:MM` local, if this space sets one.
+    #[serde(default)]
+    pub quiet_to: Option<String>,
+    /// Whether `high` may break through *this space's* window.
+    #[serde(default)]
+    pub high_breaks_through: bool,
 }
 
 /// A device as shown by `voicecast devices`.
