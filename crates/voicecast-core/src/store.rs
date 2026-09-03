@@ -93,21 +93,27 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
 /// Unix-versus-not: every Unix we build for spells this the same way. Windows
 /// inherits the directory's ACL, which for a user's own profile directory is
 /// already owner-only.
+// portability-exception: a file mode has no portable spelling, and the
+// alternative is every state file going through the engine crate
 #[cfg(unix)]
 fn set_owner_only(opts: &mut std::fs::OpenOptions) {
     use std::os::unix::fs::OpenOptionsExt;
     opts.mode(0o600);
 }
 
+// portability-exception: the other arm of the same rule; Windows inherits
+// the directory ACL, which for a user's own profile is already owner-only
 #[cfg(not(unix))]
 fn set_owner_only(_opts: &mut std::fs::OpenOptions) {}
 
+// portability-exception: as above, for the directory rather than the file
 #[cfg(unix)]
 fn set_dir_owner_only(builder: &mut std::fs::DirBuilder) {
     use std::os::unix::fs::DirBuilderExt;
     builder.mode(0o700);
 }
 
+// portability-exception: the other arm of the same rule
 #[cfg(not(unix))]
 fn set_dir_owner_only(_builder: &mut std::fs::DirBuilder) {}
 
@@ -146,6 +152,8 @@ mod tests {
         assert!(path.exists());
     }
 
+    // portability-exception: asserts the mode the rule above sets, so it can
+    // only run where modes exist
     #[cfg(unix)]
     #[test]
     fn the_directory_it_makes_is_private_too() {
@@ -158,6 +166,8 @@ mod tests {
         assert_eq!(mode & 0o077, 0, "no group or other bits: {mode:o}");
     }
 
+    // portability-exception: asserts the mode the rule above sets, so it can
+    // only run where modes exist
     #[cfg(unix)]
     #[test]
     fn nobody_else_can_read_it() {

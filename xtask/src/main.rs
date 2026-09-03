@@ -39,19 +39,90 @@ fn main() -> anyhow::Result<()> {
 ///
 /// Comment lines are skipped — the docs legitimately *mention* the attribute,
 /// and matching prose would make the gate cry wolf.
+/// Every spelling of "this code is for one platform".
+///
+/// The gate checked two of these and printed "3 crates clean", which was a
+/// stronger sentence than it had earned: `cfg(unix)` sat in `voicecast-core`
+/// the whole time and was never mentioned. The forms that matter are the ones
+/// that change what compiles, and `cfg(unix)` with no `cfg(windows)` arm
+/// compiles on four targets and fails on the fifth — which is the exact shape
+/// of every row in CLAUDE.md's table of divergence that has bitten us (#88).
+const CONDITIONALS: &[&str] = &[
+    "target_os",
+    "target_family",
+    "target_arch",
+    "target_env",
+    "target_pointer_width",
+    "unix",
+    "windows",
+];
+
+/// Whether a line is a platform conditional.
+///
+/// Matched as a predicate inside a `cfg`, rather than as the literal text
+/// `cfg(unix`, because `#[cfg(not(unix))]` and `#[cfg(all(unix, feature =
+/// "x"))]` are the same claim wrapped differently and a prefix match sees
+/// neither. `unix` and `windows` need a word boundary or every line
+/// mentioning a `windows` field would trip.
+fn is_platform_conditional(line: &str) -> bool {
+    if !line.contains("cfg(") && !line.contains("cfg_attr(") {
+        return false;
+    }
+    CONDITIONALS.iter().any(|needle| {
+        line.match_indices(needle).any(|(at, _)| {
+            let before = line[..at].chars().next_back();
+            let after = line[at + needle.len()..].chars().next();
+            let boundary = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+            boundary(before) && boundary(after)
+        })
+    })
+}
+
+/// What a line must carry, on the line above, to be allowed one.
+///
+/// Some divergence is unavoidable: setting a file mode has no portable
+/// spelling, so `store.rs` needs `cfg(unix)` whatever the rule says. The
+/// choice is between an allowlist in this file, which drifts from the code it
+/// names, and a marker where the reader already is. The marker wins, and it
+/// has to carry a reason — a bare exemption is the thing that gets pasted
+/// without thought.
+const EXCEPTION: &str = "portability-exception:";
+
 fn portability() -> anyhow::Result<()> {
     let mut findings = Vec::new();
+    let mut allowed = 0usize;
 
     for krate in PORTABLE {
         let dir = PathBuf::from("crates").join(krate).join("src");
         for file in rust_files(&dir)? {
             let text = std::fs::read_to_string(&file)?;
-            for (i, line) in text.lines().enumerate() {
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
                 let trimmed = line.trim_start();
                 if trimmed.starts_with("//") {
                     continue;
                 }
-                if line.contains("cfg(target_os") || line.contains("cfg(target_family") {
+                if !is_platform_conditional(line) {
+                    continue;
+                }
+                // Anywhere in the comment block directly above, so the
+                // reason sits where it is read and may run to more than one
+                // line — which the first version of this could not handle,
+                // and which is exactly how long a real reason turns out to be.
+                let declared = lines[..i]
+                    .iter()
+                    .rev()
+                    .take_while(|l| {
+                        let t = l.trim_start();
+                        t.starts_with("//") || t.starts_with("#[") || t.is_empty()
+                    })
+                    .any(|l| {
+                        l.split_once(EXCEPTION)
+                            .is_some_and(|(_, why)| !why.trim().is_empty())
+                    });
+                if declared {
+                    allowed += 1;
+                } else {
                     findings.push(format!("  {}:{}: {}", file.display(), i + 1, trimmed));
                 }
             }
@@ -63,6 +134,10 @@ fn portability() -> anyhow::Result<()> {
         for f in &findings {
             eprintln!("{f}");
         }
+        eprintln!();
+        eprintln!("Move it to voicecast-engine or the Tauri shell. If it genuinely");
+        eprintln!("cannot be expressed portably, say why on the line above:");
+        eprintln!("  // {EXCEPTION} <the reason there is no portable spelling>");
         anyhow::bail!("platform code belongs in voicecast-engine or the Tauri shell");
     }
 
@@ -73,9 +148,17 @@ fn portability() -> anyhow::Result<()> {
     // The counts are said out loud because a gate that passed and a gate that
     // never ran print the same thing otherwise — which is how the JNI check
     // came to be doubted the day after it was written, reasonably.
+    // The counts are said out loud because a gate that passed and a gate that
+    // never ran print the same thing otherwise — and the declared exceptions
+    // are counted for the same reason: "clean" that silently means "clean
+    // apart from two" is how this check came to overstate itself.
     println!(
-        "portability ok: {} crates clean, {jni} JNI classes kept, {decisions} decisions numbered",
-        PORTABLE.len()
+        "portability ok: {} crates clean against {} conditional forms \
+         ({allowed} declared exception{}), {jni} JNI classes kept, \
+         {decisions} decisions numbered",
+        PORTABLE.len(),
+        CONDITIONALS.len(),
+        if allowed == 1 { "" } else { "s" }
     );
     Ok(())
 }

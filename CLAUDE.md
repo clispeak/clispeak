@@ -20,10 +20,25 @@ local checks reported green every time — see issue #5. Check the CI run, not
 your terminal, before claiming a change is safe.
 
 `cargo run -p xtask -- portability` fails if `voicecast-proto`,
-`voicecast-text` or `voicecast-core` grows a `#[cfg(target_os)]`. Platform
+`voicecast-text` or `voicecast-core` grows a platform conditional — any of
+`target_os`, `target_family`, `target_arch`, `target_env`,
+`target_pointer_width`, `unix` or `windows`, however it is wrapped. Platform
 divergence belongs in `voicecast-engine` or the Tauri shell. Anything that
 cannot be expressed portably gets a trait, not a conditional in the middle of
 business logic.
+
+For a long time it checked only the first two of those, so `cfg(unix)` sat in
+`voicecast-core` while the gate printed "3 crates clean" (#88). Where there is
+genuinely no portable spelling — setting a file mode is the only case so far —
+say so on the line above and the gate counts it instead of failing:
+
+```rust
+// portability-exception: a file mode has no portable spelling
+#[cfg(unix)]
+```
+
+The reason is required, and the count is printed, because an exemption nobody
+reads is the same silence the gate exists to break.
 
 **The divergence that has actually bitten was undeclared.** `portability`
 finds platform code that *announces itself* with a `cfg`. Every one of these
