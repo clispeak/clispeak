@@ -2677,6 +2677,17 @@ nothing teaches the reader that the control does nothing. The interface
 compares against the *field* rather than the reported path, so it appears as
 soon as someone types a different one rather than a poll later.
 
+**`default_path` is nullable, and that was a review catch.** The first version
+wrote `skill_default()?`, which on a machine with no home directory would have
+returned no status at all — hiding the entire skill panel, on exactly the
+machine where someone with a recorded path most needs to read it. Reachable
+only where `BaseDirs::new()` is `None`, and arguably a system that cannot
+install a skill anywhere; but the failure mode is *a section that disappears
+rather than explaining itself*, which is the bug decision 68 was written about
+and which this app shipped once already. Verified by returning a null default
+in the harness: the section stays and the button hides, which is the answer
+wanted in both halves.
+
 **Costs.** One more Tauri command and one more thing `skill_status` carries.
 The reset leaves the skill uninstalled at the default until Install is
 pressed, which is honest — the badge says `absent` and the button is directly
