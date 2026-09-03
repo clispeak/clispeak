@@ -242,7 +242,7 @@
         <div id="scope-row" hidden class="flex items-center justify-between gap-3">
           <label for="policy-scope" class="shrink-0 text-sm font-medium">Applies to</label>
           <select id="policy-scope"
-            class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm
+            class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white pl-3 pr-9 py-1.5 text-sm
                    focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
                    dark:border-neutral-700 dark:bg-neutral-900"></select>
         </div>
@@ -327,8 +327,11 @@
                   dark:border-neutral-800 dark:bg-neutral-900">
         <div id="voice-picker-wrap">
           <label for="voice-picker" class="mb-1 block text-sm">Voice</label>
+          <!-- Same classes as the scope picker above. It had neither `py`
+               nor `text-sm`, so it rendered a size larger than every other
+               control on the screen. -->
           <select id="voice-picker"
-            class="w-full rounded-lg border border-neutral-300 bg-white px-3
+            class="w-full rounded-lg border border-neutral-300 bg-white pl-3 pr-9 py-1.5 text-sm
                    focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
                    dark:border-neutral-700 dark:bg-neutral-900"></select>
         </div>

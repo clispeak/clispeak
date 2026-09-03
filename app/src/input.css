@@ -35,7 +35,30 @@
   }
   /* Touch targets. Anything tappable is at least 44px tall. */
   button,
-  input {
+  input,
+  select {
     min-height: 2.75rem;
+  }
+
+  /* Selects, drawn by us rather than by the webview.
+     A native <select> brings its own font size, its own vertical padding and
+     its own arrow, and all three differ between WebKitGTK, WKWebView and
+     Android's WebView. Left alone it sat taller than the inputs beside it,
+     in a larger face, with more left inset than the `px-3` it was given —
+     three webviews, three shapes, none of them matching the form it is part
+     of. `select` was also missing from the touch-target rule above, which is
+     why only this control was short of it.
+
+     Room for the arrow is `pr-9` on each element, not `padding-right` here:
+     a base rule loses to a utility, so `px-3` would have overridden it and a
+     long voice name would run under the arrow. */
+  select {
+    appearance: none;
+    /* Neutral-500, legible on both themes: a background image cannot take
+       `currentColor`, and one arrow beats maintaining two. */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1rem;
   }
 }
