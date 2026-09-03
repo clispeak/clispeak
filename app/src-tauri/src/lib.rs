@@ -362,8 +362,10 @@ pub struct SpacePolicyView {
     pub high_breaks_through: bool,
 }
 
-impl From<Response> for PolicyView {
-    fn from(r: Response) -> Self {
+impl TryFrom<Response> for PolicyView {
+    type Error = String;
+
+    fn try_from(r: Response) -> Result<Self, String> {
         match r {
             Response::Policy {
                 muted,
@@ -371,7 +373,7 @@ impl From<Response> for PolicyView {
                 quiet_to,
                 high_breaks_through,
                 spaces,
-            } => Self {
+            } => Ok(Self {
                 muted,
                 from: quiet_from,
                 to: quiet_to,
@@ -386,17 +388,15 @@ impl From<Response> for PolicyView {
                         high_breaks_through: s.high_breaks_through,
                     })
                     .collect(),
-            },
-            // Any other reply means the write failed. Reporting "not muted"
-            // would be a lie the interface then shows as settled state, so
-            // report the safe reading: nothing configured.
-            _ => Self {
-                muted: false,
-                from: None,
-                to: None,
-                high_breaks_through: false,
-                spaces: Vec::new(),
-            },
+            }),
+            // The old comment here said reporting "not muted" would be "a lie
+            // the interface then shows as settled state" — and then returned
+            // exactly that, because there was nowhere to put a failure. A
+            // corrupt or unreadable policy file therefore drew a device that
+            // was unmuted with no quiet window, which is a claim about
+            // settings nobody could read (#73).
+            Response::Error { message, .. } => Err(message),
+            other => Err(format!("unexpected reply asking for the policy: {other:?}")),
         }
     }
 }
@@ -404,7 +404,7 @@ impl From<Response> for PolicyView {
 /// This device's speaking policy, and any per-space overrides.
 #[tauri::command]
 async fn policy(state: State<'_, AppState>) -> Result<PolicyView, String> {
-    Ok(state.node.policy().await.into())
+    state.node.policy().await.try_into()
 }
 
 /// Silence this device, or one space on it, or let it speak again.
@@ -414,10 +414,13 @@ async fn set_mute(
     muted: bool,
     space: Option<String>,
 ) -> Result<PolicyView, String> {
-    match state.node.set_mute(muted, space.as_deref()).await {
-        Response::Error { message, .. } => Err(message),
-        other => Ok(other.into()),
-    }
+    // Every reply, error included, goes through one conversion now, so a
+    // failure here cannot become a view of settings nobody could read (#73).
+    state
+        .node
+        .set_mute(muted, space.as_deref())
+        .await
+        .try_into()
 }
 
 /// Set or clear a daily quiet window, device-wide or for one space.
@@ -429,14 +432,11 @@ async fn set_quiet(
     high_breaks_through: bool,
     space: Option<String>,
 ) -> Result<PolicyView, String> {
-    match state
+    state
         .node
         .set_quiet(from, to, high_breaks_through, space.as_deref())
         .await
-    {
-        Response::Error { message, .. } => Err(message),
-        other => Ok(other.into()),
-    }
+        .try_into()
 }
 
 /// How this device's voice is configured.
@@ -1587,6 +1587,45 @@ mod tests {
 /// one, which is indistinguishable from passing.
 #[cfg(test)]
 mod report_tests {
+    use super::PolicyView;
+    use voicecast_proto::Response;
+
+    #[test]
+    fn a_policy_that_could_not_be_read_is_an_error_not_a_blank_one() {
+        // The comment on this conversion used to say that reporting "not
+        // muted" would be "a lie the interface then shows as settled state",
+        // and then returned exactly that. A corrupt policy file drew a device
+        // that was unmuted with no quiet window (#73).
+        let refused = Response::error("policy.json is not valid JSON");
+        match PolicyView::try_from(refused) {
+            Err(why) => assert_eq!(why, "policy.json is not valid JSON"),
+            Ok(_) => panic!("a policy that could not be read must not convert"),
+        }
+    }
+
+    #[test]
+    fn an_unexpected_reply_is_also_an_error() {
+        // A reply this build has never seen must not be read as "nothing
+        // configured" either — that is the same lie by another route.
+        assert!(matches!(PolicyView::try_from(Response::Done), Err(_)));
+    }
+
+    #[test]
+    fn a_real_policy_still_converts() {
+        let ok = Response::Policy {
+            muted: true,
+            quiet_from: Some("22:00".into()),
+            quiet_to: Some("07:00".into()),
+            high_breaks_through: true,
+            spaces: Vec::new(),
+        };
+        let Ok(view) = PolicyView::try_from(ok) else {
+            panic!("a real policy converts")
+        };
+        assert!(view.muted);
+        assert_eq!(view.from.as_deref(), Some("22:00"));
+    }
+
     use super::*;
 
     /// The bug this closes: a successful report read as a failure.

@@ -692,7 +692,12 @@ async function refreshPolicy() {
       invoke("policy"),
       invoke("list_spaces").catch(() => []),
     ]);
-  } catch {
+  } catch (e) {
+    // Returning quietly here left the last drawn state on screen, which for
+    // a first read is "not muted, no quiet hours" — a claim about settings
+    // nobody could read. The node now says why it could not answer, so say
+    // it (#73).
+    say(`Could not read this device's policy: ${e}`, "error");
     return;
   }
 
