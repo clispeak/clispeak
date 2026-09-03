@@ -46,7 +46,6 @@ object Speech {
                     // locale is far better than silence.
                     tts?.setLanguage(Locale.US)
                 }
-                ready = true
                 failure = null
                 // Apply anything chosen before the engine existed.
                 // TextToSpeech initialises asynchronously, so a preference
@@ -54,6 +53,13 @@ object Speech {
                 // apply it to — and was silently dropped.
                 applyPreferences()
                 tts?.setOnUtteranceProgressListener(progress)
+                // Last, deliberately. `ready` is what lets `speak` run, and
+                // `speak` waits on a latch the progress listener releases —
+                // so publishing readiness before installing that listener
+                // left a window where an utterance registered a latch nobody
+                // would ever count down, parking the speech thread for the
+                // five-minute timeout (#61).
+                ready = true
                 Log.i(TAG, "speech engine ready")
             } else {
                 failure = "this device has no working text-to-speech engine"
@@ -154,7 +160,17 @@ object Speech {
     fun setVoice(name: String): Boolean {
         voiceName = name
         val engine = tts ?: return true
-        val match = engine.voices.orEmpty().firstOrNull { it.name == name } ?: return false
+        // `voices` throws on some engines — see `voices()` below, which has
+        // said so for longer than this has been catching it. An exception
+        // crossing back into JNI used to be left pending and take the process
+        // down when the speech thread detached (#61). Rust also clears it
+        // now; both ends, because either alone leaves the other guessing.
+        val match = try {
+            engine.voices.orEmpty().firstOrNull { it.name == name }
+        } catch (e: Exception) {
+            Log.w(TAG, "this engine refused to list its voices", e)
+            null
+        } ?: return false
         return engine.setVoice(match) == TextToSpeech.SUCCESS
     }
 
@@ -175,7 +191,15 @@ object Speech {
         val engine = tts ?: return
         engine.setSpeechRate(rate)
         voiceName?.let { name ->
-            engine.voices.orEmpty().firstOrNull { it.name == name }?.let { engine.setVoice(it) }
+            // As in `setVoice`: an engine that throws from `voices` must cost
+            // a preference, not the process. This one runs inside the init
+            // callback, where a throw would also leave the engine half
+            // configured and `ready` never set.
+            try {
+                engine.voices.orEmpty().firstOrNull { it.name == name }?.let { engine.setVoice(it) }
+            } catch (e: Exception) {
+                Log.w(TAG, "could not restore the chosen voice", e)
+            }
         }
     }
 
@@ -231,9 +255,23 @@ object Speech {
 
         val id = "voicecast-" + counter.incrementAndGet()
         val latch = CountDownLatch(1)
+        // Read before registering, so a stop arriving from here on is visible
+        // below. See the check after `speak` returns.
+        val generation = stopGeneration.get()
         waiting[id] = latch
 
         if (engine.speak(text, TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) {
+            waiting.remove(id)
+            return false
+        }
+
+        // A stop between registering the latch and queueing the text released
+        // that latch and cleared the map — so the wait below returned at once
+        // and this reported success for an utterance queued *after* the stop,
+        // which then played in full while the queue said the same chunk again
+        // behind the urgent message that interrupted it (#61).
+        if (stopGeneration.get() != generation) {
+            engine.stop()
             waiting.remove(id)
             return false
         }
@@ -244,18 +282,32 @@ object Speech {
         return try {
             latch.await(5, TimeUnit.MINUTES)
         } catch (_: InterruptedException) {
-            waiting.remove(id)
             Thread.currentThread().interrupt()
             false
+        } finally {
+            // Always, including the timeout path: leaving the entry behind
+            // meant a stuck utterance's latch stayed in the map for the life
+            // of the process, and every later `stop` counted it down again.
+            waiting.remove(id)
         }
     }
 
     /** Gives every utterance a distinct id, which the listener keys on. */
     private val counter = java.util.concurrent.atomic.AtomicLong(0)
 
+    /**
+     * Bumped by every `stop`, so `speak` can tell one happened while it was
+     * queueing. A count rather than a flag: two stops around one `speak` must
+     * not cancel out.
+     */
+    private val stopGeneration = java.util.concurrent.atomic.AtomicLong(0)
+
     /** Stop immediately, discarding anything queued. */
     @JvmStatic
     fun stop() {
+        // Before the engine call, so a `speak` racing this sees the bump
+        // whichever order the two land in.
+        stopGeneration.incrementAndGet()
         tts?.stop()
         // Release anyone waiting; onStop may not fire for queued utterances.
         waiting.values.forEach { it.countDown() }
