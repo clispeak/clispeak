@@ -11,6 +11,7 @@
 //! while reading one roster, which looked like the roster was corrupt.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use keyring::v1::Entry;
 use voicecast_core::{FileKeyStore, IdentityError, KeyStore};
@@ -36,6 +37,35 @@ pub struct DesktopKeyStore {
     /// from every space it belongs to. Holds no secret, only the fact that
     /// one exists.
     marker: PathBuf,
+    /// What the keyring said, asked once and then remembered.
+    ///
+    /// `describe()` used to call `get_secret()` a second time on every start.
+    /// On macOS each call is a keychain prompt, so starting a node asked the
+    /// user twice for the same secret — once to load the identity and once to
+    /// print a line saying where it came from. Issue #83.
+    asked: Mutex<Option<Keyring>>,
+}
+
+/// What the platform keyring had to say, in a form that survives being cached.
+#[derive(Clone, Debug)]
+enum Keyring {
+    /// It held a key of the right size.
+    Held([u8; 32]),
+    /// It answered, and holds nothing for this device.
+    Empty,
+    /// It held something that is not a key.
+    Malformed(usize),
+    /// It exists but would not answer — locked, or a broken session bus.
+    ///
+    /// Kept apart from [`Empty`] because the two need opposite responses and
+    /// collapsing them told someone whose keychain was locked that their key
+    /// was in a file. The `keyring` crate's own message is carried along, so
+    /// the reason survives to whoever reads it.
+    ///
+    /// [`Empty`]: Keyring::Empty
+    Unreadable(String),
+    /// No keyring on this platform, or none this build can reach.
+    Missing,
 }
 
 impl DesktopKeyStore {
@@ -44,12 +74,45 @@ impl DesktopKeyStore {
         Ok(Self {
             fallback: FileKeyStore::default_location()?,
             marker: voicecast_core::config_dir()?.join("identity.in-keyring"),
+            asked: Mutex::new(None),
         })
     }
 
     /// Whether a key was previously stored in the keyring.
     fn keyring_was_used(&self) -> bool {
         self.marker.exists()
+    }
+
+    /// Ask the keyring, at most once for the life of this store.
+    ///
+    /// Every path that wants to know goes through here, which is what makes
+    /// "once" true rather than "once per caller who remembered".
+    fn ask(&self) -> Keyring {
+        let mut cached = self.asked.lock().expect("keyring cache");
+        if let Some(answer) = cached.as_ref() {
+            return answer.clone();
+        }
+        let answer = Self::probe();
+        *cached = Some(answer.clone());
+        answer
+    }
+
+    /// The one place that actually touches the keyring.
+    fn probe() -> Keyring {
+        let Some(entry) = Self::entry() else {
+            return Keyring::Missing;
+        };
+        match entry.get_secret() {
+            Ok(secret) => match <[u8; 32]>::try_from(secret.as_slice()) {
+                Ok(key) => Keyring::Held(key),
+                Err(_) => Keyring::Malformed(secret.len()),
+            },
+            // The one error that genuinely means "nothing here". Everything
+            // else is the keyring refusing, which is a different situation
+            // and used to read identically.
+            Err(keyring::Error::NoEntry) => Keyring::Empty,
+            Err(e) => Keyring::Unreadable(e.to_string()),
+        }
     }
 
     /// Record that the keyring holds this device's key.
@@ -116,22 +179,21 @@ fn decide(
 
 impl KeyStore for DesktopKeyStore {
     fn load(&self) -> Result<Option<[u8; 32]>, IdentityError> {
-        let mut from_keyring = None;
-        if let Some(entry) = Self::entry()
-            && let Ok(secret) = entry.get_secret()
-        {
-            let arr: [u8; 32] = secret.as_slice().try_into().map_err(|_| {
-                IdentityError::Malformed(format!(
-                    "keyring holds {} bytes, expected 32",
-                    secret.len()
-                ))
-            })?;
-            // Also recorded here, not only on save: a device provisioned
-            // before the marker existed would otherwise never gain one, and
-            // the protection above would never engage for it.
-            self.mark_keyring_used();
-            from_keyring = Some(arr);
-        }
+        let from_keyring = match self.ask() {
+            Keyring::Held(key) => {
+                // Also recorded here, not only on save: a device provisioned
+                // before the marker existed would otherwise never gain one,
+                // and the protection below would never engage for it.
+                self.mark_keyring_used();
+                Some(key)
+            }
+            Keyring::Malformed(len) => {
+                return Err(IdentityError::Malformed(format!(
+                    "keyring holds {len} bytes, expected 32"
+                )));
+            }
+            Keyring::Empty | Keyring::Unreadable(_) | Keyring::Missing => None,
+        };
 
         decide(
             from_keyring,
@@ -146,15 +208,32 @@ impl KeyStore for DesktopKeyStore {
             && entry.set_secret(key).is_ok()
         {
             self.mark_keyring_used();
+            // The cache now describes a keyring that no longer holds this,
+            // and a stale "empty" here would make `describe` contradict what
+            // we just did.
+            *self.asked.lock().expect("keyring cache") = Some(Keyring::Held(*key));
             return Ok(());
         }
         self.fallback.save(key)
     }
 
     fn describe(&self) -> String {
-        match Self::entry() {
-            Some(entry) if entry.get_secret().is_ok() => "system keyring".to_string(),
-            _ => self.fallback.describe(),
+        match self.ask() {
+            Keyring::Held(_) => "system keyring".to_string(),
+            // Naming the keyring as the thing to deal with. Reporting "file"
+            // was true and useless: the key it would read is not there, and
+            // nothing told the user that the keychain was the problem.
+            Keyring::Unreadable(why) => {
+                format!(
+                    "{} — the system keyring is present but would not answer ({why}). \
+                     Unlock it and restart to use it instead",
+                    self.fallback.describe()
+                )
+            }
+            Keyring::Malformed(len) => {
+                format!("system keyring, holding {len} bytes where 32 are expected")
+            }
+            Keyring::Empty | Keyring::Missing => self.fallback.describe(),
         }
     }
 }
@@ -199,5 +278,69 @@ mod tests {
             message.contains("voicecast-marker-test"),
             "should say how to override"
         );
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    /// Issue #83: the keyring is asked once, not once per caller.
+    ///
+    /// Asserted through the cache rather than by counting keychain prompts,
+    /// which no test can do. `ask` is the only path to the keyring, so a
+    /// populated cache is what "asked once" means here — and `probe` being
+    /// private and called from exactly one place is the other half.
+    #[test]
+    fn a_second_ask_does_not_reach_the_keyring() {
+        let store = DesktopKeyStore {
+            fallback: FileKeyStore::at(PathBuf::from("/tmp/voicecast-cache-test")),
+            marker: PathBuf::from("/tmp/voicecast-cache-test-marker"),
+            asked: Mutex::new(Some(Keyring::Empty)),
+        };
+        // Pre-seeded, so anything that reached the keyring would change it.
+        assert!(matches!(store.ask(), Keyring::Empty));
+        assert!(matches!(store.ask(), Keyring::Empty));
+        assert!(matches!(
+            store.asked.lock().unwrap().as_ref(),
+            Some(Keyring::Empty)
+        ));
+    }
+
+    /// A locked keyring and a missing key must not describe the same.
+    #[test]
+    fn a_keyring_that_will_not_answer_says_so() {
+        let locked = DesktopKeyStore {
+            fallback: FileKeyStore::at(PathBuf::from("/tmp/voicecast-cache-test")),
+            marker: PathBuf::from("/tmp/voicecast-cache-test-marker"),
+            asked: Mutex::new(Some(Keyring::Unreadable("keychain is locked".into()))),
+        };
+        let empty = DesktopKeyStore {
+            fallback: FileKeyStore::at(PathBuf::from("/tmp/voicecast-cache-test")),
+            marker: PathBuf::from("/tmp/voicecast-cache-test-marker"),
+            asked: Mutex::new(Some(Keyring::Empty)),
+        };
+
+        let locked = locked.describe();
+        assert_ne!(
+            locked,
+            empty.describe(),
+            "a locked keyring reported the same as one with no key, which is \
+             what stopped anyone learning the keychain was the thing to unlock"
+        );
+        assert!(locked.contains("keychain is locked"), "{locked}");
+        assert!(locked.contains("Unlock"), "{locked}");
+    }
+
+    /// Saving updates what `describe` will say, rather than leaving a stale no.
+    #[test]
+    fn a_stale_empty_does_not_survive_a_save() {
+        let store = DesktopKeyStore {
+            fallback: FileKeyStore::at(PathBuf::from("/tmp/voicecast-cache-test")),
+            marker: PathBuf::from("/tmp/voicecast-cache-test-marker"),
+            asked: Mutex::new(Some(Keyring::Empty)),
+        };
+        *store.asked.lock().unwrap() = Some(Keyring::Held([9u8; 32]));
+        assert_eq!(store.describe(), "system keyring");
     }
 }
