@@ -153,6 +153,19 @@ impl AndroidEngine {
     ///
     /// Speech happens on a dedicated worker thread that the JVM knows nothing
     /// about, so it has to attach before making any call.
+    ///
+    /// **The exception has to be cleared before this returns.** A JNI call
+    /// that throws leaves the exception *pending* on the thread — `jni` 0.21
+    /// documents that returning `Err(JavaException)` does not clear it — and
+    /// the guard from `attach_current_thread` detaches the thread when it
+    /// drops. Detaching with an exception pending hands it to ART's uncaught
+    /// handler, which kills the process. Kotlin can throw here: `setVoice`
+    /// and `applyPreferences` both reach `engine.voices`, and that method's
+    /// own comment says some engines throw from it. So the user picks a voice
+    /// on a device with an unusual TTS engine and the app disappears (#61).
+    ///
+    /// Described before clearing, so the reason reaches logcat rather than
+    /// being swallowed along with the crash it was causing.
     fn with_env<T>(
         f: impl FnOnce(&mut JNIEnv) -> Result<T, jni::errors::Error>,
     ) -> Result<T, EngineError> {
@@ -162,7 +175,19 @@ impl AndroidEngine {
         let mut env = vm
             .attach_current_thread()
             .map_err(|e| EngineError::Unavailable(format!("could not attach to the JVM: {e}")))?;
-        f(&mut env).map_err(|e| EngineError::Unavailable(format!("speech call failed: {e}")))
+        let out = f(&mut env);
+        if let Err(e) = &out {
+            // `exception_check` rather than matching on the error kind: a
+            // helper several calls deep can leave one pending while returning
+            // some other error, and the cost of asking is one JNI call on a
+            // path that has already failed.
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_describe();
+                let _ = env.exception_clear();
+            }
+            return Err(EngineError::Unavailable(format!("speech call failed: {e}")));
+        }
+        out.map_err(|e| EngineError::Unavailable(format!("speech call failed: {e}")))
     }
 
     /// Call a no-argument static method returning a string.

@@ -13,6 +13,14 @@ import android.os.IBinder
 /**
  * Keeps the node alive while the app is in the background.
  *
+ * **This service does not own the node.** The node is created and served by
+ * the Activity; this only holds the foreground slot that stops Android
+ * suspending the process. That split is why a `START_STICKY` restart brings
+ * the service back without anything behind it — see `onStartCommand`. Making
+ * the service the owner would remove the whole class of problem and is a
+ * larger change than the notification text: it is noted on #60 rather than
+ * pretended away here.
+ *
  * Android stops an ordinary app's threads soon after it leaves the foreground,
  * which for this app means the device silently stops being reachable —
  * messages sent to it simply time out. A foreground service is the only
@@ -23,14 +31,23 @@ class NodeService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // A null intent means Android restarted us after reclaiming the
+        // process, rather than the app asking. That distinction matters: the
+        // node is started by the Activity and does not exist in a freshly
+        // restarted process, so this service comes back holding nothing. It
+        // used to post "Listening for messages" anyway — an ongoing
+        // notification saying the device was reachable while it was not, on
+        // the platform where the whole point of the service is to be honest
+        // about that (#60).
+        val listening = intent != null
+        startForeground(NOTIFICATION_ID, buildNotification(listening))
         // START_STICKY: if Android reclaims us under memory pressure, come
         // back — a device that quietly stops listening is the failure this
         // service exists to prevent.
         return START_STICKY
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(listening: Boolean): Notification {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -60,7 +77,15 @@ class NodeService : Service() {
 
         return builder
             .setContentTitle("voicecast")
-            .setContentText("Listening for messages")
+            .setContentText(
+                if (listening) {
+                    "Listening for messages"
+                } else {
+                    // Tapping opens the Activity, which is what starts the
+                    // node — so this is both true and the thing to do.
+                    "Tap to start listening again"
+                },
+            )
             .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
             .setContentIntent(open)
             .setOngoing(true)
