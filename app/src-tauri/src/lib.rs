@@ -622,7 +622,15 @@ pub struct SkillStatus {
     /// directory. Sent so the interface can tell whether the path in front of
     /// the user is a choice or the default, which is the difference between
     /// offering to reset it and offering nothing.
-    pub default_path: String,
+    ///
+    /// Nullable rather than required, and the reason is a failure mode rather
+    /// than a shape. `skill_default` is `None` only where there is no home
+    /// directory, and the first version reached for `?` — which would have
+    /// returned no status at all and made the whole panel vanish, on exactly
+    /// the machine where a user with a recorded path most needs to see it.
+    /// A section that disappears rather than explaining itself is the bug
+    /// this app has already shipped once (#109).
+    pub default_path: Option<String>,
     /// "absent", "current" or "stale".
     pub state: String,
     /// Whether this build can write anywhere, or only the default.
@@ -649,7 +657,7 @@ fn skill_status() -> Option<SkillStatus> {
     Some(SkillStatus {
         state: skill_state(&path).into(),
         path: path.display().to_string(),
-        default_path: skill_default()?.display().to_string(),
+        default_path: skill_default().map(|p| p.display().to_string()),
         sandboxed: sandboxed(),
     })
 }
