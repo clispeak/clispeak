@@ -265,6 +265,12 @@ async function refresh() {
       ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
       : "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300");
 
+  // A device that cannot speak says why, on the screen someone is looking at
+  // when they notice it has gone quiet. The reason has always existed; it
+  // reached only whoever sent a message and was never heard.
+  $("engine-banner").hidden = !status.reason;
+  $("engine-reason").textContent = status.reason ?? "";
+
   // Only shown where it means something: desktop always reports true.
   try {
     $("battery").hidden = await invoke("battery_ok");
