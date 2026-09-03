@@ -53,7 +53,7 @@ pub struct VoiceSettings {
 }
 
 /// Why speech is unavailable or degraded.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum EngineError {
     /// No usable engine — e.g. a voice model not yet downloaded.
     #[error("no speech engine available: {0}")]

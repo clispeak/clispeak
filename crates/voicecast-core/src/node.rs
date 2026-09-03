@@ -198,9 +198,9 @@ impl Node {
         let notify = Arc::clone(&recorder);
         let speaker = Speaker::new(
             Arc::clone(&engine),
-            Arc::new(move |msg_id, status| {
+            Arc::new(move |msg_id, ended: crate::queue::Ended| {
                 if let Some(shared) = notify.lock().expect("recorder lock").upgrade() {
-                    remember_outcome(&shared, msg_id, status);
+                    remember_outcome(&shared, msg_id, ended.status);
                 }
             }),
         );
@@ -1293,7 +1293,7 @@ fn enqueue_inner(
     p: Priority,
     voice: Option<String>,
     space: Option<&str>,
-    done: Option<tokio::sync::oneshot::Sender<Status>>,
+    done: Option<tokio::sync::oneshot::Sender<crate::queue::Ended>>,
 ) -> Response {
     // Policy comes first. A muted device has no business reporting a broken
     // engine: the sender needs to hear the reason that actually applies, and
@@ -1426,7 +1426,14 @@ async fn speak_here(
 
     let started = std::time::Instant::now();
     match tokio::time::timeout(limit, rx).await {
-        Ok(Ok(status)) => (status, Some(started.elapsed().as_millis() as u64), None),
+        // The reason travels with the status now, so a receiver that has an
+        // engine which ran and failed says which command failed and how,
+        // instead of "no engine" and nothing (#86).
+        Ok(Ok(ended)) => (
+            ended.status,
+            Some(started.elapsed().as_millis() as u64),
+            ended.detail,
+        ),
         // We gave up waiting before the device finished. It was accepted and
         // is still going, so say *that* — "queued" reads as though nothing
         // had started, which is exactly wrong for a long message that is

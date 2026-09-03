@@ -10,7 +10,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 
-use voicecast_engine::SpeechEngine;
+use voicecast_engine::{EngineError, SpeechEngine};
 use voicecast_proto::Status;
 
 /// A message waiting its turn.
@@ -25,15 +25,39 @@ pub struct Job {
     ///
     /// Optional because the common case is fire-and-forget: an agent firing
     /// notifications should not pay for machinery it is not using.
-    pub done: Option<tokio::sync::oneshot::Sender<Status>>,
+    pub done: Option<tokio::sync::oneshot::Sender<Ended>>,
+}
+
+/// How a message ended, and why when the status alone does not say.
+///
+/// The status used to travel on its own, so every engine failure arrived as
+/// `NoEngine` with the reason dropped on the floor. A receiver with a working
+/// Piper and no audio session then told the sender to install a speech engine
+/// that was already there, which is the opposite of the fix (#86).
+#[derive(Debug, Clone)]
+pub struct Ended {
+    /// What happened.
+    pub status: Status,
+    /// Why, when there is more to say than the status.
+    pub detail: Option<String>,
+}
+
+impl Ended {
+    /// An outcome that speaks for itself.
+    pub fn plain(status: Status) -> Self {
+        Self {
+            status,
+            detail: None,
+        }
+    }
 }
 
 impl Job {
     /// Tell a waiting caller how this ended, if anyone is still listening.
-    fn finish(self, status: Status) {
+    fn finish(self, ended: Ended) {
         if let Some(done) = self.done {
             // Ignored deliberately: the caller may have stopped waiting.
-            let _ = done.send(status);
+            let _ = done.send(ended);
         }
     }
 }
@@ -118,7 +142,7 @@ pub struct Snapshot {
 ///
 /// The `done` channel only exists when a caller asked to wait, and most do
 /// not — so it cannot be what keeps a record. This fires either way.
-pub type OnFinish = Arc<dyn Fn(&str, Status) + Send + Sync>;
+pub type OnFinish = Arc<dyn Fn(&str, Ended) + Send + Sync>;
 
 /// The speaking thread and the queue feeding it.
 #[derive(Clone)]
@@ -216,8 +240,8 @@ impl Speaker {
         };
         match waiting {
             Some(job) => {
-                (self.on_finish)(&job.msg_id, Status::Cancelled);
-                job.finish(Status::Cancelled);
+                (self.on_finish)(&job.msg_id, Ended::plain(Status::Cancelled));
+                job.finish(Ended::plain(Status::Cancelled));
                 true
             }
             None => false,
@@ -239,8 +263,8 @@ impl Speaker {
         // Told individually rather than left to time out: each of these has a
         // caller that asked to be informed, and silence would read as a hang.
         for job in abandoned {
-            (self.on_finish)(&job.msg_id, Status::Cancelled);
-            job.finish(Status::Cancelled);
+            (self.on_finish)(&job.msg_id, Ended::plain(Status::Cancelled));
+            job.finish(Ended::plain(Status::Cancelled));
         }
         self.engine.stop();
     }
@@ -359,15 +383,15 @@ impl Speaker {
             inner.speaking_words = 0;
             // A message put back for later has no outcome yet.
             drop(inner);
-            if let Some((job, status)) = outcome {
-                (self.on_finish)(&job.msg_id, status.clone());
-                job.finish(status);
+            if let Some((job, ended)) = outcome {
+                (self.on_finish)(&job.msg_id, ended.clone());
+                job.finish(ended);
             }
         }
     }
 
     /// Speak one message, returning it and its outcome unless it was put back.
-    fn speak_job(&self, job: Job) -> Option<(Job, Status)> {
+    fn speak_job(&self, job: Job) -> Option<(Job, Ended)> {
         let (lock, _) = &*self.inner;
         let Job {
             msg_id,
@@ -387,7 +411,7 @@ impl Speaker {
         });
 
         let mut index = 0;
-        let mut outcome = Status::Spoken;
+        let mut outcome = Ended::plain(Status::Spoken);
         while index < chunks.len() {
             let spoke = self.engine.speak(&chunks[index]);
 
@@ -413,12 +437,22 @@ impl Speaker {
                     return None;
                 }
                 Some(Cut::Skip) | Some(Cut::Clear) => {
-                    outcome = Status::Cancelled;
+                    outcome = Ended::plain(Status::Cancelled);
                     break;
                 }
                 None => {
-                    if spoke.is_err() {
-                        outcome = Status::NoEngine;
+                    if let Err(e) = spoke {
+                        // "There is no engine" and "the engine ran and
+                        // failed" want opposite responses — install one
+                        // versus diagnose the one you have — and both used to
+                        // arrive as NoEngine with the reason discarded (#86).
+                        outcome = Ended {
+                            status: match e {
+                                EngineError::Unavailable(_) => Status::NoEngine,
+                                _ => Status::Unreachable,
+                            },
+                            detail: Some(e.to_string()),
+                        };
                         break;
                     }
                     index += 1;
@@ -463,6 +497,8 @@ mod tests {
         spoken: Mutex<Vec<String>>,
         stopping: Mutex<bool>,
         cv: Condvar,
+        /// Returned instead of speaking, for the failure paths.
+        fails_with: Option<EngineError>,
     }
 
     impl FakeEngine {
@@ -471,6 +507,18 @@ mod tests {
                 spoken: Mutex::new(Vec::new()),
                 stopping: Mutex::new(false),
                 cv: Condvar::new(),
+                fails_with: None,
+            })
+        }
+
+        /// An engine that is present and refuses, which is a different thing
+        /// to an engine that is not there (#86).
+        fn failing(error: EngineError) -> Arc<Self> {
+            Arc::new(Self {
+                spoken: Mutex::new(Vec::new()),
+                stopping: Mutex::new(false),
+                cv: Condvar::new(),
+                fails_with: Some(error),
             })
         }
 
@@ -482,6 +530,9 @@ mod tests {
     impl SpeechEngine for FakeEngine {
         fn speak(&self, chunk: &str) -> Result<(), EngineError> {
             self.spoken.lock().expect("spoken").push(chunk.to_string());
+            if let Some(e) = &self.fails_with {
+                return Err(e.clone());
+            }
             let stopping = self.stopping.lock().expect("stopping");
             let (mut stopping, _) = self
                 .cv
@@ -508,7 +559,7 @@ mod tests {
         }
     }
 
-    fn job(id: &str, chunks: &[&str]) -> (Job, tokio::sync::oneshot::Receiver<Status>) {
+    fn job(id: &str, chunks: &[&str]) -> (Job, tokio::sync::oneshot::Receiver<Ended>) {
         let (tx, rx) = tokio::sync::oneshot::channel();
         (
             Job {
@@ -519,6 +570,52 @@ mod tests {
             },
             rx,
         )
+    }
+
+    #[tokio::test]
+    async fn an_engine_that_ran_and_failed_is_not_reported_as_a_missing_one() {
+        // #86. The two need opposite responses — install an engine, versus
+        // diagnose the one you have — and both used to arrive as `NoEngine`
+        // with the reason thrown away, so a receiver whose audio device was
+        // gone sent the sender to download a voice model.
+        let engine = FakeEngine::failing(EngineError::Failed {
+            command: "paplay".into(),
+            code: "exit code 1".into(),
+            detail: Some("connection refused".into()),
+        });
+        let speaker = Speaker::new(engine, Arc::new(|_, _| {}));
+        let (job, done) = job("m1", &["hello"]);
+        speaker.submit(job, false);
+
+        let ended = tokio::time::timeout(Duration::from_secs(5), done)
+            .await
+            .expect("finished in time")
+            .expect("job finished");
+        assert_eq!(
+            ended.status,
+            Status::Unreachable,
+            "an engine that ran is not a missing engine"
+        );
+        let why = ended.detail.expect("the reason travels with it");
+        assert!(why.contains("paplay"), "names the command: {why}");
+        assert!(why.contains("connection refused"), "and why: {why}");
+        assert!(why.contains("exit code 1"), "and how it ended: {why}");
+    }
+
+    #[tokio::test]
+    async fn a_genuinely_missing_engine_still_says_so() {
+        let engine =
+            FakeEngine::failing(EngineError::Unavailable("no voice model installed".into()));
+        let speaker = Speaker::new(engine, Arc::new(|_, _| {}));
+        let (job, done) = job("m1", &["hello"]);
+        speaker.submit(job, false);
+
+        let ended = tokio::time::timeout(Duration::from_secs(5), done)
+            .await
+            .expect("finished in time")
+            .expect("job finished");
+        assert_eq!(ended.status, Status::NoEngine);
+        assert!(ended.detail.is_some_and(|d| d.contains("voice model")));
     }
 
     async fn settle() {
@@ -620,8 +717,8 @@ mod tests {
             .expect("interrupted message finished")
             .expect("normal status");
 
-        assert_eq!(urgent_status, Status::Spoken);
-        assert_eq!(normal_status, Status::Spoken);
+        assert_eq!(urgent_status.status, Status::Spoken);
+        assert_eq!(normal_status.status, Status::Spoken);
         // The cut-off chunk is spoken again from its start, so the listener
         // hears a whole sentence rather than the tail of one.
         assert_eq!(
@@ -653,8 +750,8 @@ mod tests {
             .expect("second finished")
             .expect("second status");
 
-        assert_eq!(first_status, Status::Cancelled);
-        assert_eq!(second_status, Status::Spoken);
+        assert_eq!(first_status.status, Status::Cancelled);
+        assert_eq!(second_status.status, Status::Spoken);
         // "two" and "three" are never reached, and nothing resumes.
         assert_eq!(engine.spoken(), vec!["one", "next"]);
         speaker.shutdown();
@@ -677,7 +774,8 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), first_done)
                 .await
                 .expect("first finished")
-                .expect("first status"),
+                .expect("first status")
+                .status,
             Status::Cancelled
         );
         // A queued message is told too, rather than left for its caller to
@@ -686,7 +784,8 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), second_done)
                 .await
                 .expect("second finished")
-                .expect("second status"),
+                .expect("second status")
+                .status,
             Status::Cancelled
         );
         assert_eq!(engine.spoken(), vec!["one"]);
@@ -714,7 +813,8 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), only_done)
                 .await
                 .expect("finished")
-                .expect("status"),
+                .expect("status")
+                .status,
             Status::Spoken
         );
         assert!(engine.spoken().len() > while_paused);
