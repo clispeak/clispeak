@@ -120,8 +120,7 @@ fn voice_files() -> [Pinned; 2] {
 /// the same shape whether this is the user's data directory or a staging
 /// directory about to be copied into an application bundle.
 pub fn fetch(root: &Path) -> Result<()> {
-    let cache = std::env::temp_dir().join("voicecast-piper-downloads");
-    std::fs::create_dir_all(&cache).context("creating the download cache")?;
+    let cache = download_cache()?;
     std::fs::create_dir_all(root.join("voices")).context("creating the voices directory")?;
 
     let (piper, phonemize) = piper_for_host()?;
@@ -156,6 +155,32 @@ pub fn fetch(root: &Path) -> Result<()> {
 
     println!("piper ready in {}", root.display());
     Ok(())
+}
+
+/// Where downloaded archives are kept between runs.
+///
+/// Under the user's own directory rather than the shared temp directory. Every
+/// file here is pinned by SHA-256 and checked, but the check and the use are
+/// two separate reads of the same path: `/tmp/voicecast-piper-downloads` can
+/// be created in advance by another local user, who can then swap the archive
+/// between the two. `curl --output` would also write straight through a
+/// planted symlink. What comes out is installed as `piper`, a binary this
+/// node then executes and `xtask bundle` ships inside a `.app` (#67).
+///
+/// Owner-only, because the point is that nobody else can put anything here.
+fn download_cache() -> Result<PathBuf> {
+    let cache = user_root()?.join("downloads");
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(&cache)
+        .context("creating the download cache")?;
+    Ok(cache)
 }
 
 /// Fetch a pinned file into `cache`, reusing it if the hash already matches.
