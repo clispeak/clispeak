@@ -2869,6 +2869,15 @@ refuses it — but the node does not start. Fixing that means a socket inside a
 directory only the owner can enter, which changes the name-length budget in
 decision 35, and is left as its own issue.
 
+**blake3 is pinned to `no_neon`, and the five-target matrix is why this is
+known.** Everything passed on Linux; `aarch64-apple-ios` failed at *link*
+with `_blake3_hash4_neon` undefined, out of a C object blake3's build script
+compiles on any little-endian aarch64. The portable Rust fallback is correct
+and the inputs here are fifty bytes. It is the rule this project opens with,
+collecting on a change that had nothing to do with platforms — a hashing
+dependency, added for a security fix, that compiled everywhere and linked on
+four targets out of five.
+
 **Costs.** Two extra round trips on a local socket, which is microseconds
 against the ~3ms startup the thin client is designed around. `blake3` and
 `rand` become dependencies of the CLI, which had only `proto` and `text` — the
