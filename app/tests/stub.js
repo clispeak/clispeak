@@ -28,6 +28,17 @@ window.__advance = (secs) => {
   offset += secs;
 };
 
+/**
+ * Playback state, so a probe can pause and resume and see what the interface
+ * does about it.
+ *
+ * Mirrors the queue after #109: a paused message is still reported as what
+ * this device is playing, because it is what Resume will continue. `held`
+ * false with `paused` true is the other real case — a pause arriving from the
+ * CLI with nothing being spoken.
+ */
+window.__playback = { held: true, paused: false };
+
 const now = () => Math.floor(Date.now() / 1000);
 const device = (name, id, seen, self) => ({
   name,
@@ -80,8 +91,28 @@ window.__TAURI__ = {
           // One self row, which never changes, and one peer that starts just
           // inside the three-minute "active" window.
           return [device("Mac", "aaaa1111", 5, true), device("Phone", "bbbb2222", 170)];
-        case "now_playing":
-          return { msg_id: null, paused: false, from: "", text: "", queued: 0 };
+        case "now_playing": {
+          const p = window.__playback;
+          const active = p.held;
+          return {
+            msg_id: active ? "m1" : null,
+            paused: p.paused,
+            from: active ? "Phone" : null,
+            text: active ? "A message being spoken" : null,
+            waiting: 0,
+          };
+        }
+        case "pause_speech":
+          window.__playback.paused = true;
+          return null;
+        case "resume_speech":
+          window.__playback.paused = false;
+          return null;
+        case "stop_speech":
+        case "skip_speech":
+          window.__playback.held = false;
+          window.__playback.paused = false;
+          return null;
         case "voice_config":
           return { available: [], current: null, rate: 1.0 };
         case "policy":

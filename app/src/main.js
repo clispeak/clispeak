@@ -433,15 +433,27 @@ async function refreshPlaying() {
   }
 
   const active = playing.msg_id != null;
-  $("now-playing").hidden = !active;
-  if (!active) return;
+  // Shown while paused even with nothing held, because this panel is the only
+  // way back from a pause. Keying it on `active` alone meant that pausing hid
+  // the Resume button at the exact moment it was the only control that
+  // mattered, and every later message queued, raised a toast, and made no
+  // sound (#109). A pause can also arrive from the CLI with an empty queue,
+  // and then the only other evidence is that the device has gone quiet.
+  const shown = active || playing.paused;
+  $("now-playing").hidden = !shown;
+  if (!shown) return;
+
+  // Nothing to skip to when nothing is held; Stop stays, because it ends the
+  // pause as well as the queue.
+  $("np-skip").hidden = !active;
 
   $("np-state").textContent = playing.paused ? "paused" : "speaking";
   $("np-state").className =
     "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-white " +
     (playing.paused ? "bg-neutral-500" : "bg-accent-600");
   $("np-from").textContent = playing.from ? `from ${playing.from}` : "";
-  $("np-text").textContent = playing.text ?? "";
+  $("np-text").textContent =
+    playing.text ?? (playing.paused ? "Speech is held on this device." : "");
   $("np-waiting").textContent = playing.waiting
     ? `${playing.waiting} waiting`
     : "";
