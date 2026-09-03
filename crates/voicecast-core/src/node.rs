@@ -1045,13 +1045,7 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
                 if !distinct {
                     let rows = several
                         .iter()
-                        .map(|k| {
-                            format!(
-                                "\n  {}  in {}",
-                                &k.id[..16.min(k.id.len())],
-                                spaces.label(&k.space)
-                            )
-                        })
+                        .map(|k| format!("\n  {}  in {}", short_id(&k.id), spaces.label(&k.space)))
                         .collect::<String>();
                     return Err(format!(
                         "more than one device is called '{name}' in the same space{rows}\n\
@@ -1122,7 +1116,7 @@ fn also_answers_to(shadowed: &[String]) -> Option<String> {
     }
     let ids = shadowed
         .iter()
-        .map(|id| id[..16.min(id.len())].to_string())
+        .map(|id| short_id(id))
         .collect::<Vec<_>>()
         .join(", ");
     let n = shadowed.len();
@@ -2521,7 +2515,22 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 display_name,
                 token,
             } => {
-                let reply = accept_join(shared, &endpoint_id, &display_name, &token).await;
+                // The record is signed for whoever is on the other end of
+                // this connection, not for whoever the message names. They
+                // are the same device every time a real client asks, and
+                // where they differ is the whole attack: a ticket holder
+                // enrolling a *third* key it does not hold, leaving a member
+                // that revoking the device in front of you does not remove
+                // (#52).
+                let reply = if endpoint_id != remote.to_string() {
+                    PeerMessage::JoinRefused {
+                        reason: "the join request names a different device than the one \
+                                 that sent it"
+                            .into(),
+                    }
+                } else {
+                    accept_join(shared, &remote.to_string(), &display_name, &token).await
+                };
                 write_msg(&mut send, &reply).await?;
             }
             PeerMessage::SpeakBegin {
@@ -2775,6 +2784,17 @@ async fn mark_seen(shared: &Arc<Shared>, peer: &str) {
         .lock()
         .await
         .insert(peer.to_string(), now_secs());
+}
+
+/// The first 16 characters of an endpoint id, for showing a person.
+///
+/// Counted in characters, not bytes. Ids reaching this are meant to be
+/// base32 keys, and `roster::verify` now refuses any that are not, but
+/// slicing a `str` at a byte offset panics on a multi-byte boundary and this
+/// runs inline on the node's own IPC task — so being wrong once cost the
+/// whole node rather than one bad line of output (#52).
+fn short_id(id: &str) -> String {
+    id.chars().take(16).collect()
 }
 
 /// Unix seconds now.

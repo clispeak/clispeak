@@ -309,3 +309,172 @@ fn a_device_that_rejoins_becomes_visible_again() {
     assert!(on_alice.by_name("bob").is_some(), "and findable by name");
     assert_eq!(on_alice.members().count(), 2, "and listed");
 }
+
+// --- Hostile timestamps and ids -----------------------------------------
+//
+// Every rule in the roster is a comparison between two peer-chosen numbers,
+// and until the audit nothing fed it a number chosen to win. These build the
+// records an attacker would send rather than the ones a client does.
+
+/// A join record for `endpoint_id`, signed by `secret`, dated as told.
+fn signed_at(
+    secret: &SecretKey,
+    endpoint_id: &str,
+    name: &str,
+    joined_at: u64,
+    renamed_at: u64,
+) -> Member {
+    let inviter = secret.public().to_string();
+    let payload = Member::signed_payload(endpoint_id, &inviter, joined_at);
+    Member {
+        endpoint_id: endpoint_id.to_string(),
+        name: name.to_string(),
+        invited_by: inviter,
+        signature: secret.sign(&payload).to_bytes().to_vec(),
+        joined_at,
+        renamed_at,
+    }
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+#[test]
+fn a_record_dated_far_in_the_future_is_refused_everywhere() {
+    // The #48 attack: a member re-signs its own record with a `joined_at`
+    // no revocation can ever exceed, so `revoked_at > joined_at` is false
+    // for ever and the device is unrevokable. The signature is genuine —
+    // only the number is a lie — so this must be caught by the date.
+    let alice = device();
+    let mallory = device();
+    let forged = signed_at(
+        &mallory,
+        &mallory.public().to_string(),
+        "mallory",
+        u64::MAX,
+        0,
+    );
+
+    assert!(verify(&forged).is_err(), "a future date must not verify");
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    assert!(on_alice.admit(forged.clone()).is_err(), "nor be admitted");
+
+    // Nor may it arrive as part of a roster, which is the path a peer
+    // actually has: `from_parts` verifies, so the record never lands.
+    let theirs = Roster::from_parts(vec![forged], Vec::new());
+    on_alice.merge(&theirs);
+    assert!(
+        !on_alice.allows(&mallory.public()),
+        "a future-dated record must not reach the roster by any route"
+    );
+}
+
+#[test]
+fn a_record_dated_within_ordinary_clock_drift_is_still_accepted() {
+    // The bound has to be loose enough that a device whose clock is merely
+    // wrong still works, or the fix for #48 becomes a pairing bug.
+    let alice = device();
+    let bob = device();
+    let ahead = signed_at(&alice, &bob.public().to_string(), "bob", now() + 60, 0);
+
+    assert!(verify(&ahead).is_ok(), "a minute ahead is ordinary drift");
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.admit(ahead).expect("admitted despite drift");
+    assert!(on_alice.allows(&bob.public()));
+}
+
+#[test]
+fn an_endpoint_id_that_is_not_a_key_is_refused() {
+    // #52. A roster entry is only useful if it names something dialable, and
+    // an id that is not a key used to be storable, syncable and — because
+    // ids are shortened for display — a panic on a multi-byte boundary.
+    let alice = device();
+    let junk = signed_at(&alice, "aéééééééééééééééé", "junk", now(), 0);
+
+    assert!(verify(&junk).is_err(), "not a key, so not a member");
+    let mut on_alice = Roster::found(&alice, "alice");
+    assert!(on_alice.admit(junk).is_err());
+}
+
+#[test]
+fn a_far_future_tombstone_evicts_but_does_not_outlast_a_rejoin() {
+    // #48's other half. Tombstones carry no signature, so any member can
+    // write one for anyone — that much is the design, "your own devices".
+    // What it must not do is outlast every rejoin the space could sign,
+    // which a `u64::MAX` tombstone did.
+    let alice = device();
+    let bob = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    // Dated an hour ago, as a device paired at any earlier sitting would be.
+    // Timestamps here are whole seconds, so a member invited in this very
+    // second is neither before nor after a tombstone stamped in it.
+    on_alice
+        .admit(signed_at(
+            &alice,
+            &bob.public().to_string(),
+            "bob",
+            now() - 3600,
+            0,
+        ))
+        .expect("alice vouches for bob");
+    assert!(on_alice.allows(&bob.public()));
+
+    let poison = Roster::from_parts(Vec::new(), vec![(bob.public().to_string(), u64::MAX)]);
+    on_alice.merge(&poison);
+    assert!(!on_alice.allows(&bob.public()), "the eviction still lands");
+
+    // Re-inviting bob now dates his record at `now()`, which beats the
+    // clamped tombstone. Before the clamp this assertion failed for ever.
+    on_alice.invite(&alice, &bob.public().to_string(), "bob");
+    assert!(
+        on_alice.allows(&bob.public()),
+        "a rejoin must be able to beat a tombstone"
+    );
+}
+
+#[test]
+fn an_impossible_rename_stamp_does_not_pin_a_name() {
+    // `renamed_at` sits outside the signature, so a member can set it freely
+    // on a record that is otherwise genuine. With `u64::MAX` its label won
+    // every future merge, which is how a device could be renamed to `all` —
+    // a name `resolve` treats specially — and never renamed back.
+    let alice = device();
+    let bob = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob.public().to_string(), "bob");
+    let joined = on_alice
+        .members()
+        .find(|m| m.endpoint_id == bob.public().to_string())
+        .expect("bob is a member")
+        .joined_at;
+
+    let pinned = Roster::from_parts(
+        vec![signed_at(
+            &alice,
+            &bob.public().to_string(),
+            "all",
+            joined,
+            u64::MAX,
+        )],
+        Vec::new(),
+    );
+    on_alice.merge(&pinned);
+
+    let name = on_alice
+        .members()
+        .find(|m| m.endpoint_id == bob.public().to_string())
+        .expect("bob is still a member")
+        .name
+        .clone();
+    assert_eq!(name, "bob", "an impossible stamp must not win the rename");
+
+    // And a real rename still works afterwards, so the clamp has not simply
+    // frozen the label.
+    assert!(on_alice.rename(&bob.public().to_string(), "desk"));
+}

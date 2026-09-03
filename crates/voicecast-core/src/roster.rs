@@ -28,13 +28,52 @@ pub enum RosterError {
     /// The inviter is not someone we trust.
     #[error("join record for {0} was signed by a non-member")]
     UnknownInviter(String),
+    /// The endpoint id is not a public key at all.
+    #[error("join record for {0} does not name a key")]
+    NotAKey(String),
+    /// The record is dated further ahead than clock drift explains.
+    #[error("join record for {0} is dated in the future")]
+    FromTheFuture(String),
 }
+
+/// How far ahead of our own clock a peer's timestamp may be.
+///
+/// Every timestamp on the wire is chosen by the device that sent it, and
+/// three of this module's rules are comparisons between two of them: a
+/// revocation beats a join record by being newer, a rename beats another
+/// rename by being newer, and a rejoin beats a revocation the same way. A
+/// timestamp far enough ahead therefore wins all three for ever. One member
+/// could make itself unrevokable, pin a name nobody could change, or
+/// tombstone the founder past any rejoin it could ever sign (#48).
+///
+/// Five minutes is larger than the drift of a device that is merely wrong —
+/// anything that has reached an NTP server is within seconds — and small
+/// enough that winning by it buys nothing: the forged record ages into the
+/// past while the space carries on.
+const MAX_SKEW: u64 = 5 * 60;
 
 /// Check that a join record really was signed by its stated inviter.
 ///
 /// Free function rather than a method because `Member` is a wire type in
 /// `voicecast-proto`, which stays free of crypto dependencies.
 pub fn verify(member: &Member) -> Result<(), RosterError> {
+    verify_at(member, now())
+}
+
+/// [`verify`], against a stated clock, so the bound can be tested.
+fn verify_at(member: &Member, now: u64) -> Result<(), RosterError> {
+    // An id that is not a key can never be dialled, but nothing stopped one
+    // being stored, synced onward and printed — and printing it panicked,
+    // because ids are shortened to 16 *bytes* for display and a multi-byte
+    // character straddling that boundary is not a char boundary. Refusing it
+    // here is what keeps the roster to things that could answer (#52).
+    member
+        .endpoint_id
+        .parse::<EndpointId>()
+        .map_err(|_| RosterError::NotAKey(member.endpoint_id.clone()))?;
+    if member.joined_at > now.saturating_add(MAX_SKEW) {
+        return Err(RosterError::FromTheFuture(member.endpoint_id.clone()));
+    }
     let inviter: EndpointId = member
         .invited_by
         .parse()
@@ -289,13 +328,41 @@ impl Roster {
     /// updates arrive in — two devices that sync in either direction converge
     /// on the same roster.
     pub fn merge(&mut self, other: &Roster) {
+        self.merge_at(other, now());
+    }
+
+    /// [`Roster::merge`], against a stated clock, so the bound can be tested.
+    fn merge_at(&mut self, other: &Roster, now: u64) {
+        let ceiling = now.saturating_add(MAX_SKEW);
         for (id, at) in &other.revoked {
-            let entry = self.revoked.entry(id.clone()).or_insert(*at);
-            *entry = (*entry).max(*at);
+            // Tombstones carry no signature, so this is a clamp rather than
+            // a refusal: dropping one would let a device with a fast clock
+            // stop a revocation spreading, while clamping keeps the eviction
+            // and takes away only its ability to outlast every future
+            // rejoin. A revoked device can come back; it just has to be
+            // invited again.
+            //
+            // Clamped to now rather than to the skew ceiling, because a
+            // revocation cannot honestly have happened later than the moment
+            // we heard of it — and a ceiling five minutes ahead would still
+            // beat every rejoin signed in the next five minutes, which is
+            // exactly the window someone re-pairing a device is in.
+            let at = (*at).min(now);
+            let entry = self.revoked.entry(id.clone()).or_insert(at);
+            *entry = (*entry).max(at);
         }
         for (id, member) in &other.members {
-            if verify(member).is_err() {
+            if verify_at(member, now).is_err() {
                 continue;
+            }
+            // `renamed_at` sits outside the signed payload, so a member can
+            // set it to anything on a record that is otherwise genuine. It
+            // cannot be refused without refusing the membership too, so an
+            // impossible stamp is read as no rename at all, which leaves the
+            // label we already hold in place.
+            let mut member = member.clone();
+            if member.renamed_at > ceiling {
+                member.renamed_at = member.joined_at;
             }
             match self.members.get(id) {
                 Some(existing) if existing.joined_at >= member.joined_at => {
@@ -303,11 +370,11 @@ impl Roster {
                     // device is authoritative about its own name, and the
                     // newer stamp is how that reaches everyone else.
                     if member.renamed_at > existing.renamed_at {
-                        self.members.insert(id.clone(), member.clone());
+                        self.members.insert(id.clone(), member);
                     }
                 }
                 _ => {
-                    self.members.insert(id.clone(), member.clone());
+                    self.members.insert(id.clone(), member);
                 }
             }
         }
