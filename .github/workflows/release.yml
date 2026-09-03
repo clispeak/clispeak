@@ -112,8 +112,14 @@ jobs:
         working-directory: app
         run: npm ci || npm install
 
-      # Debug-signed. A public APK needs a release keystore, which is a
-      # secret nobody has created yet — see docs/releasing.md.
+      # The *release* variant, unsigned. Signing needs a keystore nobody has
+      # created yet (#31), but signing is not what this flag controlled:
+      # `--debug` also turned off R8, so the only APK this workflow has ever
+      # produced was the one build nobody would download. The first release
+      # APK to reach a real phone died on launch because R8 had deleted the
+      # Kotlin the engine calls, and this job would not have caught it (#41,
+      # #68). `xtask portability` gates the keep rules; this compiles them.
+      #
       # NDK_HOME comes from the runner's own environment, which the `env`
       # context does not see — that context holds only what a workflow, job
       # or step declares, so `${{ env.ANDROID_NDK_LATEST_HOME }}` expands to
@@ -123,7 +129,7 @@ jobs:
         run: |
           export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           echo "using NDK at $NDK_HOME"
-          npx @tauri-apps/cli android build --apk --debug --target aarch64
+          npx @tauri-apps/cli android build --apk --target aarch64
 
       - uses: actions/upload-artifact@v4
         with:
@@ -203,6 +209,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artefacts
+      # Nothing signs these yet (#29, #31), so a checksum is the only way a
+      # person can tell what they downloaded from what this built. It matters
+      # more, not less, once #23 serves them from somewhere other than the
+      # release page — a bad upload and a tampered one look identical without
+      # it. Paths are relative to `artefacts/` so the file reads the same
+      # wherever it is unpacked.
+      - name: Checksum the artefacts
+        working-directory: artefacts
+        run: |
+          find . -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS
+          cat SHA256SUMS
       - name: Draft a release
         uses: softprops/action-gh-release@v2
         with:
@@ -215,5 +234,8 @@ jobs:
             download until the licensing of what these packages bundle is
             settled — see issue #24.
 
-            The macOS app is unsigned and the Android APK is debug-signed.
-            Both need credentials that do not exist yet.
+            The macOS app is unsigned and the Android APK is an unsigned
+            *release* build. Both need credentials that do not exist yet —
+            see #29 and #31. `SHA256SUMS` lists what each file should hash
+            to; it is not a signature, and it is only as trustworthy as the
+            page you read it from.
