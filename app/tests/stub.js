@@ -39,6 +39,7 @@ window.__advance = (secs) => {
  */
 window.__playback = { held: true, paused: false };
 
+let reset = false;
 const now = () => Math.floor(Date.now() / 1000);
 const device = (name, id, seen, self) => ({
   name,
@@ -51,6 +52,16 @@ const device = (name, id, seen, self) => ({
 window.__TAURI__ = {
   core: {
     invoke: async (cmd) => {
+      // Once reset, `skill_status` reports the default, the way the real
+      // command does once the record is gone.
+      if (cmd === "skill_status" && reset) {
+        return {
+          state: "absent",
+          path: "/Users/someone/.claude/skills/voicecast/SKILL.md",
+          default_path: "/Users/someone/.claude/skills/voicecast/SKILL.md",
+          sandboxed: false,
+        };
+      }
       switch (cmd) {
         case "node_status":
           return {
@@ -125,6 +136,18 @@ window.__TAURI__ = {
           };
         case "battery_ok":
           return true;
+        // A skill installed somewhere other than the default, which is the
+        // only state in which the reset is offered at all.
+        case "skill_status":
+          return {
+            state: "current",
+            path: "/Users/someone/Desktop/skills/voicecast/SKILL.md",
+            default_path: "/Users/someone/.claude/skills/voicecast/SKILL.md",
+            sandboxed: false,
+          };
+        case "reset_skill_path":
+          reset = true;
+          return "/Users/someone/Desktop/skills/voicecast/SKILL.md";
         default:
           return null;
       }

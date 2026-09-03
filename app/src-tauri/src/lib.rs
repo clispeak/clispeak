@@ -618,6 +618,11 @@ fn skill_writable(path: &std::path::Path) -> bool {
 pub struct SkillStatus {
     /// Where it would go, or where it went.
     pub path: String,
+    /// Where it would go if nothing had been chosen — Claude Code's own
+    /// directory. Sent so the interface can tell whether the path in front of
+    /// the user is a choice or the default, which is the difference between
+    /// offering to reset it and offering nothing.
+    pub default_path: String,
     /// "absent", "current" or "stale".
     pub state: String,
     /// Whether this build can write anywhere, or only the default.
@@ -644,6 +649,7 @@ fn skill_status() -> Option<SkillStatus> {
     Some(SkillStatus {
         state: skill_state(&path).into(),
         path: path.display().to_string(),
+        default_path: skill_default()?.display().to_string(),
         sandboxed: sandboxed(),
     })
 }
@@ -683,6 +689,35 @@ fn install_skill(path: Option<String>) -> Result<String, String> {
         let _ = std::fs::write(record, destination.display().to_string());
     }
     Ok(destination.display().to_string())
+}
+
+/// Forget a chosen skill location, so the default applies again.
+///
+/// Only the *record* is removed. A file the user asked to be written
+/// somewhere is theirs, and deleting it is a different act from changing
+/// where the next install goes — one this button did not offer to do. So the
+/// old copy stays, and the caller is handed its path to say so rather than
+/// leaving a stale skill somewhere nobody is told about.
+///
+/// Resetting the field alone would not have worked: `skill_status` reads the
+/// record, so the next poll would put the chosen path straight back and the
+/// button would look broken for a reason nothing on screen explained.
+#[tauri::command]
+fn reset_skill_path() -> Result<Option<String>, String> {
+    let default = skill_default().ok_or("no home directory on this system")?;
+    let Some(record) = skill_record() else {
+        return Ok(None);
+    };
+    let previous = std::fs::read_to_string(&record)
+        .ok()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty() && std::path::Path::new(p) != default);
+    match std::fs::remove_file(&record) {
+        Ok(()) => Ok(previous),
+        // Nothing recorded is already the state being asked for.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not forget the chosen path: {e}")),
+    }
 }
 
 /// Expand a leading `~`, which people type and `PathBuf` does not understand.
@@ -1529,6 +1564,7 @@ pub fn run() {
             install_cli,
             skill_status,
             install_skill,
+            reset_skill_path,
             now_playing,
             pause_speech,
             resume_speech,

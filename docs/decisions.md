@@ -2647,3 +2647,46 @@ and it is not optional for anything intended to be notarised.
 directory list on a machine that cannot run any of this, filed explicitly as
 inference rather than fact, and settled here in two minutes because the
 inference named exactly what to look at.
+
+## 73. The skill path can be put back, and the old copy is not deleted
+
+**Chosen:** a "Use the default location" link beside the skill path, shown
+only when the path is not the default. It forgets the recorded location; it
+does not remove the file already written to it.
+
+Patrick pointed the skill install at a directory under his Desktop, and there
+was no way back to Claude Code's own path short of retyping it from memory.
+The interface let a choice be made and offered no way to unmake it.
+
+**It had to forget the record, not refill the field.** `skill_status` reads
+`skill-destination` from the config directory, so a button that only wrote the
+default into the input would have been undone by the next five-second poll —
+a control that appears to work, then silently reverts, for a reason nothing
+on screen explains. Falsified by making the reset leave the record in place:
+three of the probe's checks fail, including the field's value after one poll.
+
+**The old copy stays where it was.** It is the user's file, written where they
+asked. Deleting it is a different act from changing where the next install
+goes, and this button did not offer to do it. But a skill left somewhere that
+will never be kept in step is exactly the silence this project keeps paying
+for, so the reset reports the path it stopped tracking rather than saying
+nothing about it.
+
+**Hidden when the path already is the default**, because a reset that resets
+nothing teaches the reader that the control does nothing. The interface
+compares against the *field* rather than the reported path, so it appears as
+soon as someone types a different one rather than a poll later.
+
+**Costs.** One more Tauri command and one more thing `skill_status` carries.
+The reset leaves the skill uninstalled at the default until Install is
+pressed, which is honest — the badge says `absent` and the button is directly
+below it — but it is two steps where a combined "reset and install" would be
+one. Two steps was chosen because the combined version writes a file without
+being asked to.
+
+**Why it surfaced at all.** The custom path is what made macOS ask the app for
+Desktop access, which read as a hung launch for an hour — the app was waiting
+on a permission dialog that is not the keychain's, so a check for
+`SecurityAgent` reported no prompt and was looking in the wrong place. The
+feature request came out of the diagnosis, from Patrick, who could see the
+screen.
