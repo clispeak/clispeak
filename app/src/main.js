@@ -1,12 +1,24 @@
 // Thin UI over the node running in this app's Rust side. No framework and no
 // bundler: the interesting behaviour lives in voicecast-core, shared with the
 // CLI, and this file only moves values between it and the DOM.
+import { openModal } from "./modal.js";
+
 const { invoke } = window.__TAURI__.core;
 
 const $ = (id) => document.getElementById(id);
 
 /** How often to re-read node state. Cheap, and keeps devices current. */
 const REFRESH_MS = 5000;
+
+/**
+ * How deep to read history when filtering for unheard messages.
+ *
+ * Above what the node retains (200 at the time of writing), so the filter
+ * sees everything there is rather than the newest screenful. Coupled to that
+ * retention only in the direction that fails safe: too large simply returns
+ * everything, too small hides entries.
+ */
+const HISTORY_DEPTH = 1000;
 
 /**
  * How often to re-read what is being spoken.
@@ -56,30 +68,38 @@ const SAY_MS = 3500;
 let sayTimer = null;
 
 function say(text, tone = "info") {
-  const el = $("result");
+  const status = $("result-status");
+  const alert = $("result-alert");
   if (sayTimer) {
     clearTimeout(sayTimer);
     sayTimer = null;
   }
-  if (!text) {
-    el.hidden = true;
-    return;
-  }
-  el.textContent = text;
-  // Rebuilt in full each time, since the tone changes the whole palette.
-  el.className =
-    "max-w-sm rounded-full border px-4 py-2 text-center text-sm shadow-lg " +
-    (tone === "error"
-      ? "border-red-300 bg-red-50 text-red-700 " +
-        "dark:border-red-500/40 dark:bg-red-950 dark:text-red-300"
-      : "border-neutral-300 bg-white text-neutral-700 " +
-        "dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200");
-  el.hidden = false;
+  // Both, always: a confirmation must not leave the previous error on screen,
+  // and an error must not sit beside a stale confirmation.
+  status.replaceChildren();
+  alert.replaceChildren();
+  if (!text) return;
+
+  const bubble = Object.assign(document.createElement("p"), {
+    textContent: text,
+    // Rebuilt in full each time, since the tone changes the whole palette.
+    className:
+      "max-w-sm rounded-full border px-4 py-2 text-center text-sm shadow-lg " +
+      (tone === "error"
+        ? "border-red-300 bg-red-50 text-red-700 " +
+          "dark:border-red-500/40 dark:bg-red-950 dark:text-red-300"
+        : "border-neutral-300 bg-white text-neutral-700 " +
+          "dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"),
+  });
+  // Appended into a region that was already there, rather than unhiding the
+  // region itself. That difference is the whole of why these were silent.
+  (tone === "error" ? alert : status).replaceChildren(bubble);
+
   // Errors stay until something replaces them; a confirmation that has been
   // read is only clutter.
   if (tone !== "error") {
     sayTimer = setTimeout(() => {
-      el.hidden = true;
+      status.replaceChildren();
       sayTimer = null;
     }, SAY_MS);
   }
@@ -108,35 +128,38 @@ async function call(cmd, args) {
  * easiest one to give.
  */
 function ask(question, { input = null } = {}) {
+  const cancelled = input === null ? false : null;
   const box = $("ask");
   const field = $("ask-input");
   $("ask-text").textContent = question;
   field.hidden = input === null;
   field.value = input ?? "";
-  box.hidden = false;
-  if (input === null) $("ask-yes").focus();
-  else {
-    field.focus();
-    field.select();
-  }
 
   return new Promise((resolve) => {
-    const done = (answer) => {
-      box.hidden = true;
-      $("ask-yes").onclick = null;
-      $("ask-no").onclick = null;
-      field.onkeydown = null;
-      box.onclick = null;
-      document.removeEventListener("keydown", onKey);
-      resolve(answer);
-    };
-    const onKey = (e) => {
-      if (e.key === "Escape") done(input === null ? false : null);
+    // Answered rather than left hanging. A second dialog was reachable
+    // through the Tab escape this rewrite closes, and it left the first
+    // promise unresolved for ever — with the button that opened it stuck
+    // reading "…" until the app was restarted.
+    const close = openModal(box, {
+      focus: input === null ? $("ask-yes") : field,
+      onClose: () => resolve(answer),
+    });
+    if (!close) {
+      resolve(cancelled);
+      return;
+    }
+
+    // Read by `onClose`, so every route out — Escape, the backdrop, either
+    // button — resolves exactly once and through one path.
+    let answer = cancelled;
+    const done = (given) => {
+      answer = given;
+      close();
     };
     // With a field, the answer is what was typed; without one, it is yes or no.
     const yes = () => done(input === null ? true : field.value.trim() || null);
     $("ask-yes").onclick = yes;
-    $("ask-no").onclick = () => done(input === null ? false : null);
+    $("ask-no").onclick = () => done(cancelled);
     // Enter accepts, so a rename does not need the mouse.
     field.onkeydown = (e) => {
       if (e.key === "Enter") {
@@ -144,11 +167,6 @@ function ask(question, { input = null } = {}) {
         yes();
       }
     };
-    // Only the backdrop itself, so a click inside the panel does not cancel.
-    box.onclick = (e) => {
-      if (e.target === box) done(false);
-    };
-    document.addEventListener("keydown", onKey);
   });
 }
 
@@ -176,6 +194,111 @@ function describeAge(secs) {
 }
 
 /** One row in the device list. */
+/**
+ * Put the devices of one space into its card, keeping the rows that survive.
+ *
+ * Shared by the first build and every poll after it, so there is one answer to
+ * what a card's device list looks like rather than two that drift.
+ */
+function fillDevices(rows, devices, label) {
+  const shown = syncRows(rows, devices, {
+    key: (d) => d.endpoint_id,
+    build: (d) => deviceRow(d, label),
+    update: updateDeviceRow,
+  });
+  if (shown === 0) {
+    rows.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "px-3 py-3 text-sm text-neutral-500 dark:text-neutral-400",
+        textContent: "No devices yet.",
+      }),
+    );
+  }
+}
+
+/**
+ * Bring an existing space card up to date.
+ *
+ * The label is the key, so it cannot have changed. What can: the default
+ * badge, and the whole device list underneath.
+ */
+function updateSpaceCard(card, space, devices, several) {
+  bindCardActions(card, space, several);
+  const head = card.firstElementChild;
+  const badge = head?.querySelector('[data-part="default"]');
+  if (space.is_default && !badge) head?.append(defaultBadge());
+  if (!space.is_default && badge) badge.remove();
+
+  const rows = card.querySelector('[data-part="devices"]');
+  if (rows) fillDevices(rows, devicesIn(space, devices), space.label);
+}
+
+/** Which reported devices belong to a space. */
+function devicesIn(space, devices) {
+  return devices.filter((d) =>
+    d.space == null ? space.is_default : d.space === space.label,
+  );
+}
+
+/** The badge on the default space. */
+function defaultBadge() {
+  const badge = document.createElement("span");
+  badge.dataset.part = "default";
+  badge.className =
+    "shrink-0 rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-medium " +
+    "text-accent-600 dark:text-accent-400";
+  badge.textContent = "default";
+  return badge;
+}
+
+function isLive(device) {
+  return device.last_seen_secs != null && device.last_seen_secs < 180;
+}
+
+/** The presence dot's colour. Three states, split out so a poll can repaint it. */
+function dotClass(device) {
+  return (
+    "size-2 shrink-0 rounded-full " +
+    (isLive(device)
+      ? "bg-emerald-500"
+      : device.last_seen_secs == null
+        ? "bg-neutral-300 dark:bg-neutral-700"
+        : "bg-neutral-400 dark:bg-neutral-600")
+  );
+}
+
+/** The dot's tooltip. */
+function dotTitle(device) {
+  if (device.last_seen_secs == null) return "not seen yet";
+  return isLive(device) ? "active" : `last seen ${describeAge(device.last_seen_secs)} ago`;
+}
+
+/** Presence in words, since a tooltip needs a pointer and half of these are phones. */
+function seenText(device) {
+  if (device.is_self) return "this device";
+  if (device.last_seen_secs == null) return "not seen yet";
+  return isLive(device) ? "active now" : `last seen ${describeAge(device.last_seen_secs)} ago`;
+}
+
+/**
+ * Bring an existing device row up to date.
+ *
+ * Presence is the only thing that moves, and it moves on every poll — which
+ * is why rebuilding the row instead was losing a focused Remove button every
+ * five seconds.
+ */
+function updateDeviceRow(row, device) {
+  const dot = row.querySelector('[data-part="dot"]');
+  if (dot) {
+    const className = dotClass(device);
+    if (dot.className !== className) dot.className = className;
+    dot.title = dotTitle(device);
+  }
+  const seen = row.querySelector('[data-part="seen"]');
+  const text = seenText(device);
+  if (seen && seen.textContent !== text) seen.textContent = text;
+}
+
 function deviceRow(device, space) {
   const li = document.createElement("div");
   li.className =
@@ -188,15 +311,9 @@ function deviceRow(device, space) {
   const secs = device.last_seen_secs;
   const live = secs != null && secs < 180;
   const dot = document.createElement("span");
-  dot.className =
-    "size-2 shrink-0 rounded-full " +
-    (live
-      ? "bg-emerald-500"
-      : secs == null
-        ? "bg-neutral-300 dark:bg-neutral-700"
-        : "bg-neutral-400 dark:bg-neutral-600");
-  dot.title =
-    secs == null ? "not seen yet" : live ? "active" : `last seen ${describeAge(secs)} ago`;
+  dot.dataset.part = "dot";
+  dot.className = dotClass(device);
+  dot.title = dotTitle(device);
 
   const left = document.createElement("div");
   left.className = "min-w-0 flex-1";
@@ -206,14 +323,9 @@ function deviceRow(device, space) {
   // Said in words as well as shown as a dot. A tooltip needs a pointer, and
   // half the devices running this are phones.
   const when = document.createElement("p");
+  when.dataset.part = "seen";
   when.className = "truncate text-xs text-neutral-500 dark:text-neutral-400";
-  when.textContent = device.is_self
-    ? "this device"
-    : secs == null
-      ? "not seen yet"
-      : live
-        ? "active now"
-        : `last seen ${describeAge(secs)} ago`;
+  when.textContent = seenText(device);
   left.append(name, when);
 
   li.append(dot, left);
@@ -380,13 +492,20 @@ function historyRow(entry) {
 
   const who = document.createElement("span");
   who.className = "truncate text-xs font-medium text-neutral-600 dark:text-neutral-300";
+  who.dataset.part = "who";
   who.textContent = entry.from;
 
   const when = document.createElement("span");
-  when.className = "shrink-0 text-xs text-neutral-400 dark:text-neutral-500";
+  // `neutral-400` on white is about 2.5:1, and this is 12px text — under the
+  // 4.5:1 AA floor for anything that is not large. It read as decoration
+  // because it was too faint to read, which is not the same as unimportant:
+  // it is how you tell a message from an hour ago from one from Tuesday.
+  when.className = "shrink-0 text-xs text-neutral-500 dark:text-neutral-400";
+  when.dataset.part = "when";
   when.textContent = whenSaid(entry.at);
 
   const state = document.createElement("span");
+  state.dataset.part = "state";
   const word = STATUS_WORDS[entry.status] ?? entry.status;
   state.className =
     "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium " +
@@ -421,11 +540,68 @@ function historyRow(entry) {
   // scannable.
   body.className =
     "mt-1 line-clamp-2 cursor-pointer text-sm text-neutral-800 dark:text-neutral-200";
+  body.dataset.part = "body";
   body.textContent = entry.text;
   body.onclick = () => body.classList.toggle("line-clamp-2");
 
   li.append(head, body);
   return li;
+}
+
+/**
+ * Reconcile a keyed list against fresh data, keeping the nodes that survive.
+ *
+ * Both lists used to `replaceChildren` on every five-second poll, which threw
+ * away three things nobody had finished with: an expanded message collapsed
+ * mid-read, a focused Remove or Play button dropped focus to `<body>` so a
+ * keyboard user lost their place entirely, and a Play button showing "…" was
+ * reset while its request was still in flight. Issue #74.
+ *
+ * A row that is still wanted is patched, not rebuilt, because every one of
+ * those three states lives on the node itself — a class, the focus ring, a
+ * disabled attribute — and survives exactly as long as the node does.
+ *
+ * Nodes are moved only when the order genuinely changed. A move is a remove
+ * and an insert as far as the DOM is concerned, which blurs a focused element,
+ * so reordering everything to prepend one new row would have defeated the
+ * point. Prepending touches only the new node.
+ */
+function syncRows(list, items, { key, build, update }) {
+  const kept = new Map();
+  for (const node of list.children) {
+    if (node.dataset.key !== undefined) kept.set(node.dataset.key, node);
+  }
+
+  const wanted = items.map((item) => {
+    const id = String(key(item));
+    const existing = kept.get(id);
+    if (existing) {
+      kept.delete(id);
+      update(existing, item);
+      return existing;
+    }
+    const fresh = build(item);
+    fresh.dataset.key = id;
+    return fresh;
+  });
+
+  // Whatever is left is genuinely gone — a revoked device, a forgotten space.
+  for (const node of kept.values()) node.remove();
+
+  wanted.forEach((node, i) => {
+    const at = list.children[i];
+    if (at !== node) list.insertBefore(node, at ?? null);
+  });
+  // Placeholder rows carry no key, so they survive the loop above and have to
+  // be cleared here — otherwise "Nothing yet." sits under the first message.
+  while (list.children.length > wanted.length) list.lastElementChild.remove();
+
+  return wanted.length;
+}
+
+/** The row shown when a list has nothing in it. Keyless, so `syncRows` prunes it. */
+function emptyRow(text, className) {
+  return Object.assign(document.createElement("li"), { className, textContent: text });
 }
 
 /**
@@ -436,28 +612,64 @@ function historyRow(entry) {
  * read or played back.
  */
 async function refreshHistory() {
+  const unheardOnly = $("history-unheard").checked;
   let entries;
   try {
-    entries = await invoke("history", { limit: 50 });
+    // More than the screen shows, when filtering. The filter runs here, so
+    // asking for 50 and then keeping the unheard ones hid any unheard message
+    // that had fallen outside the newest 50 — from the one view whose whole
+    // purpose is finding it. `HISTORY_DEPTH` is above what the node retains,
+    // so this asks for everything it has; the node caps the answer at what it
+    // kept, and nothing older exists to be found.
+    entries = await invoke("history", { limit: unheardOnly ? HISTORY_DEPTH : 50 });
   } catch {
     return;
   }
-  if ($("history-unheard").checked) {
-    entries = entries.filter((e) => e.unheard);
-  }
+  if (unheardOnly) entries = entries.filter((e) => e.unheard);
+
   const list = $("history");
-  list.replaceChildren(
-    ...(entries.length
-      ? entries.map(historyRow)
-      : [
-          Object.assign(document.createElement("li"), {
-            className: "px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400",
-            textContent: $("history-unheard").checked
-              ? "Nothing unheard."
-              : "Nothing yet.",
-          }),
-        ]),
-  );
+  const shown = syncRows(list, entries, {
+    key: (e) => e.msg_id,
+    build: historyRow,
+    update: updateHistoryRow,
+  });
+  if (shown === 0) {
+    list.replaceChildren(
+      emptyRow(
+        unheardOnly ? "Nothing unheard." : "Nothing yet.",
+        "px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400",
+      ),
+    );
+  }
+}
+
+/**
+ * Bring an existing history row up to date.
+ *
+ * Only what can actually change: the relative time, which changes on every
+ * poll, and the status, which changes when a queued message is spoken or a
+ * muted one is played back. The text of a message never changes, and the Play
+ * button is deliberately left alone — rewriting it is what reset a request
+ * that was still in flight.
+ */
+function updateHistoryRow(li, entry) {
+  const part = (name) => li.querySelector(`[data-part="${name}"]`);
+  const when = part("when");
+  const fresh = whenSaid(entry.at);
+  // Guarded because assigning identical text still invalidates a selection
+  // inside it, and this runs every five seconds.
+  if (when && when.textContent !== fresh) when.textContent = fresh;
+
+  const state = part("state");
+  const word = STATUS_WORDS[entry.status] ?? entry.status;
+  if (state && state.textContent !== word) {
+    state.textContent = word;
+    state.className =
+      "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium " +
+      (entry.unheard
+        ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+        : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400");
+  }
 }
 
 /**
@@ -552,29 +764,19 @@ function spaceCard(space, devices, several) {
   // lives in the Manage dialog with everything else that acts on a space —
   // a second place to do it is the duplication this screen was rebuilt to
   // remove.
-  if (space.is_default) {
-    const badge = document.createElement("span");
-    badge.className =
-      "shrink-0 rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-medium " +
-      "text-accent-600 dark:text-accent-400";
-    badge.textContent = "default";
-    head.append(badge);
-  }
+  if (space.is_default) head.append(defaultBadge());
   card.append(head);
 
   // Devices. Only the default space's members can be told apart from the rest,
   // because `list_devices` reports a space only when there is more than one.
-  const mine = devices.filter((d) =>
-    d.space == null ? space.is_default : d.space === space.label,
-  );
-  if (mine.length) {
-    for (const device of mine) card.append(deviceRow(device, space.label));
-  } else {
-    const none = document.createElement("p");
-    none.className = "px-3 py-3 text-sm text-neutral-500 dark:text-neutral-400";
-    none.textContent = "No devices yet.";
-    card.append(none);
-  }
+  const mine = devicesIn(space, devices);
+  // A container of its own, rather than rows appended straight onto the card:
+  // a poll reconciles this list in place, and that needs a parent whose
+  // children are only device rows.
+  const rows = document.createElement("div");
+  rows.dataset.part = "devices";
+  card.append(rows);
+  fillDevices(rows, mine, space.label);
 
   const foot = document.createElement("div");
   foot.className =
@@ -586,24 +788,48 @@ function spaceCard(space, devices, several) {
   // three rows on a phone — so the name moves to the top of a dialog and the
   // buttons inside it need no qualifier at all.
   const manage = cardButton("Manage");
-  manage.onclick = () =>
-    withButton(manage, "…", async () => {
-      showManage(space, several);
-    });
+  manage.dataset.part = "manage";
   foot.append(manage);
 
   // Kept on the card, not buried in the dialog: adding a device is the one
   // thing here that is done often, and the whole point of the layout is that
   // the button sits on the space it invites into.
   const add = cardButton("Add a device");
-  add.onclick = () =>
-    withButton(add, "…", async () => {
-      await showInvite(space.label);
-    });
+  add.dataset.part = "add";
   foot.append(add);
 
   card.append(foot);
+  // Bound here as well as on every poll, so there is one place that decides
+  // what these buttons do with the *current* facts.
+  bindCardActions(card, space, several);
   return card;
+}
+
+/**
+ * Point a card's buttons at the space as it is now.
+ *
+ * Rebound on every poll rather than captured once. A kept card's handlers
+ * closed over the `space` and the `several` of the moment it was built, so a
+ * card that survived a poll would open Manage with a stale `is_default` and,
+ * once a second space existed, without the actions that only appear when
+ * there is more than one. Keeping the node is only correct if what the node
+ * does is kept current with it.
+ */
+function bindCardActions(card, space, several) {
+  const manage = card.querySelector('[data-part="manage"]');
+  if (manage) {
+    manage.onclick = () =>
+      withButton(manage, "…", async () => {
+        showManage(space, several);
+      });
+  }
+  const add = card.querySelector('[data-part="add"]');
+  if (add) {
+    add.onclick = () =>
+      withButton(add, "…", async () => {
+        await showInvite(space.label);
+      });
+  }
 }
 
 async function refreshSpaces() {
@@ -618,9 +844,11 @@ async function refreshSpaces() {
   // the code to another device.
   defaultSpace = spaces.find((s) => s.is_default)?.label ?? null;
   const several = spaces.length > 1;
-  $("spaces").replaceChildren(
-    ...spaces.map((space) => spaceCard(space, devices, several)),
-  );
+  syncRows($("spaces"), spaces, {
+    key: (space) => space.label,
+    build: (space) => spaceCard(space, devices, several),
+    update: (card, space) => updateSpaceCard(card, space, devices, several),
+  });
 }
 
 /** Minutes past midnight for an `HH:MM` string, or null if it is not one. */
@@ -1084,26 +1312,17 @@ function showManage(space, several) {
   $("manage-actions").replaceChildren(...actions);
   $("manage-danger").replaceChildren(...danger);
 
-  box.hidden = false;
-  actions[0]?.focus();
-
-  const onKey = (e) => {
-    if (e.key === "Escape") closeManage();
-  };
-  closeManage = () => {
-    box.hidden = true;
-    $("manage-actions").replaceChildren();
-    $("manage-danger").replaceChildren();
-    $("manage-close").onclick = null;
-    box.onclick = null;
-    document.removeEventListener("keydown", onKey);
-    closeManage = () => {};
-  };
+  closeManage =
+    openModal(box, {
+      focus: actions[0],
+      onClose: () => {
+        $("manage-actions").replaceChildren();
+        $("manage-danger").replaceChildren();
+        $("manage-close").onclick = null;
+        closeManage = () => {};
+      },
+    }) ?? (() => {});
   $("manage-close").onclick = closeManage;
-  box.onclick = (e) => {
-    if (e.target === box) closeManage();
-  };
-  document.addEventListener("keydown", onKey);
 }
 
 /** Undoes what opening the invite dialog bound, so it can be opened again. */
@@ -1144,33 +1363,23 @@ async function showInvite(space) {
   $("expiry").textContent = `Expires in ${Math.max(1, Math.round(expires_in / 60))} min. Single use.`;
 
   const box = $("invite-modal");
-  box.hidden = false;
   // Focus lands on the way out rather than on the code: there is nothing here
   // to fill in, and a keyboard user's next move is to leave.
-  $("invite-done").focus();
-
-  const onKey = (e) => {
-    if (e.key === "Escape") closeInvite();
-  };
-  closeInvite = () => {
-    box.hidden = true;
-    // The code is spent once it is used, and leaving it in the DOM means the
-    // next open can flash the old one before the new one arrives.
-    $("qr").replaceChildren();
-    $("ticket").textContent = "";
-    $("invite-close").onclick = null;
-    $("invite-done").onclick = null;
-    box.onclick = null;
-    document.removeEventListener("keydown", onKey);
-    closeInvite = () => {};
-  };
+  closeInvite =
+    openModal(box, {
+      focus: $("invite-done"),
+      onClose: () => {
+        // The code is spent once it is used, and leaving it in the DOM means
+        // the next open can flash the old one before the new one arrives.
+        $("qr").replaceChildren();
+        $("ticket").textContent = "";
+        $("invite-close").onclick = null;
+        $("invite-done").onclick = null;
+        closeInvite = () => {};
+      },
+    }) ?? (() => {});
   $("invite-close").onclick = closeInvite;
   $("invite-done").onclick = closeInvite;
-  // Only the backdrop itself, so a click inside the panel does not dismiss it.
-  box.onclick = (e) => {
-    if (e.target === box) closeInvite();
-  };
-  document.addEventListener("keydown", onKey);
   say("");
 }
 
@@ -1212,8 +1421,6 @@ function showJoin(prefill = "") {
 
   $("join-input").value = prefill;
   step("code");
-  box.hidden = false;
-  $("join-input").focus();
 
   // Held between the steps: the confirmation names a space, and joining has
   // to use the same code that was read, not whatever the field says by then.
@@ -1255,23 +1462,21 @@ function showJoin(prefill = "") {
       await refresh();
     });
 
-  const onKey = (e) => {
-    if (e.key === "Escape") closeJoin();
-  };
-  closeJoin = () => {
-    box.hidden = true;
-    // A spent code left in the field is one that fails confusingly on the
-    // next open.
-    $("join-input").value = "";
-    $("join-name").value = "";
-    read = "";
-    for (const id of ["join-close", "join-cancel", "join-read", "join-back", "join-go"]) {
-      $(id).onclick = null;
-    }
-    box.onclick = null;
-    document.removeEventListener("keydown", onKey);
-    closeJoin = () => {};
-  };
+  closeJoin =
+    openModal(box, {
+      focus: $("join-input"),
+      onClose: () => {
+        // A spent code left in the field is one that fails confusingly on
+        // the next open.
+        $("join-input").value = "";
+        $("join-name").value = "";
+        read = "";
+        for (const id of ["join-close", "join-cancel", "join-read", "join-back", "join-go"]) {
+          $(id).onclick = null;
+        }
+        closeJoin = () => {};
+      },
+    }) ?? (() => {});
   $("join-close").onclick = closeJoin;
   $("join-cancel").onclick = closeJoin;
   $("join-read").onclick = onRead;
@@ -1280,10 +1485,6 @@ function showJoin(prefill = "") {
     $("join-input").focus();
   };
   $("join-go").onclick = onGo;
-  box.onclick = (e) => {
-    if (e.target === box) closeJoin();
-  };
-  document.addEventListener("keydown", onKey);
 }
 
 $("join-open").onclick = () => showJoin();

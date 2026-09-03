@@ -2,10 +2,11 @@
   "name": "voicecast-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "The voicecast app's interface. Compiled CSS only — no bundler, no framework.",
+  "description": "The voicecast app's interface. Compiled CSS only \u2014 no bundler, no framework.",
   "scripts": {
     "build:css": "tailwindcss -i src/input.css -o src/styles.css --minify",
-    "watch:css": "tailwindcss -i src/input.css -o src/styles.css --watch"
+    "watch:css": "tailwindcss -i src/input.css -o src/styles.css --watch",
+    "test:ui": "node tests/harness.mjs"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.3",

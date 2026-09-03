@@ -1798,3 +1798,81 @@ workflow, exercised only on tags and `workflow_dispatch`, so a mistake in it
 surfaces late. And the release body still says the app is unsigned: when a
 Developer ID certificate lands, that sentence, the README paragraph and
 `docs/signing.md` all owe an update in the same change.
+## 58. A list is reconciled, not rebuilt
+
+Both lists called `replaceChildren` on every five-second poll. That threw away
+three things nobody had finished with: an expanded message collapsed mid-read,
+a focused Remove or Play button dropped focus to `<body>` so a keyboard user
+lost their place entirely, and a Play button showing "…" was reset while its
+request was still in flight. Issue #74.
+
+All three live on the node itself — a class, the focus ring, a disabled
+attribute — so they survive exactly as long as the node does. `syncRows`
+matches rows to data by key, patches the ones that survive, and builds only
+what is new.
+
+**Nodes are moved only when the order actually changed.** A move is a remove
+and an insert as far as the DOM is concerned, and that blurs a focused
+element, so reordering everything to prepend one new message would have
+defeated the point. Prepending now touches only the new node.
+
+**Keeping a node means keeping its handlers current.** A card's Manage button
+closed over the `space` and the space *count* of the moment it was built, so a
+card that survived a poll would have opened Manage with a stale `is_default`
+and, once a second space existed, without the actions that only appear when
+there is more than one. The handlers are rebound on every poll. This is the
+cost of reconciliation and the part that is easy to miss: the bug it
+introduces is invisible until the facts change under a card nobody rebuilt.
+
+**Unheard-only asks deeper.** The filter runs in the interface, and it ran
+after a 50-entry request — so an unheard message that had fallen outside the
+newest 50 was hidden from the one view whose purpose is finding it. Filtering
+now asks for more than the node retains, so it sees everything there is.
+Server-side filtering is the better shape and wants a wire field and a CLI
+flag to be coherent; this fixes the defect completely with respect to what is
+kept, which is all that exists to find.
+
+## 59. `aria-modal` is a claim; `inert` is the mechanism
+
+Four dialogs, each with the open/Escape/backdrop/close pattern hand-copied,
+each carrying `role="dialog"` and `aria-modal="true"` — a promise that the
+rest of the page is unreachable — and none of them keeping it. Tab walked out
+of "Remove device?" into the tab bar behind the backdrop, where a
+screen-reader user could activate the very thing the dialog was asking about.
+Closing dropped focus to `<body>`. Two dialogs at once was reachable through
+that Tab escape, and left the first one's promise unresolved for ever with the
+button that opened it stuck reading "…". Issue #75.
+
+One `modal.js` now holds it: `inert` on the dialog's siblings, a Tab trap,
+focus restored to the opener, and a single-dialog guard that answers a second
+`ask` with a cancel rather than stacking it.
+
+**Not `<dialog>` with `showModal()`.** It would give the trap and the top layer
+for free, but these panels are already styled as full-screen flex backdrops on
+five platforms, and `::backdrop` plus the UA's own centring would have to be
+undone on every one of them. The behaviour was what was missing, not the
+markup.
+
+**Focus restore retries once.** The opener is usually a button `withButton`
+disabled for the duration of its action, and a disabled element cannot take
+focus — so restoring synchronously left focus nowhere, which is the bug this
+file exists to fix, reintroduced one layer down. The retry is skipped if
+another dialog opened meanwhile.
+
+**Also here, because they are the same reader.** Toast text was set while the
+live region was `hidden` and the region unhidden afterwards, which is not
+reliably announced — VoiceOver says nothing. The regions now stay in the
+document and the bubble inside them is what appears; errors moved to
+`role="alert"`, because urgency is not a style. 12 px timestamps in
+`neutral-400` were about 2.5:1 against a 4.5:1 floor, and read as decoration
+because they were too faint to read. Checkboxes are exempt from the 44 px
+touch-target rule, which was giving a `size-5` box a 20 by 44 target — the
+range input was exempted for exactly this reason and checkboxes were missed.
+
+**Cost, and a new thing to run.** `app/tests/` gains a headless harness and
+two probes, because both of these defects were invisible to review and obvious
+in a browser. It is manual: it needs a real Chrome, which the build images do
+not carry, and pulling one in to run two probes is a poor trade. A PR that
+touches the interface should say whether it was run — which is worse than CI
+and much better than the nothing that was there, and saying so plainly beats a
+check that quietly never runs.

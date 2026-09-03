@@ -65,6 +65,17 @@
     min-height: 2.75rem;
   }
 
+  /* Except a checkbox, which is square by definition.
+     A 44px minimum on a `size-5` box gives a 20 by 44 target: it looks like a
+     rendering fault, and it makes the row taller without making the box any
+     easier to hit. The label beside it is what a thumb actually lands on, and
+     that row already clears 44px. `input[type="range"]` below is exempted for
+     the same reason and this was simply missed. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: 0;
+  }
+
   /* Selects, drawn by us rather than by the webview.
      A native <select> brings its own font size, its own vertical padding and
      its own arrow, and all three differ between WebKitGTK, WKWebView and

@@ -180,7 +180,7 @@
         <label for="new-space" class="sr-only">Name for a new space</label>
         <input id="new-space" type="text" autocomplete="off" placeholder="New space name"
           class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
-                 placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+                 placeholder:text-neutral-500 dark:placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
                  focus:ring-2 focus:ring-accent-500/30
                  dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
         <button type="submit"
@@ -367,7 +367,7 @@
         <label for="say-input" class="sr-only">Text to speak</label>
         <input id="say-input" type="text" autocomplete="off" placeholder="Type a message"
           class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
-                 placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+                 placeholder:text-neutral-500 dark:placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
                  focus:ring-2 focus:ring-accent-500/30
                  dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
         <button id="say" type="submit"
@@ -464,10 +464,20 @@
 <!-- Above the dialogs, not below them: the invite modal's backdrop covers the
      whole viewport, so a toast at a lower layer sat behind 60% black and a
      blur. "Copied" was being reported to nobody. -->
+<!-- Two live regions, always present and never hidden, holding nothing until
+     there is something to say. A live region that is `hidden` when its text
+     changes and unhidden afterwards is not reliably announced — VoiceOver in
+     particular says nothing — so the regions stay and the bubble inside them
+     is what appears and goes. Empty, they have no size and no border, so they
+     cost the layout nothing.
+
+     Two of them because urgency is not a style: a confirmation is `status`
+     and waits its turn, while an error that stopped what someone asked for is
+     `alert` and interrupts. -->
 <div id="result-wrap"
      class="pointer-events-none fixed inset-x-0 bottom-16 z-[60] flex justify-center px-5">
-  <p id="result" role="status" aria-live="polite" hidden
-     class="max-w-sm rounded-full border px-4 py-2 text-center text-sm shadow-lg"></p>
+  <div id="result-status" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="result-alert" role="alert" aria-atomic="true"></div>
 </div>
 
 <!-- Bottom tabs, where a thumb reaches on a phone. -->
@@ -643,7 +653,7 @@
         placeholder="voicecast://join/..."
         class="mt-3 w-full resize-none rounded-lg border border-neutral-300 bg-white px-3 py-2
                font-mono text-xs placeholder:font-sans placeholder:text-sm
-               placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+               placeholder:text-neutral-500 dark:placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
                focus:ring-2 focus:ring-accent-500/30
                dark:border-neutral-700 dark:bg-neutral-950
                dark:placeholder:text-neutral-500"></textarea>
