@@ -111,6 +111,29 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # `tauri.settings.gradle` points Gradle at the `tauri-android` library
+      # inside the cargo registry. It is written by the Tauri CLI during
+      # `android build`, holds an absolute path, and is correctly gitignored —
+      # so a checkout does not have one and Gradle stops at "could not read
+      # script". Writing it from `cargo metadata` is the same three lines
+      # without running the whole APK build for a Kotlin check.
+      #
+      # If Tauri ever changes what belongs in this file, the Gradle step fails
+      # loudly rather than skipping quietly, which is the right way round.
+      - name: Point Gradle at tauri-android
+        if: matrix.android
+        working-directory: app/src-tauri/gen/android
+        run: |
+          tauri_dir=$(cargo metadata --format-version 1 \
+            --manifest-path ../../Cargo.toml \
+            | python3 -c "import json,sys,os; print(next(os.path.dirname(p['manifest_path']) for p in json.load(sys.stdin)['packages'] if p['name']=='tauri'))")
+          test -d "$tauri_dir/mobile/android" || { echo "no tauri-android at $tauri_dir"; exit 1; }
+          {
+            echo "include ':tauri-android'"
+            echo "project(':tauri-android').projectDir = new File(\"$tauri_dir/mobile/android\")"
+          } > tauri.settings.gradle
+          cat tauri.settings.gradle
+
       - name: Build the Android shell (Kotlin, manifest, resources)
         if: matrix.android
         working-directory: app/src-tauri/gen/android
