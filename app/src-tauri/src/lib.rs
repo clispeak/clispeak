@@ -543,22 +543,16 @@ fn status_of(startup: &Startup) -> NodeStatus {
         Startup::Running(node) => Arc::clone(node),
     };
 
-    match node.status() {
-        Response::Status {
-            device_id,
-            engine,
-            fallback,
-            engine_reason,
-            ..
-        } => NodeStatus {
+    match replies::status(node.status()) {
+        Some(s) => NodeStatus {
             name: node.name().to_string(),
-            device_id,
-            engine,
-            fallback,
-            reason: engine_reason,
+            device_id: s.device_id,
+            engine: s.engine,
+            fallback: s.fallback,
+            reason: s.reason,
             ..NodeStatus::default()
         },
-        _ => NodeStatus {
+        None => NodeStatus {
             name: node.name().to_string(),
             device_id: node.id(),
             engine: "unknown".into(),
@@ -570,10 +564,7 @@ fn status_of(startup: &Startup) -> NodeStatus {
 
 #[tauri::command]
 async fn list_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, String> {
-    match state.node.devices().await {
-        Response::Devices { devices } => Ok(devices),
-        other => Err(describe(other)),
-    }
+    replies::devices(state.node.devices().await)
 }
 
 /// The agent skill, compiled in so it can never drift from this build.
@@ -748,14 +739,8 @@ pub struct NowPlaying {
 /// What this device is saying, for the playback controls.
 #[tauri::command]
 fn now_playing(state: State<'_, AppState>) -> NowPlaying {
-    let (speaking, pending, paused) = match state.node.queue_state() {
-        Response::Queue {
-            speaking,
-            pending,
-            paused,
-        } => (speaking, pending, paused),
-        _ => (None, Vec::new(), false),
-    };
+    let (speaking, pending, paused) =
+        replies::queue(state.node.queue_state()).unwrap_or((None, Vec::new(), false));
     // The text comes from the history rather than the queue: the queue holds
     // chunks mid-flight, and the history holds the message as it was sent.
     let entry = speaking.as_deref().and_then(|id| state.node.message(id));
@@ -798,10 +783,7 @@ fn history(
     state: State<'_, AppState>,
     limit: Option<usize>,
 ) -> Result<Vec<voicecast_proto::HistoryEntry>, String> {
-    match state.node.history(limit) {
-        Response::History { entries } => Ok(entries),
-        other => Err(describe(other)),
-    }
+    replies::history(state.node.history(limit))
 }
 
 /// Speak a message from the history again.
@@ -810,37 +792,25 @@ fn history(
 /// settings exist to require.
 #[tauri::command]
 fn replay(state: State<'_, AppState>, msg_id: String) -> Result<(), String> {
-    match state.node.replay(&msg_id) {
-        Response::Accepted { .. } => Ok(()),
-        other => Err(describe(other)),
-    }
+    replies::accepted(state.node.replay(&msg_id))
 }
 
 /// Forget the history.
 #[tauri::command]
 fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
-    match state.node.clear_history() {
-        Response::Done => Ok(()),
-        other => Err(describe(other)),
-    }
+    replies::done(state.node.clear_history())
 }
 
 /// The spaces this device belongs to.
 #[tauri::command]
 async fn list_spaces(state: State<'_, AppState>) -> Result<Vec<voicecast_proto::SpaceRow>, String> {
-    match state.node.spaces().await {
-        Response::Spaces { spaces } => Ok(spaces),
-        other => Err(describe(other)),
-    }
+    replies::spaces(state.node.spaces().await)
 }
 
 /// Found a new space from this device, and make it the default.
 #[tauri::command]
 async fn new_space(state: State<'_, AppState>, label: String) -> Result<(), String> {
-    match state.node.new_space(&label).await {
-        Response::Spaces { .. } => Ok(()),
-        other => Err(describe(other)),
-    }
+    replies::spaces_changed(state.node.new_space(&label).await)
 }
 
 /// Drop one space, keeping the others.
@@ -849,28 +819,19 @@ async fn new_space(state: State<'_, AppState>, label: String) -> Result<(), Stri
 /// currently using; this one names which of several to drop.
 #[tauri::command]
 async fn drop_space(state: State<'_, AppState>, label: String) -> Result<(), String> {
-    match state.node.leave_space(&label).await {
-        Response::Spaces { .. } => Ok(()),
-        other => Err(describe(other)),
-    }
+    replies::spaces_changed(state.node.leave_space(&label).await)
 }
 
 /// Choose which space bare device names resolve in.
 #[tauri::command]
 async fn default_space(state: State<'_, AppState>, label: String) -> Result<(), String> {
-    match state.node.default_space(&label).await {
-        Response::Spaces { .. } => Ok(()),
-        other => Err(describe(other)),
-    }
+    replies::spaces_changed(state.node.default_space(&label).await)
 }
 
 /// Rename a space locally.
 #[tauri::command]
 async fn rename_space(state: State<'_, AppState>, label: String, to: String) -> Result<(), String> {
-    match state.node.rename_space(&label, &to).await {
-        Response::Spaces { .. } => Ok(()),
-        other => Err(describe(other)),
-    }
+    replies::spaces_changed(state.node.rename_space(&label, &to).await)
 }
 
 /// Replace the default space, locking every other device out at once.
@@ -882,27 +843,12 @@ async fn rotate_space(
     state: State<'_, AppState>,
     space: Option<String>,
 ) -> Result<Vec<String>, String> {
-    match state.node.rotate(space.as_deref()).await {
-        Response::Rotated { devices, .. } => Ok(devices),
-        other => Err(describe(other)),
-    }
+    replies::rotated(state.node.rotate(space.as_deref()).await)
 }
 
 #[tauri::command]
 async fn make_invite(state: State<'_, AppState>, space: Option<String>) -> Result<Invite, String> {
-    match state.node.invite(space.as_deref()).await {
-        Response::Invite { url, expires_in } => {
-            // A missing QR is a degraded invite, not a failed one: the code
-            // can still be copied.
-            let qr = voicecast_core::qr_svg(&url).unwrap_or_default();
-            Ok(Invite {
-                url,
-                qr,
-                expires_in,
-            })
-        }
-        other => Err(describe(other)),
-    }
+    replies::invite(state.node.invite(space.as_deref()).await)
 }
 
 /// What an invite would join, read before anything is committed to.
@@ -924,18 +870,7 @@ pub struct InvitePreview {
 
 #[tauri::command]
 fn preview_invite(state: State<'_, AppState>, ticket: String) -> Result<InvitePreview, String> {
-    match state.node.preview(&ticket) {
-        Response::Preview {
-            label,
-            expires_in,
-            endpoint_id,
-        } => Ok(InvitePreview {
-            label,
-            expires_in,
-            from: endpoint_id.chars().take(16).collect(),
-        }),
-        other => Err(describe(other)),
-    }
+    replies::preview(state.node.preview(&ticket))
 }
 
 #[tauri::command]
@@ -944,10 +879,7 @@ async fn join_space(
     ticket: String,
     label: Option<String>,
 ) -> Result<Joined, String> {
-    match state.node.join(&ticket, label).await {
-        Response::Joined { members, space } => Ok(Joined { members, space }),
-        other => Err(describe(other)),
-    }
+    replies::joined(state.node.join(&ticket, label).await)
 }
 
 /// The result of a join, including what the space ended up being called.
@@ -992,10 +924,7 @@ fn request_battery_exemption() -> bool {
 
 #[tauri::command]
 async fn rename_device(state: State<'_, AppState>, name: String) -> Result<String, String> {
-    match state.node.rename(&name).await {
-        Response::Renamed { name } => Ok(name),
-        other => Err(describe(other)),
-    }
+    replies::renamed(state.node.rename(&name).await)
 }
 
 /// An invite opened from a QR scan, if one is waiting.
@@ -1057,31 +986,12 @@ async fn revoke_device(
     name: String,
     space: Option<String>,
 ) -> Result<String, String> {
-    match state.node.revoke(&name, space.as_deref()).await {
-        Response::Renamed { name } => Ok(name),
-        other => Err(describe(other)),
-    }
+    replies::renamed(state.node.revoke(&name, space.as_deref()).await)
 }
 
 #[tauri::command]
 async fn leave_space(state: State<'_, AppState>, space: Option<String>) -> Result<String, String> {
-    match state.node.leave(space.as_deref()).await {
-        Response::Left {
-            space,
-            unreached,
-            refounded,
-        } => {
-            let mut said = format!("left {space}");
-            if refounded {
-                said.push_str(" — it was the only one, so an empty space took its place");
-            }
-            if unreached > 0 {
-                said.push_str(&format!("; {unreached} device(s) not reached yet"));
-            }
-            Ok(said)
-        }
-        other => Err(describe(other)),
-    }
+    replies::left(state.node.leave(space.as_deref()).await)
 }
 
 #[tauri::command]
@@ -1091,17 +1001,7 @@ async fn speak(state: State<'_, AppState>, text: String) -> Result<(), String> {
     if let Err(rejection) = voicecast_text::validate(&text) {
         return Err(rejection.to_string());
     }
-    match state.node.speak(text, Priority::Normal, None).await {
-        // `speak` reports per device, as the CLI has always seen it. This
-        // matched only `Accepted` and `Finished`, so the node queued the
-        // message, spoke it, and the interface then said the send had failed
-        // — showing the debug formatting of a successful report as an error.
-        // Work done, failure announced, which is the same drift that showed
-        // `unexpected response: Left { … }` after the leave reply changed.
-        Response::Report { targets, .. } => spoken_or_why(&targets),
-        Response::Accepted { .. } | Response::Finished { .. } => Ok(()),
-        other => Err(describe(other)),
-    }
+    replies::spoke(state.node.speak(text, Priority::Normal, None).await)
 }
 
 /// Whether a report counts as the message being taken, and why if not.
@@ -1136,6 +1036,195 @@ fn spoken_or_why(targets: &[voicecast_proto::TargetResult]) -> Result<(), String
     } else {
         why
     })
+}
+
+/// One place where a reply's shape is turned into what a command returns.
+///
+/// Every command used to carry its own `match` on [`Response`], each ending
+/// `other => Err(describe(other))`. That catch-all is right — an unhandled
+/// reply should say so — but it turns a compile-time question into a runtime
+/// one, and it has been wrong three times: the leave reply changed shape and
+/// the app showed `unexpected response: Left { … }`; `speak` began reporting
+/// per device and the app announced a failure *after speaking the message*;
+/// a device that refused produced no message at all. Each compiled, each was
+/// green, each was found by a person pressing a button (#46).
+///
+/// Pulling the matches out here does not make the node's reply a compile-time
+/// promise — that is issue #79's seam, and a bigger change. What it does is
+/// make the pairing something a test can execute. `command_tests` below drives
+/// a real node through *these* functions, so a reply that changes shape fails
+/// the build rather than waiting for someone to press the button.
+mod replies {
+    use super::{DeviceInfo, Invite, InvitePreview, Joined, describe, spoken_or_why};
+    use voicecast_proto::Response;
+
+    /// The fields `node_status` reads. `None` when the reply was not a status
+    /// at all, which the caller draws as an unknown engine rather than an
+    /// error — the status panel has to render something.
+    pub(super) struct Status {
+        pub device_id: String,
+        pub engine: String,
+        pub fallback: bool,
+        pub reason: Option<String>,
+    }
+
+    pub(super) fn status(r: Response) -> Option<Status> {
+        match r {
+            Response::Status {
+                device_id,
+                engine,
+                fallback,
+                engine_reason,
+                ..
+            } => Some(Status {
+                device_id,
+                engine,
+                fallback,
+                reason: engine_reason,
+            }),
+            _ => None,
+        }
+    }
+
+    /// What is being said and what is behind it. `None` for the same reason
+    /// as [`status`]: the playback controls always draw.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn queue(r: Response) -> Option<(Option<String>, Vec<String>, bool)> {
+        match r {
+            Response::Queue {
+                speaking,
+                pending,
+                paused,
+            } => Some((speaking, pending, paused)),
+            _ => None,
+        }
+    }
+
+    pub(super) fn devices(r: Response) -> Result<Vec<DeviceInfo>, String> {
+        match r {
+            Response::Devices { devices } => Ok(devices),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn history(r: Response) -> Result<Vec<voicecast_proto::HistoryEntry>, String> {
+        match r {
+            Response::History { entries } => Ok(entries),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn accepted(r: Response) -> Result<(), String> {
+        match r {
+            Response::Accepted { .. } => Ok(()),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn done(r: Response) -> Result<(), String> {
+        match r {
+            Response::Done => Ok(()),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn spaces(r: Response) -> Result<Vec<voicecast_proto::SpaceRow>, String> {
+        match r {
+            Response::Spaces { spaces } => Ok(spaces),
+            other => Err(describe(other)),
+        }
+    }
+
+    /// The four commands that change the set of spaces and show the result by
+    /// refreshing rather than by reading the reply.
+    pub(super) fn spaces_changed(r: Response) -> Result<(), String> {
+        spaces(r).map(|_| ())
+    }
+
+    pub(super) fn rotated(r: Response) -> Result<Vec<String>, String> {
+        match r {
+            Response::Rotated { devices, .. } => Ok(devices),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn invite(r: Response) -> Result<Invite, String> {
+        match r {
+            Response::Invite { url, expires_in } => {
+                // A missing QR is a degraded invite, not a failed one: the
+                // code can still be copied.
+                let qr = voicecast_core::qr_svg(&url).unwrap_or_default();
+                Ok(Invite {
+                    url,
+                    qr,
+                    expires_in,
+                })
+            }
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn preview(r: Response) -> Result<InvitePreview, String> {
+        match r {
+            Response::Preview {
+                label,
+                expires_in,
+                endpoint_id,
+            } => Ok(InvitePreview {
+                label,
+                expires_in,
+                from: endpoint_id.chars().take(16).collect(),
+            }),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn joined(r: Response) -> Result<Joined, String> {
+        match r {
+            Response::Joined { members, space } => Ok(Joined { members, space }),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn renamed(r: Response) -> Result<String, String> {
+        match r {
+            Response::Renamed { name } => Ok(name),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn left(r: Response) -> Result<String, String> {
+        match r {
+            Response::Left {
+                space,
+                unreached,
+                refounded,
+            } => {
+                let mut said = format!("left {space}");
+                if refounded {
+                    said.push_str(" — it was the only one, so an empty space took its place");
+                }
+                if unreached > 0 {
+                    said.push_str(&format!("; {unreached} device(s) not reached yet"));
+                }
+                Ok(said)
+            }
+            other => Err(describe(other)),
+        }
+    }
+
+    /// `speak` reports per device, as the CLI has always seen it. This matched
+    /// only `Accepted` and `Finished`, so the node queued the message, spoke
+    /// it, and the interface then said the send had failed — showing the debug
+    /// formatting of a successful report as an error. Work done, failure
+    /// announced.
+    pub(super) fn spoke(r: Response) -> Result<(), String> {
+        match r {
+            Response::Report { targets, .. } => spoken_or_why(&targets),
+            Response::Accepted { .. } | Response::Finished { .. } => Ok(()),
+            other => Err(describe(other)),
+        }
+    }
 }
 
 /// Turn an unexpected response into something worth showing a person.
@@ -1774,5 +1863,153 @@ mod startup_tests {
             "a node that does not exist has no engine, and 'unknown' would \
              read as a device that might still speak"
         );
+    }
+}
+
+/// Issue #46: the node changes what it returns and the app goes on matching
+/// the old shape.
+///
+/// Three times this compiled, passed CI, and was found by a person pressing a
+/// button. Nothing here makes the pairing a compile-time promise — that is
+/// #79's seam — but it makes it *executable*: a real node is driven through
+/// the same `replies` functions the commands use, and the assertion is that
+/// the catch-all did not fire.
+///
+/// **Not `#[cfg(all(test, target_os = "macos"))]`**, which is the module
+/// thirty lines up. Tests written there compile on every target and run on
+/// none of the ones CI tests, which is indistinguishable from passing. Four
+/// tests landed in it before being moved. Check which module you are in.
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+    use voicecast_core::identity::FileKeyStore;
+    use voicecast_engine::SilentEngine;
+
+    /// Whether a reply was understood at all.
+    ///
+    /// A refusal is not a failure here — a silent engine legitimately reports
+    /// that it cannot speak, and a command that surfaces that is doing its
+    /// job. What this catches is the catch-all: `describe` fires only when
+    /// the node returned a shape no arm names, which is the drift itself.
+    fn understood<T>(what: &str, r: Result<T, String>) {
+        if let Err(message) = r {
+            assert!(
+                !message.starts_with("unexpected response"),
+                "{what}: {message}\n\
+                 The node returned a reply this command does not name. That is \
+                 the drift in #46: it compiles, and a person finds it by \
+                 pressing the button."
+            );
+        }
+    }
+
+    /// One node, on a scratch config directory, driven through every command
+    /// that a device with no peers can answer.
+    ///
+    /// One test rather than several: `set_config_dir` is a `OnceLock`, so the
+    /// first caller in the process wins and a second test wanting its own
+    /// directory would silently share this one's.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn every_command_understands_what_the_node_returns() {
+        let dir = std::env::temp_dir().join(format!("voicecast-commands-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        voicecast_core::identity::set_config_dir(dir.clone());
+
+        // A file store rather than the platform keyring: this must not touch
+        // the developer's own keychain, and a file is the one store that
+        // behaves identically on all five targets.
+        let store = FileKeyStore::at(dir.join("identity.key"));
+        let identity = Identity::load_or_create(&store).expect("identity");
+        let transport = Transport::bind(identity.secret().clone(), None)
+            .await
+            .expect("binding a transport");
+        let engine = Arc::new(SilentEngine::new("no engine in a test"));
+        let node = Node::new(engine, identity, transport, "Test".into())
+            .await
+            .expect("node");
+
+        // Reading. Nothing here changes state, so order does not matter.
+        assert!(
+            replies::status(node.status()).is_some(),
+            "node_status: the reply was not a Status, so the panel would draw \
+             an unknown engine for a node that is running"
+        );
+        assert!(
+            replies::queue(node.queue_state()).is_some(),
+            "now_playing: the reply was not a Queue, so the playback controls \
+             would draw an idle device forever"
+        );
+        understood("list_devices", replies::devices(node.devices().await));
+        understood("list_spaces", replies::spaces(node.spaces().await));
+        understood("history", replies::history(node.history(None)));
+        assert!(
+            PolicyView::try_from(node.policy().await).is_ok(),
+            "policy: a policy the app cannot read is drawn as settled state"
+        );
+
+        // Speaking. The engine is silent, so this reports a refusal — which
+        // is a understood reply, and exactly the case that used to produce no
+        // message at all.
+        understood(
+            "speak",
+            replies::spoke(node.speak("hello".into(), Priority::Normal, None).await),
+        );
+
+        // Replaying needs something to replay, so it follows the speak above.
+        let msg_id = match node.history(Some(1)) {
+            Response::History { entries } => entries.first().map(|e| e.msg_id.clone()),
+            _ => None,
+        };
+        if let Some(msg_id) = msg_id {
+            understood("replay", replies::accepted(node.replay(&msg_id)));
+        }
+
+        // Invites. `preview` is fed the invite this node just made, which is
+        // the only ticket available without a second device.
+        let invite = node.invite(None).await;
+        understood("make_invite", replies::invite(invite.clone()));
+        if let Response::Invite { url, .. } = invite {
+            understood("preview_invite", replies::preview(node.preview(&url)));
+        }
+
+        // Naming.
+        understood("rename_device", replies::renamed(node.rename("Test").await));
+
+        // Spaces, in an order that leaves the node with one to belong to.
+        // `join` is deliberately absent: it dials a peer, so without a second
+        // device it would wait on a network rather than return a shape.
+        understood(
+            "new_space",
+            replies::spaces_changed(node.new_space("Two").await),
+        );
+        understood(
+            "rename_space",
+            replies::spaces_changed(node.rename_space("Two", "Three").await),
+        );
+        understood(
+            "default_space",
+            replies::spaces_changed(node.default_space("Three").await),
+        );
+        understood(
+            "rotate_space",
+            replies::rotated(node.rotate(Some("Three")).await),
+        );
+        understood(
+            "revoke_device",
+            replies::renamed(node.revoke("Test", Some("Three")).await),
+        );
+        understood(
+            "leave_space",
+            replies::left(node.leave(Some("Three")).await),
+        );
+        understood(
+            "drop_space",
+            replies::spaces_changed(node.leave_space("Three").await),
+        );
+        understood("clear_history", replies::done(node.clear_history()));
+
+        node.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
