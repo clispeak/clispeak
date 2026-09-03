@@ -193,6 +193,12 @@ itself on arrival: the iPhone presents an entry signed by the Pixel, the
 desktop trusts the Pixel, the iPhone is admitted — with no prior sync. Roster
 sync is an *optimization* for additions, not a correctness requirement.
 
+The corollary, which is easy to miss: **any current member may vouch for any
+device**, so a device you no longer control is a device that could already
+have added others. That is not a flaw in the check — it is what "a device
+vouches for itself" means — but it is why the answer to a phone leaving your
+hands is `rotate` rather than `revoke`. See decision 39.
+
 **Revocations must propagate.** This is the entire reason sync exists. A
 revoked device still holds a validly-signed join record, so a member that never
 receives the tombstone will keep admitting a sold phone indefinitely.

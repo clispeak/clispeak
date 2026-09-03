@@ -8,6 +8,24 @@
 //! device vouch for itself on arrival: a node can admit a peer it has never
 //! seen, provided the peer presents a join record signed by someone the node
 //! already trusts. See `docs/architecture.md`.
+//!
+//! **The trust rule, stated as it actually runs.** Any current member may
+//! vouch for any device. [`Roster::admit`] additionally requires the inviter
+//! to be a member we already hold, which is the right rule for a single
+//! record arriving on its own; [`Roster::merge`], which is what a roster sync
+//! goes through, checks signatures and dates but not the inviter. That
+//! difference used to be a hole in the documentation rather than in the
+//! design: `merge` is reachable only from a peer that `allows` has already
+//! confirmed is a current member, and such a peer can sign a record for any
+//! endpoint id with its own key — which `admit` would accept too. Enforcing
+//! the inviter check in `merge` would therefore stop nothing a member can do,
+//! while making a device orphan everyone it invited the moment it was
+//! revoked. Issue #49, decision 39.
+//!
+//! What follows from that is worth being plain about: a device you no longer
+//! trust is a device that could have added others before you revoked it, so
+//! `rotate` — not `revoke` — is the answer when a device is out of your
+//! hands.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -241,6 +259,11 @@ impl Roster {
     }
 
     /// Accept a member vouched for by someone already in the roster.
+    ///
+    /// The strict form, for one record arriving on its own. A roster *sync*
+    /// goes through [`Roster::merge`] instead, which does not check the
+    /// inviter — see this module's header for why that is a weaker rule on
+    /// paper and the same rule in practice.
     pub fn admit(&mut self, member: Member) -> Result<(), RosterError> {
         verify(&member)?;
         if !self.members.contains_key(&member.invited_by) {
@@ -335,7 +358,12 @@ impl Roster {
     ///
     /// Add-only with tombstones, so the result does not depend on the order
     /// updates arrive in — two devices that sync in either direction converge
-    /// on the same roster.
+    /// on the same roster. That convergence is the reason the inviter is not
+    /// checked here: the check's answer would depend on which records had
+    /// already been merged, so two devices seeing the same updates in
+    /// different orders could disagree about the roster for ever.
+    ///
+    /// Signatures and dates *are* checked, on every record, every time.
     pub fn merge(&mut self, other: &Roster) {
         self.merge_at(other, now());
     }
