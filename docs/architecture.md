@@ -381,12 +381,26 @@ something that does not exist yet, it says so.
 | macOS | Piper, bundled in the `.app`; espeak-ng floor only if installed | Tray |
 | Windows | Piper, placed by `cargo xtask piper`; no floor engine | Tray |
 | Android | `android.speech.tts.TextToSpeech` | Foreground service |
-| iOS | **None.** Builds, but reaches no engine — see below | **Foreground only** — OS restriction |
+| iOS | `AVSpeechSynthesizer` | **Foreground only** — measured, see below |
 
-**Every desktop speaks through Piper**, which is the point: a message sounds
-the same wherever it lands. Neural, CPU-only, no API key, ~20–60MB per voice
-model. There is no universal native engine on Linux and espeak-ng sounds like
-1994, so Piper started there and became the desktop answer everywhere.
+**Every platform speaks in its own best voice, and Piper is what Linux and
+Windows have.** That is a change: this page used to say every desktop speaks
+through Piper *because a message should sound the same wherever it lands*.
+
+The uniformity was a consequence rather than a goal. There is no universal
+native engine on Linux and espeak-ng sounds like 1994, so Piper started there
+and became the desktop answer everywhere **because it was the only thing that
+could be** — and that got read back afterwards as a principle. Android has
+always sounded like Android and nobody thought it a defect.
+
+So macOS is moving to `AVSpeechSynthesizer`, the engine iOS now uses. It is
+better on that platform, it removes a dependency on an upstream that has been
+archived since October 2025, and it takes GPL-3.0 espeak-ng out of the macOS
+artefact entirely (#132). Piper stays where it is the best available answer.
+
+**The cost is real and is not hidden:** a message read aloud on a Linux desk
+and on a Mac will not sound identical. `voice_config` already reports voices
+per device, so the interface can say which is which.
 
 **The espeak-ng floor is thinner than it looks.** `speech_engine()` falls back
 to it on Unix, but nothing ships it: the GNOME runtime the Flatpak builds on
@@ -419,17 +433,56 @@ Decision 30 records the split.
 deliberate: espeak-ng is a genuine floor there, so reaching this case means
 the machine has nothing at all rather than one broken install.
 
-**iOS reaches no engine at all.** It compiles — the five-target rule sees to
-that — but it falls into the Unix branch of `speech_engine()`, where both
-Piper and espeak-ng are spawned binaries that an iOS app cannot provide. The
-result is `SilentEngine`, which reports `no_engine` honestly. Wiring iOS to
-`AVSpeechSynthesizer` is the obvious way to fix that and is not yet written;
-issue #4 tracks iOS never having been run at all.
+**iOS speaks, and it took getting a device to find out how much did not.**
+It had compiled for a year — the five-target rule sees to that — and compiling
+turned out to be a much weaker claim than it read as. It fell into the Unix
+branch of `speech_engine()`, because `not(target_os = "android")` includes
+iOS by omission: nobody wrote iOS support, it was inherited from how an
+exclusion was phrased. Both Piper and espeak-ng are spawned binaries an iOS
+app cannot provide.
 
-**iOS cannot listen in the background.** This is an OS restriction, not a
-framework limitation — Tauri, Flutter, and React Native all hit the identical
-wall. Waking a backgrounded iOS app requires APNs, which requires a push
-server. An iOS receiver only speaks while the app is in the foreground.
+It now names iOS explicitly and speaks through `AVSpeechSynthesizer`, on the
+main thread, with no `unsafe impl` and no claim about AVFoundation's
+threading (decisions 79 and 80). The audio session is set for playback, so the
+hardware silent switch cannot mute it — which for an app whose purpose is
+being heard from a pocket would otherwise be fatal.
+
+**Three other things were broken and none was reachable by any gate.** The
+generated Xcode project calls an `npm run tauri` script that did not exist.
+Linking failed on 28 undefined `_SCDynamicStore*` symbols, because iroh's
+dependencies read the system network configuration and the generated project
+did not link `SystemConfiguration`. And it panicked before its first frame on
+a missing rustls crypto provider that every other target resolves through
+feature unification.
+
+The matrix could not have caught any of them: it links exactly one iOS binary,
+`voicecast`, whose crate depends on `proto` and `text` and reaches no network
+code — and `voicecast-app`, which does, is excluded from that job. See
+`CLAUDE.md` on compiled, linked, and launched being three claims.
+
+**iOS goes unreachable in the background, and that is a property of the
+platform rather than a defect awaiting attention.** Measured, backgrounded, on
+the simulator:
+
+| after | result | audio activity |
+|---|---|---|
+| 2 min | `spoken` in 1.8s | present |
+| 5 min | `spoken` in 1.9s | present |
+| 10 min | `unreachable`, 30s timeout | none |
+
+**And the simulator is the permissive case** — it suspends less aggressively
+than a device, so a real iPhone should be worse.
+
+Nothing available fixes it. `UIBackgroundModes: [audio]` keeps an app alive
+*while playing*, not while *waiting*. Everything iOS offers to wake a
+suspended app — APNs, PushKit — needs a server, and this project's first
+sentence is that there is not one. Tauri, Flutter and React Native hit the
+identical wall.
+
+So an iOS receiver speaks while the app is in the foreground, and a phone that
+has been in a pocket for ten minutes will not receive a message. That is the
+whole circumstance this project exists for, which makes iOS a genuinely
+different proposition from Android rather than a slightly worse one (#137).
 
 ### The engine interface
 
