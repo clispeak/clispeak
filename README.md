@@ -86,7 +86,10 @@ Builds are ad-hoc signed unless `APPLE_SIGNING_IDENTITY` names a certificate.
 Ad-hoc is enough to run, at a cost worth knowing: the identity is derived from
 the binary's own hash, so every rebuild looks like a different program to
 macOS and the keychain grant holding the device identity is asked for again.
-Any stable certificate, self-signed included, ends that.
+Any stable certificate, self-signed included, ends that — five minutes in
+Keychain Access, and `docs/signing.md` has the steps. A self-signed one does
+nothing for anyone *else*: a downloaded `.dmg` still gets Gatekeeper's
+warning, which needs a Developer ID certificate and notarisation (#29).
 
 **Android.** Build and install over USB:
 
