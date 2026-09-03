@@ -2637,11 +2637,14 @@ async fn devices(shared: &Arc<Shared>) -> Response {
 }
 
 /// Serve one peer connection.
-async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> Result<()> {
-    let remote = conn.remote_id();
+async fn handle_peer<C: crate::transport::PeerConnection>(
+    shared: &Arc<Shared>,
+    conn: C,
+) -> Result<()> {
+    let remote = conn.remote();
     // Anything reaching us proves that peer is alive right now.
     mark_seen(shared, &remote.to_string()).await;
-    while let Ok((mut send, mut recv)) = conn.accept_bi().await {
+    while let Some((mut send, mut recv)) = conn.accept_bi().await {
         match read_msg(&mut recv).await? {
             PeerMessage::JoinRequest {
                 endpoint_id,
@@ -3403,5 +3406,113 @@ mod tests {
             .expect("two shadowed devices are worth saying");
         assert!(note.contains("2 other devices"), "{note}");
         assert!(note.contains("aaaa") && note.contains("bbbb"), "{note}");
+    }
+}
+
+/// Issue #80: the protocol had no test above the unit level.
+///
+/// `handle_peer` took a concrete `iroh::endpoint::Connection`, so the only
+/// way to reach its sixteen arms was to bind an endpoint and have a real
+/// second device dial it. Every fix to the receiving side — including the
+/// join check below, which is a security fix — was therefore verified by
+/// reading. This drives the same code with a pair of in-memory pipes.
+#[cfg(test)]
+mod peer_tests {
+    use super::*;
+    use crate::transport::{PeerConnection, read_msg, write_msg};
+    use tokio::io::DuplexStream;
+
+    /// A connection that hands over one stream pair and then ends.
+    ///
+    /// One rather than a loop because `handle_peer` runs until the peer goes
+    /// away: a fake that kept yielding streams would never return, and the
+    /// test would hang rather than fail.
+    struct OneExchange {
+        peer: iroh::EndpointId,
+        streams: std::sync::Mutex<Option<(DuplexStream, DuplexStream)>>,
+    }
+
+    impl PeerConnection for OneExchange {
+        type Send = DuplexStream;
+        type Recv = DuplexStream;
+
+        fn remote(&self) -> iroh::EndpointId {
+            self.peer
+        }
+
+        async fn accept_bi(&self) -> Option<(Self::Send, Self::Recv)> {
+            self.streams.lock().expect("streams").take()
+        }
+    }
+
+    /// A node on a scratch directory, and the shared state `handle_peer` takes.
+    async fn node_for(label: &str) -> (Node, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("voicecast-peer-{}-{label}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        crate::identity::set_config_dir(dir.clone());
+
+        let store = crate::identity::FileKeyStore::at(dir.join("identity.key"));
+        let identity = crate::identity::Identity::load_or_create(&store).expect("identity");
+        let transport = Transport::bind(identity.secret().clone(), None)
+            .await
+            .expect("transport");
+        let engine = Arc::new(voicecast_engine::SilentEngine::new("no engine in a test"));
+        let node = Node::new(engine, identity, transport, "Test".into())
+            .await
+            .expect("node");
+        (node, dir)
+    }
+
+    /// Issue #52, driven rather than read.
+    ///
+    /// A join request is signed for whoever is on the other end of the
+    /// connection, not for whoever the message names. Where those differ is
+    /// the whole attack: a ticket holder enrolling a *third* key it does not
+    /// hold, leaving a member that revoking the device in front of you does
+    /// not remove. Until now the check compiled and nothing executed it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_join_naming_another_device_is_refused() {
+        let (node, dir) = node_for("join").await;
+
+        // Two pipes: one each way. `handle_peer` is handed the node's ends.
+        let (node_recv, mut test_send) = tokio::io::duplex(64 * 1024);
+        let (node_send, mut test_recv) = tokio::io::duplex(64 * 1024);
+
+        let dialer = iroh::SecretKey::generate().public();
+        let someone_else = iroh::SecretKey::generate().public();
+
+        // Written before the handler runs, so the pipe already holds the
+        // request and `handle_peer` reads it without a second task.
+        write_msg(
+            &mut test_send,
+            &PeerMessage::JoinRequest {
+                endpoint_id: someone_else.to_string(),
+                display_name: "Impostor".into(),
+                token: "irrelevant".into(),
+            },
+        )
+        .await
+        .expect("writing the request");
+
+        let conn = OneExchange {
+            peer: dialer,
+            streams: std::sync::Mutex::new(Some((node_send, node_recv))),
+        };
+        handle_peer(&node.shared, conn).await.expect("handle_peer");
+
+        match read_msg(&mut test_recv).await.expect("a reply") {
+            PeerMessage::JoinRefused { reason } => assert!(
+                reason.contains("different device"),
+                "refused for the wrong reason: {reason}"
+            ),
+            other => {
+                panic!("a join naming a device other than the dialer was not refused: {other:?}")
+            }
+        }
+
+        node.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

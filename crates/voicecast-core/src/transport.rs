@@ -86,6 +86,56 @@ impl Transport {
     }
 }
 
+/// What serving a peer actually needs from a connection.
+///
+/// `handle_peer` took an `iroh::endpoint::Connection`, which is a concrete
+/// type that can only be obtained by binding an endpoint and having a real
+/// device dial it. So the protocol — sixteen message arms, every join,
+/// revocation and speak decision on the receiving side — could not be driven
+/// by a test at all, and every fix to it says "verified by reading" rather
+/// than "verified by test" (#80).
+///
+/// Two methods is the whole surface. The frame helpers below are already
+/// generic over `AsyncRead` and `AsyncWrite`, so the streams needed nothing;
+/// only the connection was concrete. A test supplies a pair of
+/// `tokio::io::duplex` halves and drives the same code a peer reaches.
+///
+/// Deliberately not a wider abstraction. This is not "a transport" — it is
+/// the two things one function asks for, named after what it asks for. A
+/// trait that anticipated more would be a design nobody had tested either.
+pub trait PeerConnection: Send + Sync {
+    /// The writable half of an accepted stream.
+    type Send: tokio::io::AsyncWrite + Unpin + Send;
+    /// The readable half.
+    type Recv: tokio::io::AsyncRead + Unpin + Send;
+
+    /// Who is on the other end.
+    ///
+    /// Still an `EndpointId` rather than the string the roster stores: the
+    /// policy checks take the key itself, and widening them to strings to
+    /// suit a trait would trade real type safety for a convenience a test
+    /// does not need — generating a key is one line.
+    fn remote(&self) -> EndpointId;
+
+    /// The next bidirectional stream, or `None` once the peer is gone.
+    fn accept_bi(
+        &self,
+    ) -> impl std::future::Future<Output = Option<(Self::Send, Self::Recv)>> + Send;
+}
+
+impl PeerConnection for Connection {
+    type Send = iroh::endpoint::SendStream;
+    type Recv = iroh::endpoint::RecvStream;
+
+    fn remote(&self) -> EndpointId {
+        self.remote_id()
+    }
+
+    async fn accept_bi(&self) -> Option<(Self::Send, Self::Recv)> {
+        Connection::accept_bi(self).await.ok()
+    }
+}
+
 /// Write one length-prefixed CBOR frame.
 pub async fn write_msg<W>(w: &mut W, msg: &PeerMessage) -> Result<()>
 where
