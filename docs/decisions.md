@@ -3042,7 +3042,7 @@ when `AVSpeechSynthesizer` arrives. Deliberately not doing that now: the
 smallest honest thing is to stop claiming an engine, and building a real one
 is a separate piece of work nobody has started.
 
-## 75. iOS speaks through AVSpeechSynthesizer, on the main thread, without an unsafe claim
+## 80. iOS speaks through AVSpeechSynthesizer, on the main thread, without an unsafe claim
 
 **Chosen:** an `IosEngine` wrapping `AVSpeechSynthesizer`, held in
 `dispatch2::MainThreadBound` and touched only through `run_on_main`.
