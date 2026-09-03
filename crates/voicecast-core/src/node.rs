@@ -91,7 +91,15 @@ pub type WindowHook = Arc<dyn Fn() + Send + Sync>;
 struct Shared {
     engine: Arc<dyn SpeechEngine>,
     identity: Identity,
-    name: String,
+    /// This device's own label.
+    ///
+    /// Behind a lock because it can change while the node runs, and because
+    /// every roster sync writes it back into our own entry. Holding it as a
+    /// plain `String` meant `rename` updated the file and one roster while
+    /// this copy stayed stale — and the next sync, within the minute, wrote
+    /// the stale copy back over the new name with a fresher `renamed_at`, so
+    /// the old name then won on every peer too (#62).
+    name: std::sync::RwLock<String>,
     /// Every space this device belongs to.
     ///
     /// Operations that predate several spaces act on the default one, which
@@ -199,7 +207,7 @@ impl Node {
         let shared = Arc::new(Shared {
             engine,
             identity,
-            name,
+            name: std::sync::RwLock::new(name),
             spaces: Mutex::new(spaces),
             spaces_path,
             // An invite outstanding when the app last stopped is still
@@ -355,9 +363,11 @@ impl Node {
         &self.shared.engine
     }
 
-    /// This device's local label.
-    pub fn name(&self) -> &str {
-        &self.shared.name
+    /// This device's local label, as it stands now.
+    ///
+    /// Owned rather than borrowed because it can change while the node runs.
+    pub fn name(&self) -> String {
+        my_name(&self.shared)
     }
 
     /// This device's speaking policy, and any per-space overrides.
@@ -589,7 +599,7 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
                 devices: targets
                     .into_iter()
                     .map(|t| match t {
-                        Target::Here { .. } => shared.name.clone(),
+                        Target::Here { .. } => my_name(shared),
                         Target::Peer { name, .. } => name,
                     })
                     .collect(),
@@ -980,7 +990,7 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
             continue;
         }
 
-        if scope.is_none() && (name.eq_ignore_ascii_case("here") || name == shared.name) {
+        if scope.is_none() && (name.eq_ignore_ascii_case("here") || name == my_name(shared)) {
             // `here` is unambiguous by construction. A bare name equal to our
             // own label is not: a peer may answer to it too, and this branch
             // takes the local device without consulting the roster at all.
@@ -1024,7 +1034,7 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
             [] => {
                 return Err(format!(
                     "no device named '{name}' in this space. Known: {}",
-                    device_names(&spaces, &shared.name)
+                    device_names(&spaces, &my_name(shared))
                 ));
             }
             [only] => push(peer(only), &mut targets),
@@ -1183,7 +1193,7 @@ async fn deliver(
                 Target::Here { shadowed } => {
                     let (status, took_ms, detail) = speak_here(&shared, &outgoing).await;
                     TargetResult {
-                        device: shared.name.clone(),
+                        device: my_name(&shared),
                         endpoint_id: shared.identity.id().to_string(),
                         status,
                         took_ms,
@@ -1327,7 +1337,7 @@ async fn speak_here(
         Entry {
             msg_id: msg_id.clone(),
             text: chunks.join(" "),
-            from: from.clone().unwrap_or_else(|| shared.name.clone()),
+            from: from.clone().unwrap_or_else(|| my_name(shared)),
             at: now_secs(),
             status: Status::Queued,
             priority: p,
@@ -1436,7 +1446,7 @@ async fn control(
         set.spawn(async move {
             let result = match target {
                 Target::Here { shadowed } => TargetResult {
-                    device: shared.name.clone(),
+                    device: my_name(&shared),
                     endpoint_id: shared.identity.id().to_string(),
                     status: apply_control(&shared, &control),
                     took_ms: None,
@@ -1861,7 +1871,7 @@ async fn merge_from_peer(
     roster.merge(&theirs);
     // Our own label is ours to decide; a peer's older copy must not overwrite
     // a rename we just made.
-    roster.rename(&shared.identity.id().to_string(), &shared.name);
+    roster.rename(&shared.identity.id().to_string(), &my_name(shared));
     spaces.save(&shared.spaces_path)?;
     Ok(())
 }
@@ -2009,7 +2019,7 @@ async fn do_join(
         &mut send,
         &PeerMessage::JoinRequest {
             endpoint_id: shared.identity.id().to_string(),
-            display_name: shared.name.clone(),
+            display_name: my_name(shared),
             token: t.token.clone(),
         },
     )
@@ -2078,8 +2088,16 @@ async fn do_join(
 
 /// Change this device's label.
 ///
-/// Local only. Peers keep the old label until roster sync exists, so this
-/// says so rather than implying the change travelled.
+/// Roster sync now exists, so the new name does travel: it is stamped with
+/// `renamed_at` and the newer stamp wins on every peer. What made that stop
+/// working was this function updating the file and one roster while
+/// `Shared.name` kept the old string — the next sync, within the minute,
+/// restamped our own entry with the *stale* copy and a fresher time, so the
+/// old name then won everywhere including here (#62).
+///
+/// Three things therefore have to move together: the name file, the copy in
+/// memory that sync writes back, and the entry in every roster rather than
+/// only the default one.
 async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
     let name = name.trim();
     if name.is_empty() {
@@ -2087,15 +2105,32 @@ async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
             message: "a device name cannot be empty".into(),
         };
     }
+    // The same rule spaces use, for the same reason: these names are what
+    // `--to` parses, so a comma splits one device into two targets and a
+    // slash reads as a space qualifier. `all` and `here` are decided before
+    // any lookup happens, so a device wearing one can never be addressed.
+    if let Some(message) = name_objection(name) {
+        return Response::Error { message };
+    }
     if let Err(e) = crate::set_device_name(name) {
         return Response::Error {
             message: e.to_string(),
         };
     }
+    // Before the rosters, so a sync racing this cannot write the old name
+    // back: `merge_from_peer` reads this lock to restamp our own entry.
+    *shared.name.write().expect("name lock") = name.to_string();
+
     let mut spaces = shared.spaces.lock().await;
-    spaces
-        .current_mut()
-        .rename(&shared.identity.id().to_string(), name);
+    // Every space, not just the default. A device in two spaces was renamed
+    // in one of them, so the other went on calling it by the old name and
+    // `--to work/desk` never matched.
+    let me = shared.identity.id().to_string();
+    for id in spaces.ids() {
+        if let Some(roster) = spaces.get_mut(&id) {
+            roster.rename(&me, name);
+        }
+    }
     if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::Error {
             message: e.to_string(),
@@ -2201,7 +2236,7 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&
     // the replacement carried the same local name and the same lone member.
     let refounded = spaces.ids().len() <= 1;
     if refounded {
-        spaces.replace_current(Roster::leave(shared.identity.secret(), &shared.name));
+        spaces.replace_current(Roster::leave(shared.identity.secret(), &my_name(shared)));
     } else if let Err(message) = spaces.remove(&space) {
         return Response::Error { message };
     }
@@ -2242,6 +2277,34 @@ fn accept_chunk(chunks: &mut Vec<String>, seen: &mut usize, text: String) -> boo
         chunks.push(text);
     }
     true
+}
+
+/// Why this cannot be a device label, if it cannot.
+///
+/// The same rule spaces use, for the same reason: a device name is what
+/// `--to` parses, so a comma splits one device into two targets and a slash
+/// reads as a space qualifier. `all` and `here` are answered before any
+/// lookup happens, so a device wearing either can never be addressed at all.
+/// Nothing checked, which meant a device could be renamed — locally, or by
+/// any member over a roster sync — into something unaddressable.
+fn name_objection(name: &str) -> Option<String> {
+    if name.trim().is_empty() {
+        return Some("a device name cannot be empty".into());
+    }
+    if name.contains('/') || name.contains(',') {
+        return Some("a device name cannot contain '/' or ','".into());
+    }
+    if name.eq_ignore_ascii_case("all") || name.eq_ignore_ascii_case("here") {
+        return Some(format!(
+            "'{name}' already means something to --to; pick another name"
+        ));
+    }
+    None
+}
+
+/// This device's label, as it stands now.
+fn my_name(shared: &Shared) -> String {
+    shared.name.read().expect("name lock").clone()
 }
 
 /// Longest message this device will speak in one go, in characters.
@@ -2315,7 +2378,7 @@ async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
     // a device that is no longer trusted is locked out.
     if !spaces.replace(
         &space,
-        Roster::found(shared.identity.secret(), &shared.name),
+        Roster::found(shared.identity.secret(), &my_name(shared)),
     ) {
         return Response::Error {
             message: "that space is no longer held".into(),
@@ -2419,7 +2482,7 @@ async fn new_space(shared: &Arc<Shared>, label: &str) -> Response {
             message: format!("there is already a space called '{label}'"),
         };
     }
-    let roster = Roster::found(shared.identity.secret(), &shared.name);
+    let roster = Roster::found(shared.identity.secret(), &my_name(shared));
     let id = roster.space_id();
     spaces.insert(roster, label);
     if let Err(e) = spaces.set_label(&id, label) {
@@ -2937,7 +3000,33 @@ fn new_msg_id() -> String {
 #[cfg(test)]
 mod tests {
 
-    use super::{MAX_MESSAGE_CHARS, accept_chunk};
+    use super::{MAX_MESSAGE_CHARS, accept_chunk, name_objection};
+
+    #[test]
+    fn a_device_name_that_would_break_a_selector_is_refused() {
+        // Each of these is addressable by nothing once set: `--to` splits on
+        // the comma, reads the slash as a space qualifier, and answers `all`
+        // and `here` before it ever looks a device up.
+        for bad in ["a,b", "work/desk", "all", "ALL", "here", "Here", "  "] {
+            assert!(
+                name_objection(bad).is_some(),
+                "{bad:?} must not be usable as a device name"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_device_names_are_accepted() {
+        for good in [
+            "desk",
+            "Björn's iPad",
+            "kitchen speaker",
+            "here-ish",
+            "all-in-one",
+        ] {
+            assert_eq!(name_objection(good), None, "{good:?} is a fine name");
+        }
+    }
 
     #[test]
     fn an_oversized_chunk_is_split_rather_than_spoken_whole() {
