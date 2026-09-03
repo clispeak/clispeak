@@ -637,6 +637,14 @@ pub enum PeerMessage {
     Report {
         /// How it went.
         status: Status,
+        /// Why, when the status alone does not say.
+        ///
+        /// `Rejected` used to mean both "you are not in this space" and
+        /// "that message was refused", which an agent has to tell apart to
+        /// know whether to fix the pairing or shorten the text. Defaulted, so
+        /// a peer running an older build simply sends none.
+        #[serde(default)]
+        detail: Option<String>,
     },
 }
 

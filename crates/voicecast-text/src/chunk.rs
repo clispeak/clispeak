@@ -9,7 +9,13 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::protect::{is_protected, protected_ranges};
 
 /// Longest chunk before the fallback cascade kicks in.
-const MAX_CHUNK: usize = 200;
+/// Longest chunk this will produce, in characters.
+///
+/// Public because a *receiver* has to know it too. Chunking on the sending
+/// side is a courtesy, not a guarantee: what arrives is whatever the peer
+/// chose to call a chunk, and until the receiver checked, one long enough
+/// could hold the speech thread for the life of the process (#53).
+pub const MAX_CHUNK: usize = 200;
 
 /// Split text at safe sentence boundaries.
 ///

@@ -233,6 +233,11 @@ share a device name, and on none otherwise:
 model hasn't downloaded yet cannot speak. It must say so rather than silently
 discarding the message.
 
+`rejected` is the receiver's decision rather than the sender's, so it carries a
+reason: either this device is not in the space the message was sent in, or the
+message was longer than the 100,000 characters it will speak in one go. Split
+it and send the parts.
+
 ### Exit codes
 
 | Code | Meaning |

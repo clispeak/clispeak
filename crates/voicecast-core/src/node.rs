@@ -1224,12 +1224,12 @@ async fn to_peer(
 ) -> TargetResult {
     let started = std::time::Instant::now();
     match send_to_peer(shared, transport, peer_id, space, outgoing).await {
-        Ok(status) => TargetResult {
+        Ok((status, detail)) => TargetResult {
             device: name.to_string(),
             endpoint_id: peer_id.to_string(),
             took_ms: outgoing.wait.then(|| started.elapsed().as_millis() as u64),
             status,
-            detail: None,
+            detail,
         },
         Err(e) => TargetResult {
             device: name.to_string(),
@@ -1444,12 +1444,12 @@ async fn control(
                 },
                 Target::Peer { name, id, space } => {
                     match send_control(&transport, &id, &space, &control).await {
-                        Ok(status) => TargetResult {
+                        Ok((status, detail)) => TargetResult {
                             device: name,
                             endpoint_id: id,
                             status,
                             took_ms: None,
-                            detail: None,
+                            detail,
                         },
                         Err(e) => TargetResult {
                             device: name,
@@ -1515,7 +1515,7 @@ async fn send_control(
     peer_id: &str,
     _space: &str,
     control: &Control,
-) -> Result<Status> {
+) -> Result<(Status, Option<String>)> {
     let peer = peer_id.parse().context("bad endpoint id in roster")?;
     let conn = transport.connect(peer).await?;
     let (mut send, mut recv) = conn.open_bi().await.context("opening control stream")?;
@@ -1528,7 +1528,7 @@ async fn send_control(
     .await?;
     send.finish().ok();
     match read_msg(&mut recv).await? {
-        PeerMessage::Report { status } => Ok(status),
+        PeerMessage::Report { status, detail } => Ok((status, detail)),
         other => anyhow::bail!("unexpected reply: {other:?}"),
     }
 }
@@ -1873,7 +1873,7 @@ async fn send_to_peer(
     peer_id: &str,
     space: &str,
     outgoing: &Outgoing,
-) -> Result<Status> {
+) -> Result<(Status, Option<String>)> {
     let peer = peer_id.parse().context("bad endpoint id in roster")?;
     let conn = transport.connect(peer).await?;
 
@@ -1913,7 +1913,7 @@ async fn send_to_peer(
     write_msg(&mut send, &PeerMessage::SpeakEnd).await?;
 
     match read_msg(&mut recv).await? {
-        PeerMessage::Report { status } => Ok(status),
+        PeerMessage::Report { status, detail } => Ok((status, detail)),
         other => anyhow::bail!("unexpected reply: {other:?}"),
     }
 }
@@ -2224,6 +2224,35 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&
 
 /// Replace this space with a fresh one founded here.
 ///
+/// Fold one arriving chunk into the message being assembled.
+///
+/// Returns false once the message has grown past what this device will speak,
+/// at which point the caller refuses the whole thing rather than saying part
+/// of it. Oversized chunks are re-chunked rather than refused, so a peer that
+/// chunks differently still works: the limit is about what this device will
+/// synthesise in one breath, not about who is allowed to talk to it.
+fn accept_chunk(chunks: &mut Vec<String>, seen: &mut usize, text: String) -> bool {
+    *seen = seen.saturating_add(text.chars().count());
+    if *seen > MAX_MESSAGE_CHARS {
+        return false;
+    }
+    if text.chars().count() > voicecast_text::MAX_CHUNK {
+        chunks.extend(voicecast_text::chunk(&text));
+    } else {
+        chunks.push(text);
+    }
+    true
+}
+
+/// Longest message this device will speak in one go, in characters.
+///
+/// About two hours of speech, which is far past anything anyone sends and
+/// still a bound. The number that matters is that there *is* one: without it
+/// a member could stream 8 MB frames until the receiver ran out of memory,
+/// and a single frame that size would occupy the speech thread for hours
+/// with `stop` unable to interrupt it (#53, and #58 for the second half).
+const MAX_MESSAGE_CHARS: usize = 100_000;
+
 /// Cancel any invite still open on this device.
 ///
 /// The three operations that call this change what an outstanding ticket
@@ -2593,18 +2622,49 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                         &mut send,
                         &PeerMessage::Report {
                             status: Status::Rejected,
+                            detail: Some("this device is not in that space".into()),
                         },
                     )
                     .await?;
                     continue;
                 }
-                let mut chunks = Vec::new();
+                // What arrives is whatever the peer chose to call a chunk.
+                // The sender's chunking is a courtesy: it runs the text
+                // through `voicecast_text` first, but a receiver that assumes
+                // so is trusting a member not to be hostile or broken. One
+                // chunk long enough held the speech thread for the life of
+                // the process, and a stream that never ends grew this vector
+                // until the phone killed the app (#53).
+                let mut chunks: Vec<String> = Vec::new();
+                let mut seen = 0usize;
+                let mut too_long = false;
                 loop {
                     match read_msg(&mut recv).await? {
-                        PeerMessage::Chunk { text, .. } => chunks.push(text),
+                        PeerMessage::Chunk { text, .. } => {
+                            if !accept_chunk(&mut chunks, &mut seen, text) {
+                                too_long = true;
+                                break;
+                            }
+                        }
                         PeerMessage::SpeakEnd => break,
                         other => anyhow::bail!("unexpected in message stream: {other:?}"),
                     }
+                }
+                if too_long {
+                    // Said plainly, with the limit in it, because the sender
+                    // is usually an agent that can shorten and try again.
+                    write_msg(
+                        &mut send,
+                        &PeerMessage::Report {
+                            status: Status::Rejected,
+                            detail: Some(format!(
+                                "message longer than {MAX_MESSAGE_CHARS} characters; \
+                                 send it in parts"
+                            )),
+                        },
+                    )
+                    .await?;
+                    continue;
                 }
                 // Waiting here is what lets a sender learn "spoken" rather
                 // than "queued": only this device knows when the sound ended.
@@ -2632,7 +2692,14 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                     space: in_space,
                 };
                 let (status, _took, _detail) = speak_here(shared, &outgoing).await;
-                write_msg(&mut send, &PeerMessage::Report { status }).await?;
+                write_msg(
+                    &mut send,
+                    &PeerMessage::Report {
+                        status,
+                        detail: None,
+                    },
+                )
+                .await?;
             }
             PeerMessage::RosterSync {
                 members,
@@ -2706,7 +2773,14 @@ async fn handle_peer(shared: &Arc<Shared>, conn: iroh::endpoint::Connection) -> 
                 } else {
                     Status::Rejected
                 };
-                write_msg(&mut send, &PeerMessage::Report { status }).await?;
+                write_msg(
+                    &mut send,
+                    &PeerMessage::Report {
+                        status,
+                        detail: None,
+                    },
+                )
+                .await?;
             }
             PeerMessage::Hello { .. } => {}
             other => anyhow::bail!("unexpected message: {other:?}"),
@@ -2862,6 +2936,61 @@ fn new_msg_id() -> String {
 
 #[cfg(test)]
 mod tests {
+
+    use super::{MAX_MESSAGE_CHARS, accept_chunk};
+
+    #[test]
+    fn an_oversized_chunk_is_split_rather_than_spoken_whole() {
+        // A peer's chunking is a courtesy. One chunk of 5,000 characters used
+        // to go to the engine as a single utterance, which on the streaming
+        // path filled Piper's output pipe and deadlocked the speech thread
+        // for the life of the process (#53).
+        let mut chunks = Vec::new();
+        let mut seen = 0;
+        let long = "word ".repeat(1_000);
+        assert!(accept_chunk(&mut chunks, &mut seen, long));
+        assert!(chunks.len() > 1, "it was split");
+        for c in &chunks {
+            assert!(
+                c.chars().count() <= voicecast_text::MAX_CHUNK,
+                "every piece is speakable: {} chars",
+                c.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_chunk_is_passed_through_untouched() {
+        let mut chunks = Vec::new();
+        let mut seen = 0;
+        assert!(accept_chunk(&mut chunks, &mut seen, "Tea is ready.".into()));
+        assert_eq!(chunks, vec!["Tea is ready."]);
+    }
+
+    #[test]
+    fn a_stream_that_never_ends_is_refused_rather_than_buffered() {
+        // The frame cap bounds one message; nothing bounded how many a member
+        // could send before SpeakEnd, so the vector grew until the phone
+        // killed the app.
+        let mut chunks = Vec::new();
+        let mut seen = 0;
+        let block = "a".repeat(voicecast_text::MAX_CHUNK);
+        let mut accepted = 0;
+        for _ in 0..100_000 {
+            if !accept_chunk(&mut chunks, &mut seen, block.clone()) {
+                break;
+            }
+            accepted += 1;
+        }
+        assert!(
+            seen > MAX_MESSAGE_CHARS,
+            "the loop stopped because of the bound"
+        );
+        assert!(
+            accepted < 100_000,
+            "it refused rather than accepting everything"
+        );
+    }
 
     /// The message that exposed the bug now gets long enough to finish.
     ///

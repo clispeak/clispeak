@@ -136,6 +136,11 @@ listener hears asterisks and slashes.
 - If you genuinely need to speak marked-up text, `--strip` converts it and
   `--raw` skips checking entirely. Prefer writing it properly.
 
+A `rejected` *status* is different from exit 6: it comes from the receiving
+device, and its reason says which of two things happened — that device is not
+in the space you sent to, or the message was over 100,000 characters, which is
+the most it will speak in one go. Split a long one and send the parts.
+
 When text is rejected you get the offending span and a suggested rewrite.
 **Send the suggestion unchanged** — it is what the tool will accept.
 

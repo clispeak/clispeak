@@ -115,9 +115,11 @@ platform decides where it lives, and on Linux there is no file anywhere.
 
 ## What it does
 
-**Speaking.** Any length. Markdown and bare URLs are *rejected* with a
-suggested rewrite rather than silently mangled, so an agent can correct itself
-— `--strip` converts instead, `--raw` skips the check.
+**Speaking.** Any length up to 100,000 characters, about two hours of speech;
+past that the receiving device refuses the message and says so, rather than
+tying up its speaker for the afternoon. Markdown and bare URLs are *rejected*
+with a suggested rewrite rather than silently mangled, so an agent can correct
+itself — `--strip` converts instead, `--raw` skips the check.
 
 **Targeting.** One device, a comma-separated list, a locally-defined group,
 `all`, or `here`. Several devices are reached at once rather than one after

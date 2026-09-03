@@ -16,7 +16,7 @@ mod protect;
 mod strip;
 mod validate;
 
-pub use chunk::chunk;
+pub use chunk::{MAX_CHUNK, chunk};
 pub use strip::strip;
 pub use validate::validate;
 
