@@ -50,6 +50,18 @@ finish-args:
   # below, so this is only needed for voices added after install.
   - --persist=.local/share/voicecast
 
+# Every module installs into /app/lib, which is where flatpak looks.
+#
+# Without this the GNOME 49 SDK's cmake picks `lib64` on x86_64, and the first
+# module to notice is the second one: `ayatana-ido` puts its `.pc` in
+# /app/lib64/pkgconfig, `libayatana-indicator` runs `pkg_check_modules` on it,
+# and the build stops with "Package 'libayatana-ido3-0.4' not found" — a
+# dependency that was built successfully thirty lines earlier. The shared
+# module assumes `lib` too: its own `cleanup` lists `/lib/pkgconfig`, which
+# quietly removed nothing.
+build-options:
+  libdir: /app/lib
+
 modules:
   # The tray icon. The GNOME runtime ships no appindicator library, and
   # without one the window has no way back once it is closed — closing hides
