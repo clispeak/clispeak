@@ -210,6 +210,25 @@ It is a history, not a status. "There is no SKIPPED row" would reject every
 correctly-verified pull request from here on. "Five green rows" passes an
 unfinished one. Only the set of names answers the question.
 
+**And before counting, check the pull request is mergeable — a conflicting
+one produces nothing to count.** GitHub runs a `pull_request` workflow against
+the *merge* of head into base, and when that merge cannot be computed it
+creates no run rather than failing one. So a conflicting pull request sits
+with **zero** checks, which is indistinguishable from one whose checks have
+not started, and the counting rule above is blind to it: it catches a partial
+run and cannot tell an empty one from an early one.
+
+Found on #136, which sat with no checks while four separate trigger events
+were fired at it — `opened`, `reopened`, `ready_for_review`, and a
+`synchronize` from an empty commit — with Actions demonstrably alive on other
+branches the whole time. `gh pr view --json mergeable` said `CONFLICTING`. A
+rebase produced all five checks within twenty seconds.
+
+Four attempts at the trigger before anyone asked whether the thing could
+merge. That is the cost of an absence that reads as a state: every other
+failure in this file *says* something wrong, and this one says nothing, which
+the eye fills in as "not yet".
+
 `app/src/styles.css` is generated and **not** committed. Tauri's
 `beforeBuildCommand` rebuilds it, so `tauri build` and `tauri android build`
 are covered — but a plain `cargo build -p voicecast-app`, which is how the
