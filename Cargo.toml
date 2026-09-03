@@ -19,6 +19,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 publish = false
+# Decision 74. Inherited by every crate so `cargo metadata` stops reporting
+# the workspace as unlicensed, which it did until the project went open
+# source — nine crates with no `license` field at all.
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 voicecast-proto = { path = "crates/voicecast-proto" }

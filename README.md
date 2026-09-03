@@ -246,6 +246,7 @@ so it cannot quietly drift into describing a tool that has moved on.
 | [m0-results.md](docs/m0-results.md) | Measured transport results on real devices |
 | [decisions.md](docs/decisions.md) | Every decision, with its rationale and cost |
 | [releasing.md](docs/releasing.md) | How binaries will be built and published, and what has to be settled first |
+| [licensing.md](docs/licensing.md) | The licence, what we may redistribute, and what has to change first |
 
 Start with `decisions.md` if you want to know *why* rather than *what*.
 
@@ -277,3 +278,23 @@ not staged them first, CI included.
 The frontend is plain HTML and JavaScript with a Tailwind build step — no
 framework and no bundler, because the interesting behaviour lives in
 `voicecast-core`, shared with the CLI.
+
+## Licence
+
+**MIT OR Apache-2.0**, at your option — the Rust ecosystem's usual pair.
+Apache-2.0 carries an explicit patent grant; MIT is there for anyone who
+prefers the shorter terms. See [LICENSE-MIT](LICENSE-MIT) and
+[LICENSE-APACHE](LICENSE-APACHE).
+
+**The speech engine is not ours and is not covered by that.** Piper, its
+phonemiser and ONNX Runtime are MIT; **espeak-ng is GPL-3.0-or-later**; and a
+voice model carries the terms of the corpus it was trained on, which are
+frequently *not* redistributable. `cargo xtask piper` downloads all of it onto
+your own machine, which is yours to do.
+
+**Distributed builds are a different question and it is not finished.** The
+default voice today is trained on a research-only corpus that bars
+redistribution, so it has to change before anything is published, and the
+speech payload should be fetched on first run rather than bundled. Nothing has
+been published yet. [licensing.md](docs/licensing.md) has the working, and it
+is a careful reading of licence text by people who are not lawyers.

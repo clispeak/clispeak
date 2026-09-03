@@ -2721,7 +2721,13 @@ labelled `License: mit` and that label is not the operative licence — the mode
 card links the corpus terms precisely because they differ, which is a trap for
 anyone who reads the badge and stops.
 
-**We ship GPL-3.0 code with no licence text and no offer of source.**
+**We ship GPL-3.0 code with no licence text and no offer of source.** This
+half was already in `docs/releasing.md`, which named espeak-ng's licence, said
+the archive carries no licence text, and then named the actual gap — *"Nobody
+has read the terms."* What is new is that somebody has, and that reading is
+where the App Store consequence and the voice corpus came from; neither is
+visible from knowing a licence name.
+
 `espeak-ng` and `libespeak-ng.so` are in the bundle; eSpeak NG is
 GPL-3.0-or-later. There is no `LICENSE` or `COPYING` anywhere under
 `app/src-tauri/speech/` — that is a compliance gap that exists now, before

@@ -118,13 +118,27 @@ Option 1 is the obvious starting point. It should be a deliberate choice
 rather than a default, because a public releases repository is a public
 statement that this project exists.
 
-## Licensing has to be settled first
+## Licensing: settled, with two things to change first
 
-**This blocks the website, not the builds.** Distributing binaries publicly is
-the point at which licence terms stop being a formality.
+**Settled on 3 September 2026.** The project is **MIT OR Apache-2.0** and goes
+open source; binaries are published from GitHub Releases first, with app
+stores later if at all, and the site is GitHub Pages. Decision 74, with the
+full working in `docs/licensing.md`.
 
-The project's own licence is undecided — that has been an open question since
-the first day and is recorded in `decisions.md`.
+**Two things still have to change before a public download exists**, and both
+are about other people's software rather than ours:
+
+- **The default voice must change.** `en_US-lessac-medium` is trained on the
+  Blizzard Challenge 2013 Lessac corpus, whose licence grants use "for
+  Research Purposes only" and bars distribution outright. We stage that model
+  into the bundle today.
+- **The speech payload should stop being bundled** and be fetched on first run
+  instead. That removes the GPL-3.0 espeak-ng from the artefact, which is what
+  otherwise closes the iOS App Store, and removes the voice from our
+  distribution as well.
+
+Nothing has been published yet — no releases, no tags, and the voice is not in
+git — so this is a problem to avoid rather than one to unwind.
 
 **More pressing: we redistribute other people's software inside our packages.**
 The Flatpak, the macOS bundle and the planned Windows installer all carry
@@ -145,11 +159,16 @@ Two things about that are worth stating plainly rather than assuming.
 obligations turn out to be, redistributing GPL software with no licence file
 is unlikely to meet them.
 
-**Nobody has read the terms.** Not espeak-ng's, not the voice model's, not
-Microsoft's redistributable clause. That is not a lawyer's job to start with —
-it is a matter of finding the files, reading them, and writing down what each
-one requires. Until that is done, "free binaries for everyone" is a plan
-rather than a decision.
+**The terms have now been read**, and this paragraph used to say nobody had.
+espeak-ng is GPL-3.0-or-later; Piper, `libpiper_phonemize` and ONNX Runtime are
+MIT; the voice model's corpus is research-use-only and bars redistribution,
+which is the one that changes what we ship. Microsoft's redistributable clause
+is still unread and is #20's, not this page's.
+
+Writing that down turned out to matter more than the licence names did: the
+espeak-ng name was already here, and the consequences — the App Store, the
+voice — only appeared once somebody opened the actual terms. `docs/licensing.md`
+has them.
 
 None of this is an argument against distributing. Bundling a GPL program as a
 separate executable that we invoke, unmodified, is ordinary and common. It
