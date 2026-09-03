@@ -2,6 +2,18 @@
 
 Why things are the way they are. Newest last.
 
+Numbered, and the numbers have to be consecutive and used once —
+`cargo xtask portability` checks that, because two branches appending in
+parallel each take the next free number and a rebase keeps both.
+
+**A decision's title is part of the decision, and nothing checks it.** The gate
+reads the sequence, which is a property of the file; whether a heading still
+describes what actually landed is only detectable by reading. That has already
+gone wrong once: 56 was titled "the Android shell is compiled on every push"
+after the step it named had been taken back out in the same change, so the
+heading claimed the opposite of what its own body explained. If a change ends
+somewhere other than where it started, the title moves too.
+
 ## 1. Peer-to-peer, no hosted server
 
 **Decision.** Devices connect directly. No backend to deploy or pay for.

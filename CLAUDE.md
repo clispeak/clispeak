@@ -51,6 +51,7 @@ compiled on all five targets and passed every gate:
 | `target/release/voicecast` | has no `.exe` |
 | `sun_path` | a socket *name* over ~83 bytes refuses to bind on macOS, and the platform prepends a prefix you did not write |
 | `isMinifyEnabled` | true only for release, so R8 deleted the Kotlin the engine calls (#41) |
+| `file("keystore.properties")` | resolves against the Gradle *module*, so a copy one directory up is read as absent and the APK ships unsigned (#31) |
 
 The socket row says *name*, not path, on purpose: it is a namespaced name, the
 platform decides where it lands, and on Linux there is no file anywhere (#43,
@@ -60,12 +61,17 @@ documented `sun_path` of 104. The missing 16 bytes are unexplained, probably
 headroom inside `interprocess`'s own check. Measure against 83; it is the
 number that decides whether a node starts.
 
-A file path, a binary name, a separator, a length limit, a build flag. None is
-platform-*shaped*; a `cfg` on any of them would have been louder and would
+A file path, a binary name, a separator, a length limit, a build flag, a
+relative path resolved against a directory you were not thinking about. None
+is platform-*shaped*; a `cfg` on any of them would have been louder and would
 have been caught. When you write one, ask what the other four targets have
-there — and note the last row is not a platform difference at all. It is a
-difference between two builds for the same platform, and it fooled us the
-same way, because everything anyone had run on a real phone was a debug build.
+there — and note the last two rows are not platform differences at all. One is
+a difference between two builds for the same platform, and it fooled us the
+same way because everything anyone had run on a real phone was a debug build.
+The other is a difference between two directories, and `signingReport` reported
+it as `Config: null` rather than "no such file" — which is what the whole table
+is about. A thing that is looked for in the wrong place does not say so; it
+says nothing, and the build carries on and produces something subtly wrong.
 
 **Compiling on five is a weaker claim than it reads as.** `cargo test`
 runs once, on `ubuntu-latest`. The five matrix jobs only build. So a test
