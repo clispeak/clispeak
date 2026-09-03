@@ -10,6 +10,7 @@
 //! a newer node degrades rather than misparses.
 
 use anyhow::{Context, Result, bail};
+use interprocess::local_socket::{GenericNamespaced, ToNsName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Refuse absurd frames rather than trusting a length and allocating for it.
@@ -47,6 +48,28 @@ pub fn socket_name() -> String {
 /// Unix name are both wrong in the same way for this purpose.
 pub fn path_shaped(name: &str) -> bool {
     name.contains('/') || name.contains('\\')
+}
+
+/// Whether a node is already listening on this machine's socket.
+///
+/// Asked *before* anything else is brought up. `Node::serve` already refuses
+/// to bind a name another node holds, but by then the transport is online: a
+/// second endpoint is bound under this device's secret key, presence checks
+/// are running, and only the socket is missing. The app then had a window
+/// that looked healthy and a node that reached nobody — issue #72.
+///
+/// Connecting is the test, not the presence of a file. A node that died
+/// leaves its name behind on some platforms, and only a refused connection
+/// proves nothing is listening — the same reasoning `bind_ipc` uses to tell
+/// a live node from a dead one's leftovers.
+pub async fn node_is_listening() -> bool {
+    use interprocess::local_socket::traits::tokio::Stream as _;
+    let Ok(name) = socket_name().to_ns_name::<GenericNamespaced>() else {
+        return false;
+    };
+    interprocess::local_socket::tokio::Stream::connect(name)
+        .await
+        .is_ok()
 }
 
 /// Write one length-prefixed CBOR frame.
