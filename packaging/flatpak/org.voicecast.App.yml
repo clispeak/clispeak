@@ -98,19 +98,19 @@ modules:
       # espeak-ng data from alongside itself.
       - mkdir -p /app/share/voicecast
       - cp -r piper /app/share/voicecast/piper
-      - install -Dm644 en_US-lessac-medium.onnx /app/share/voicecast/voices/en_US-lessac-medium.onnx
-      - install -Dm644 en_US-lessac-medium.onnx.json /app/share/voicecast/voices/en_US-lessac-medium.onnx.json
+      - install -Dm644 en_US-ljspeech-medium.onnx /app/share/voicecast/voices/en_US-ljspeech-medium.onnx
+      - install -Dm644 en_US-ljspeech-medium.onnx.json /app/share/voicecast/voices/en_US-ljspeech-medium.onnx.json
     sources:
       - type: archive
         url: https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz
         sha256: a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992
         strip-components: 0
       - type: file
-        url: https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx
-        sha256: 5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f
+        url: https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx
+        sha256: 6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22
       - type: file
-        url: https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
-        sha256: efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0
+        url: https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json
+        sha256: 141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860
 
   - name: voicecast
     buildsystem: simple

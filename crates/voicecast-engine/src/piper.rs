@@ -605,13 +605,28 @@ fn name_of(voice: &Path) -> String {
         .unwrap_or_else(|| "piper".into())
 }
 
-/// Turn `en_US-lessac-medium` into something worth showing a person.
+/// Names that capitalising the first letter gets wrong.
+///
+/// Only the voice we ship, deliberately. Upstream has hundreds and most are
+/// ordinary given names that the general rule handles — but the default is
+/// the one every user reads in `status` and in the voice picker before they
+/// have chosen anything, and "Ljspeech" reads as a typo rather than a name.
+///
+/// A list of one is a poor thing to grow. If it reaches half a dozen, the
+/// answer is a display name in the sidecar config rather than a longer table
+/// here.
+const DISPLAY_NAMES: &[(&str, &str)] = &[("ljspeech", "LJSpeech")];
+
+/// Turn `en_US-ljspeech-medium` into something worth showing a person.
 fn pretty_voice_name(id: &str) -> String {
     let mut parts = id.split('-');
     let locale = parts.next().unwrap_or(id);
     let name = parts.next().unwrap_or("");
     let quality = parts.next().unwrap_or("");
-    let mut label = name.to_string();
+    let mut label = match DISPLAY_NAMES.iter().find(|(k, _)| *k == name) {
+        Some((_, pretty)) => (*pretty).to_string(),
+        None => name.to_string(),
+    };
     if let Some(first) = label.get_mut(0..1) {
         first.make_ascii_uppercase();
     }
@@ -723,4 +738,32 @@ fn executable_extensions() -> Vec<String> {
         .filter(|e| !e.is_empty())
         .map(str::to_ascii_lowercase)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pretty_voice_name;
+
+    #[test]
+    fn a_voice_is_named_as_a_person_would_read_it() {
+        // The default, which every user reads in `status` and in the voice
+        // picker before they have chosen anything. Capitalising the first
+        // letter — right for every ordinary given name upstream ships — turns
+        // this one into "Ljspeech", which reads as a typo.
+        assert_eq!(
+            pretty_voice_name("en_US-ljspeech-medium"),
+            "LJSpeech — medium (en_US)"
+        );
+
+        // The general rule still handles the ordinary case, which is why it
+        // is still the rule.
+        assert_eq!(
+            pretty_voice_name("en_US-amy-medium"),
+            "Amy — medium (en_US)"
+        );
+
+        // Something not shaped like a voice id is left alone rather than
+        // mangled into a prettier lie.
+        assert_eq!(pretty_voice_name("custom"), "custom");
+    }
 }

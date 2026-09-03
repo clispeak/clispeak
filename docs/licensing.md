@@ -16,7 +16,7 @@ about something nobody had run.
 |---|---|
 | **Our code** | **MIT OR Apache-2.0**, the Rust ecosystem default |
 | **Bundled speech engine** | **stop shipping it** — download on first run instead |
-| **Default voice** | **must change**, the current one forbids redistribution |
+| **Default voice** | ~~must change~~ **done** — LJ Speech, public domain |
 | **Website** | GitHub Pages, static, no accounts, no data |
 | **Terms of use** | not needed for the software; a privacy policy *is* needed for the stores |
 
@@ -24,7 +24,20 @@ Two of those are blockers. The rest is paperwork.
 
 ---
 
-## Blocker 1: the voice we ship forbids redistribution
+## Blocker 1: the voice we ship forbids redistribution — **fixed**
+
+**Resolved by decision 81.** The default is now `en_US-ljspeech-medium`,
+trained on the LJ Speech corpus, which states: *"There are no restrictions on
+its use... you may use it without attribution."* Verified at the dataset's own
+page rather than from the model card, and the voice was downloaded, hashed,
+loaded by a node and heard before the pin was written down.
+
+The analysis below is kept because the *method* is the reusable part: the
+repository badge is not the operative licence, and the model card links the
+corpus terms precisely because they differ. Anyone changing the voice again
+owes the same walk.
+
+### What was wrong
 
 **Measured.** `xtask/src/piper.rs` pins `en_US-lessac-medium` and stages it
 into the app bundle. Its Hugging Face model card names the training corpus as

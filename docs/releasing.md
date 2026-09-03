@@ -128,10 +128,9 @@ full working in `docs/licensing.md`.
 **Two things still have to change before a public download exists**, and both
 are about other people's software rather than ours:
 
-- **The default voice must change.** `en_US-lessac-medium` is trained on the
-  Blizzard Challenge 2013 Lessac corpus, whose licence grants use "for
-  Research Purposes only" and bars distribution outright. We stage that model
-  into the bundle today.
+- ~~The default voice must change.~~ **Done** (decision 81). The default is
+  `en_US-ljspeech-medium`, trained on the LJ Speech corpus, which is public
+  domain with no restrictions on use and no attribution required.
 - **The speech payload should stop being bundled** and be fetched on first run
   instead. That removes the GPL-3.0 espeak-ng from the artefact, which is what
   otherwise closes the iOS App Store, and removes the voice from our
