@@ -155,27 +155,6 @@
           Show an invite
         </button>
 
-        <div id="invite-out" hidden class="mt-3">
-          <div id="qr" class="mx-auto w-fit rounded-lg bg-white p-3"></div>
-          <p class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400">
-            Scan this, or copy the code below.
-          </p>
-          <div class="mt-2 flex gap-2">
-            <code id="ticket"
-              class="min-w-0 flex-1 truncate rounded-lg bg-neutral-100 px-3 py-2
-                     font-mono text-xs text-neutral-600
-                     dark:bg-neutral-800 dark:text-neutral-300"></code>
-            <button id="copy"
-              class="shrink-0 rounded-lg border border-neutral-300 px-3 text-sm transition
-                     hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-              Copy
-            </button>
-          </div>
-          <p id="invite-for" class="mt-1 text-center text-xs font-medium
-                                  text-neutral-700 dark:text-neutral-200"></p>
-        <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
-        </div>
-
         <div class="my-4 flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-600">
           <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
           or
@@ -406,8 +385,11 @@
      and `pointer-events-none` because it must never intercept a tap meant for
      what is underneath it. Still a live region, so a screen reader announces
      it too. -->
+<!-- Above the dialogs, not below them: the invite modal's backdrop covers the
+     whole viewport, so a toast at a lower layer sat behind 60% black and a
+     blur. "Copied" was being reported to nobody. -->
 <div id="result-wrap"
-     class="pointer-events-none fixed inset-x-0 bottom-16 z-40 flex justify-center px-5">
+     class="pointer-events-none fixed inset-x-0 bottom-16 z-[60] flex justify-center px-5">
   <p id="result" role="status" aria-live="polite" hidden
      class="max-w-sm rounded-full border px-4 py-2 text-center text-sm shadow-lg"></p>
 </div>
@@ -478,6 +460,73 @@
                transition hover:bg-red-700
                focus-visible:outline-2 focus-visible:outline-offset-2">
         Confirm
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- The invite, as a dialog rather than a panel revealed in the page. It used
+     to appear under the space list, several hundred pixels below the fold, so
+     pressing "Add a device" on a card looked like it did nothing. Scrolling to
+     it was a patch on the symptom; the code is a thing you hold a phone up to,
+     which wants the screen to itself.
+
+     Built here rather than with <dialog>, for the same reason as `ask`: the
+     webviews across five targets do not agree about it, and this markup is the
+     same everywhere. -->
+<div id="invite-modal" hidden
+     class="fixed inset-0 z-50 flex items-center justify-center
+            bg-black/60 backdrop-blur-sm p-6"
+     role="dialog" aria-modal="true" aria-labelledby="invite-title">
+  <div class="w-full max-w-sm rounded-xl border border-neutral-200 bg-white p-5
+              shadow-2xl dark:border-neutral-700 dark:bg-neutral-800">
+
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <h2 id="invite-title" class="text-sm font-semibold">Add a device</h2>
+        <!-- Which space this code joins, said before the code itself. An
+             invite that names the wrong space is not recoverable once it has
+             been scanned. -->
+        <p id="invite-for" class="mt-0.5 truncate text-sm text-neutral-600 dark:text-neutral-300"></p>
+      </div>
+      <button id="invite-close" type="button" aria-label="Close"
+        class="-mr-1 -mt-1 shrink-0 rounded-lg px-2 py-1 text-lg leading-none
+               text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800
+               dark:text-neutral-400 dark:hover:bg-neutral-700 dark:hover:text-neutral-100
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        &times;
+      </button>
+    </div>
+
+    <!-- White whatever the theme: a QR code is read by a camera, and inverting
+         it for dark mode makes it harder to scan, not easier. -->
+    <div id="qr" class="mx-auto mt-4 w-fit rounded-lg bg-white p-3"></div>
+
+    <p class="mt-3 text-center text-xs text-neutral-500 dark:text-neutral-400">
+      Scan this on the other device, or copy the code below.
+    </p>
+
+    <div class="mt-2 flex gap-2">
+      <code id="ticket"
+        class="min-w-0 flex-1 truncate rounded-lg bg-neutral-100 px-3 py-2
+               font-mono text-xs text-neutral-600
+               dark:bg-neutral-900 dark:text-neutral-300"></code>
+      <button id="copy"
+        class="shrink-0 rounded-lg border border-neutral-300 px-3 text-sm transition
+               hover:bg-neutral-100 dark:border-neutral-600 dark:hover:bg-neutral-700
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Copy
+      </button>
+    </div>
+
+    <p id="expiry" class="mt-2 text-center text-xs text-neutral-500 dark:text-neutral-400"></p>
+
+    <div class="mt-5 flex justify-end">
+      <button id="invite-done"
+        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium transition
+               hover:bg-neutral-100 dark:border-neutral-600 dark:hover:bg-neutral-700
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Done
       </button>
     </div>
   </div>
