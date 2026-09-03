@@ -2263,10 +2263,17 @@ It was very nearly merged. That is the whole reason this is written down.
 **The rollup is a history, not a status.** `matrix.target: SKIPPED` is the
 draft run's result and it stays there permanently, beside the four real names,
 on a pull request that has been through the full five. The draft run's Linux
-job stays too, so seven rows for five jobs is normal. So the check has to be
-"count five names" — a rule phrased as "no SKIPPED row" would reject every
-correctly-verified pull request from here on, and one phrased as "the checks
-look green" cannot tell the two cases apart at all.
+job stays too, so seven rows for five jobs is normal — two of them the same
+name.
+
+**So the check is the set of distinct names, not a count.** This decision
+first said "count five names", which is wrong for a reason found by it going
+wrong: five green *rows* is satisfied by the duplicated gate job plus three
+targets while the fourth is still running. It read green on #114 with Android
+in flight, against a rule written the same afternoon, by the person who wrote
+it. "No SKIPPED row" rejects every correct pull request; "five green rows"
+accepts an unfinished one; only naming the four targets and the gate job
+answers the question that is being asked.
 
 **This is decision 63's sharp edge and it belongs to that decision, not to
 whoever trips on it.** Making the expensive jobs conditional bought most of a
