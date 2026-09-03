@@ -33,6 +33,12 @@ pub struct NodeStatus {
     pub engine: String,
     /// Whether that engine is a stand-in for the intended one.
     pub fallback: bool,
+    /// Why the engine cannot speak, when it cannot.
+    ///
+    /// The pill alone cannot carry this: "unavailable" says a device is
+    /// silent without saying what to do about it, and the sentence that
+    /// names the fault was reaching only whoever sent a message.
+    pub reason: Option<String>,
 }
 
 /// Where the command-line tool should live on the host.
@@ -450,18 +456,21 @@ fn node_status(state: State<'_, AppState>) -> NodeStatus {
             device_id,
             engine,
             fallback,
+            engine_reason,
             ..
         } => NodeStatus {
             name: state.node.name().to_string(),
             device_id,
             engine,
             fallback,
+            reason: engine_reason,
         },
         _ => NodeStatus {
             name: state.node.name().to_string(),
             device_id: state.node.id(),
             engine: "unknown".into(),
             fallback: true,
+            reason: None,
         },
     }
 }
@@ -1051,6 +1060,13 @@ fn key_store() -> anyhow::Result<Box<dyn voicecast_core::KeyStore>> {
 
 /// Build the node this app wraps.
 async fn start_node() -> anyhow::Result<Node> {
+    // Before the call, because the call is where this process can stop dead.
+    // Reading the key waits on a keychain dialog on macOS after every update,
+    // and until now said nothing while it did — leaving a running app that
+    // had bound no socket and explained nothing. Stderr is a poor channel for
+    // an app launched from Finder, but `open -a` and a terminal launch both
+    // show it, which is how anybody debugging this starts.
+    eprintln!("opening the key store…");
     let store = key_store()?;
     let identity = Identity::load_or_create(store.as_ref())?;
     let name = voicecast_core::device_name();

@@ -349,6 +349,14 @@ pub enum Response {
         /// person, and the machine-readable shape is [`Response::Policy`].
         #[serde(default)]
         quiet: Option<String>,
+        /// Why the engine cannot speak, when it cannot.
+        ///
+        /// The node has always known this — it reaches anyone who *sends* a
+        /// message — but the status line, which is where somebody looks
+        /// first, had to guess from an empty voice list and guessed
+        /// "starting…" at an engine that was never going to start.
+        #[serde(default)]
+        engine_reason: Option<String>,
     },
     /// Recent messages this device was asked to speak.
     History {

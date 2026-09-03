@@ -84,6 +84,13 @@ fn fallback(piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Said before the call, not after. Reading the key can block for as long
+    // as it takes somebody to notice a dialog: on macOS an ad-hoc signature
+    // makes every rebuild a different application to the keychain's ACL, so
+    // it asks permission to decrypt the existing item, every time. Until now
+    // this produced no output at all, so a node parked on that prompt looked
+    // identical to one that had never started.
+    eprintln!("opening the key store…");
     let store = DesktopKeyStore::new().context("locating a key store")?;
     let identity = Identity::load_or_create(&store).context("loading device identity")?;
 

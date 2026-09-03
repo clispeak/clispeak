@@ -31,6 +31,21 @@
 <main id="screen-home" class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
   <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
 
+    <!-- Why this device cannot speak, when it cannot. First on the screen,
+         because nothing else here matters while it is true, and red rather
+         than amber: quiet hours are a choice, a missing engine is a fault.
+         The pill in the header says *that* it is unavailable; this says what
+         to do, which until now only the sender of a message ever saw. -->
+    <section id="engine-banner" hidden
+      class="rounded-xl border border-red-300 bg-red-50 p-4
+             dark:border-red-500/40 dark:bg-red-950/40">
+      <p class="text-sm font-medium text-red-800 dark:text-red-200">
+        This device cannot speak.
+      </p>
+      <p id="engine-reason"
+        class="mt-1 break-words text-xs text-red-700 dark:text-red-300"></p>
+    </section>
+
     <!-- Now playing. Only present while there is something to act on, so the
          controls never sit there greyed out with nothing to control. -->
     <section id="now-playing" hidden

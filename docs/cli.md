@@ -219,9 +219,39 @@ $ voicecast invite --space work        # invite into a named space
 $ voicecast revoke <name>
 $ voicecast revoke <name> --space work
 $ voicecast rename <new>                 # this device's own label
-$ voicecast status                     # this node: identity, connections, queue
+$ voicecast status                     # this node: identity, engine, queue
 $ voicecast init                       # first run: identity + new space
 ```
+
+`status` names the engine, and when the engine cannot speak it says why on the
+line below rather than leaving the reader to guess from a word:
+
+```
+engine:  unavailable  (fallback)
+         Piper is not installed in any of: ~/Library/Application Support/voicecast,
+         /app/share/voicecast, /usr/share/voicecast
+```
+
+The node has always known that sentence — it reaches whoever *sends* a message
+as the reason for `no_engine` — but the status line, which is where somebody
+looks first, used to report an engine that would never start as "starting…".
+
+When the CLI cannot reach a node at all it says what it found and stops short
+of saying why:
+
+```
+$ voicecast status
+error: nothing is listening for voicecast
+
+The node may not be running, or may not have finished starting.
+On macOS it does not bind until the keychain prompt is answered,
+which returns after every update — look for a dialog behind the app.
+
+start one with: voicecastd, or open the voicecast app
+```
+
+Exit code 5 either way. The macOS lines appear only on macOS: naming a dialog
+that cannot exist sends the reader hunting for somewhere that is not there.
 
 ## Spaces
 

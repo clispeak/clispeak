@@ -650,6 +650,45 @@ fn edit_groups(mut config: config::Config, action: &GroupAction) -> u8 {
     }
 }
 
+/// Explain a socket that will not connect, without asserting why.
+///
+/// This used to say "no voicecast node is running" for every failure and send
+/// the reader to `voicecastd`. That is a guess, and on macOS it is usually the
+/// wrong one: a node started by the app reads the keychain *before* it binds,
+/// and macOS asks permission to do that on every rebuild, because an ad-hoc
+/// signature makes each build a different application to the keychain's ACL.
+/// So the process is alive, parked on a dialog, and the advice was to launch a
+/// second one — which the first reader of this message did, twice, leaving two
+/// more daemons parked on the same prompt.
+///
+/// The two errors are told apart because they mean different things, and
+/// neither means what the old message claimed. The keychain line appears only
+/// on macOS: naming a dialog that cannot exist sends whoever reads it hunting
+/// for somewhere that is not there, which is the same mistake as recommending
+/// an Arch package to a Mac.
+fn no_node(e: &std::io::Error) {
+    let missing = e.kind() == std::io::ErrorKind::NotFound;
+    if missing {
+        err("error: nothing is listening for voicecast");
+    } else {
+        err(&format!(
+            "error: the voicecast socket is not answering ({e})"
+        ));
+    }
+    err("");
+    err("The node may not be running, or may not have finished starting.");
+    if cfg!(target_os = "macos") {
+        err("On macOS it does not bind until the keychain prompt is answered,");
+        err("which returns after every update — look for a dialog behind the app.");
+    }
+    if !missing {
+        err("A node that was killed also leaves the socket behind; the next one");
+        err("replaces it.");
+    }
+    err("");
+    err("start one with: voicecastd, or open the voicecast app");
+}
+
 /// A quiet window as a person reads it, or `off`.
 ///
 /// Shared by the device line and each space's, so the two cannot drift into
@@ -857,8 +896,7 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
     let mut stream = match Stream::connect(name).await {
         Ok(s) => s,
         Err(e) => {
-            err(&format!("error: no voicecast node is running ({e})"));
-            err("start one with: voicecastd");
+            no_node(&e);
             return Ok(exit::NO_NODE);
         }
     };
@@ -890,6 +928,7 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
             queued,
             muted,
             quiet,
+            engine_reason,
         } => {
             out(&format!("device:  {device_id}"));
             out(&format!("keys:    {key_store}"));
@@ -897,6 +936,11 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
                 "engine:  {engine}{}",
                 if fallback { "  (fallback)" } else { "" }
             ));
+            // Why, when there is a why. The node has always known; only
+            // whoever sent a message ever got to read it.
+            if let Some(reason) = engine_reason {
+                out(&format!("         {reason}"));
+            }
             out(&format!("queued:  {queued}"));
             // Shown only when set. A device that will speak normally should
             // not have to be read carefully to establish that.

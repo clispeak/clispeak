@@ -661,10 +661,15 @@ fn current_voice_name(engine: &Arc<dyn SpeechEngine>) -> String {
         .and_then(|id| voices.iter().find(|v| v.id == id))
         .map_or_else(
             || {
-                if voices.is_empty() {
-                    "starting…".to_string()
-                } else {
+                if !voices.is_empty() {
                     "default voice".to_string()
+                } else if engine.ready().is_err() {
+                    // An engine that cannot speak is not starting, and saying
+                    // so told the reader to wait — the one thing that could
+                    // not help. The reason travels beside this.
+                    "unavailable".to_string()
+                } else {
+                    "starting…".to_string()
                 }
             },
             |v| v.name.clone(),
@@ -681,6 +686,9 @@ fn status(shared: &Arc<Shared>) -> Response {
         device_id: shared.identity.id().to_string(),
         key_store: shared.identity.location().to_string(),
         engine: current_voice_name(&shared.engine),
+        // Carried rather than inferred. The node has held this all along and
+        // only the sender ever saw it.
+        engine_reason: shared.engine.ready().err().map(|e| e.reason().to_string()),
         fallback: shared.engine.tier() == voicecast_engine::Tier::Fallback,
         queued: shared.speaker.depth(),
         muted: policy.muted,
@@ -1443,17 +1451,17 @@ fn forget_policy(shared: &Arc<Shared>, space: &str) {
 /// error rather than a quiet fall back to the device policy — silently muting
 /// a whole device because a space name was mistyped is the worst outcome
 /// available here.
+/// The error is the message rather than a whole `Response`: a `Result` whose
+/// `Err` carries one is large enough for clippy to object, and the caller has
+/// to build a `Response::Error` from it either way.
 async fn policy_target(
     shared: &Arc<Shared>,
     space: Option<&str>,
-) -> Result<Option<String>, Response> {
+) -> Result<Option<String>, String> {
     let Some(label) = space else {
         return Ok(None);
     };
-    match space_named(shared, Some(label)).await {
-        Ok(id) => Ok(Some(id)),
-        Err(message) => Err(Response::Error { message }),
-    }
+    space_named(shared, Some(label)).await.map(Some)
 }
 
 /// Silence this device or one of its spaces, or let it speak again.
@@ -1466,7 +1474,7 @@ async fn policy_target(
 async fn set_mute(shared: &Arc<Shared>, muted: bool, space: Option<&str>) -> Response {
     let target = match policy_target(shared, space).await {
         Ok(target) => target,
-        Err(response) => return response,
+        Err(message) => return Response::Error { message },
     };
     {
         let mut p = shared.policy.lock().expect("policy lock");
@@ -1500,7 +1508,7 @@ async fn set_quiet(
 ) -> Response {
     let target = match policy_target(shared, space).await {
         Ok(target) => target,
-        Err(response) => return response,
+        Err(message) => return Response::Error { message },
     };
     let quiet = match (from, to) {
         (Some(f), Some(t)) => {

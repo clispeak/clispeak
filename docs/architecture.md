@@ -48,8 +48,11 @@ Invocation cost is single-digit milliseconds, which is what makes it usable
 as an agent's notification channel.
 
 If the node app isn't running, the CLI does not start it: it exits `NO_NODE`
-and says `start one with: voicecastd`. Autostart is the intended mitigation
-for the CLI depending on the app (decision 5) and has not been built.
+and explains what it found. It does not claim to know *why* — a socket that
+will not answer can mean nothing was started, or that something started and
+has not bound yet, which on macOS is the ordinary case while a keychain prompt
+waits. Autostart is the intended mitigation for the CLI depending on the app
+(decision 5) and has not been built.
 
 ### `voicecast-node` — the Tauri v2 app
 
