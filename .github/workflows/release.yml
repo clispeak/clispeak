@@ -92,11 +92,16 @@ jobs:
 
       # Debug-signed. A public APK needs a release keystore, which is a
       # secret nobody has created yet — see docs/releasing.md.
+      # NDK_HOME comes from the runner's own environment, which the `env`
+      # context does not see — that context holds only what a workflow, job
+      # or step declares, so `${{ env.ANDROID_NDK_LATEST_HOME }}` expands to
+      # nothing and the build fails looking for an NDK at the empty path.
       - name: Build the APK
         working-directory: app
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
-        run: npx @tauri-apps/cli android build --apk --debug --target aarch64
+        run: |
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          echo "using NDK at $NDK_HOME"
+          npx @tauri-apps/cli android build --apk --debug --target aarch64
 
       - uses: actions/upload-artifact@v4
         with:

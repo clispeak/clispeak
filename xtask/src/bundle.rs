@@ -12,6 +12,18 @@ use anyhow::{Context, Result, bail};
 
 use crate::piper;
 
+/// What npm's runner is actually called.
+///
+/// Windows ships it as a `.cmd` shim, and `Command::new` there goes straight
+/// to `CreateProcess`, which does not consult `PATHEXT` for a bare name. So
+/// spawning "npx" fails with "program not found" on a machine where npx is
+/// plainly installed and works from a prompt — the same trap the engine hit
+/// looking for audio players.
+#[cfg(windows)]
+const NPX: &str = "npx.cmd";
+#[cfg(not(windows))]
+const NPX: &str = "npx";
+
 /// Build the app, carrying Piper, a voice and the CLI inside it.
 pub fn bundle(root: &Path) -> Result<()> {
     let app = root.join("app");
@@ -40,7 +52,7 @@ pub fn bundle(root: &Path) -> Result<()> {
     // the five-target rule this repo is built around. The name is not one of
     // Tauri's platform suffixes, so it is merged only when asked for here.
     println!("building the app bundle");
-    let status = Command::new("npx")
+    let status = Command::new(NPX)
         .args([
             "tauri",
             "build",
@@ -49,7 +61,7 @@ pub fn bundle(root: &Path) -> Result<()> {
         ])
         .current_dir(&app)
         .status()
-        .context("running `npx tauri build` — is `npm install` done in app/?")?;
+        .with_context(|| format!("running `{NPX} tauri build` — is `npm install` done in app/?"))?;
     if !status.success() {
         bail!("the app bundle failed to build");
     }
@@ -72,14 +84,21 @@ fn stage_cli(root: &Path, tauri: &Path) -> Result<()> {
         bail!("the command-line tool failed to build");
     }
 
-    let built = root.join("target/release/voicecast");
+    // `.exe` on Windows and nothing anywhere else. From the standard library
+    // rather than a conditional of our own, since it is exactly this question.
+    let exe = std::env::consts::EXE_SUFFIX;
+
+    let built = root.join(format!("target/release/voicecast{exe}"));
     if !built.exists() {
         bail!("{} was not produced", built.display());
     }
 
     let binaries = tauri.join("binaries");
     std::fs::create_dir_all(&binaries).context("creating the sidecar directory")?;
-    let staged = binaries.join(format!("voicecast-{}", host_triple()?));
+    // Tauri looks for a sidecar named for the target triple, and keeps the
+    // platform's executable suffix. Without it Windows stages a file nothing
+    // will run, beside a `built` path that never existed to copy from.
+    let staged = binaries.join(format!("voicecast-{}{exe}", host_triple()?));
     std::fs::copy(&built, &staged).with_context(|| format!("staging {}", staged.display()))?;
     println!("staged  {}", staged.display());
     Ok(())
