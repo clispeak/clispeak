@@ -33,6 +33,12 @@
     ],
     "macOS": {
       "minimumSystemVersion": "11.0"
+    },
+    "iOS": {
+      "frameworks": [
+        "SystemConfiguration",
+        "AVFAudio"
+      ]
     }
   }
 }
