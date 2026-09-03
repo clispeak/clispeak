@@ -46,12 +46,23 @@ const press = (key, shift) =>
   await sleep(200);
   report.push(["Escape closes it", box.hidden]);
   report.push(["inert is lifted", document.querySelector("nav").inert === false]);
-  // The opener is a button `withButton` disabled for the duration, so this
-  // only passes because the restore retries once the action has unwound.
+  // The opener is a button `withButton` disabled for the duration, and the
+  // inert lift on its ancestors happens in the same task, so this passes only
+  // because the restore polls until focus actually lands.
+  //
+  // The note carries the opener's own state as well as where focus went. This
+  // check failed on another machine and passed here, and the first three
+  // things anyone asks — is it still in the document, is it still disabled, is
+  // it even the button — had to be added by hand before the report said
+  // anything useful. A failure that needs instrumenting to be read is half a
+  // report.
+  const landed = document.activeElement;
   report.push([
     "focus returns to the opener",
-    document.activeElement === opener,
-    `${document.activeElement.tagName}/${(document.activeElement.textContent || "").trim().slice(0, 12)}`,
+    landed === opener,
+    `went to ${landed.tagName}/${(landed.textContent || "").trim().slice(0, 12)}` +
+      `; opener connected=${opener.isConnected} disabled=${opener.disabled}` +
+      ` tag=${opener.tagName}/${(opener.textContent || "").trim().slice(0, 12)}`,
   ]);
 
   const pre = document.createElement("pre");

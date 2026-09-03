@@ -48,28 +48,48 @@ function focusable(root) {
   );
 }
 
+/** How long to keep trying to hand focus back, and how often. */
+const RESTORE_DEADLINE = 300;
+const RESTORE_POLL = 16;
+
 /**
  * Put focus back where it was before the dialog opened.
  *
- * One retry, because the opener is usually a button that is still mid-action:
- * `withButton` disables it for the duration, a disabled element cannot take
- * focus, and it is re-enabled only as the promise this dialog just resolved
- * unwinds. Restoring synchronously therefore left focus nowhere — which is
- * the bug this file exists to fix, reintroduced one layer down.
+ * Not synchronously, and not once. Two things can make the opener refuse
+ * focus at the moment the dialog closes, and both clear on their own:
  *
- * The retry is skipped if another dialog has opened in the meantime, so this
- * cannot pull focus out from under it.
+ * - It is usually a button still mid-action. `withButton` disables it for the
+ *   duration, a disabled element cannot take focus, and it is re-enabled as
+ *   the promise this dialog just resolved unwinds.
+ * - `inert` was lifted from its ancestors one line above this call, and at
+ *   least one Chrome does not treat the subtree as focusable again within the
+ *   same task.
+ *
+ * This is why a single `setTimeout(0)` was not enough: it passed here on
+ * every run and failed on another machine, connected, enabled and a real
+ * button, with a longer wait afterwards changing nothing — because the one
+ * retry had already fired and given up before the wait began. Which of the
+ * two causes it was is still unknown, and that is the point: the condition
+ * being waited for is observable, so poll it rather than bet a duration
+ * against it. `child.rs` reaches for the same shape for the same reason.
+ *
+ * Bounded, so a genuinely unfocusable opener stops rather than spins, and
+ * abandoned the moment another dialog opens, so this cannot pull focus out
+ * from under it.
  */
 function restoreFocus(opener) {
   const take = () => {
-    if (!opener || !opener.isConnected || !opener.focus) return false;
+    if (!opener || !opener.isConnected || !opener.focus) return true;
     opener.focus();
     return document.activeElement === opener;
   };
   if (take()) return;
-  setTimeout(() => {
-    if (!current) take();
-  }, 0);
+  const until = Date.now() + RESTORE_DEADLINE;
+  const again = () => {
+    if (current || take() || Date.now() > until) return;
+    setTimeout(again, RESTORE_POLL);
+  };
+  setTimeout(again, 0);
 }
 
 /**
