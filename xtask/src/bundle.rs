@@ -29,6 +29,26 @@ pub fn bundle(root: &Path) -> Result<()> {
     let app = root.join("app");
     let tauri = app.join("src-tauri");
 
+    // Said before the build rather than after, because the alternative is a
+    // bundle that silently came out ad-hoc.
+    //
+    // `APPLE_SIGNING_IDENTITY` unset falls back to an ad-hoc signature, which
+    // runs fine and is invisible in the output. That cost an hour: a shell
+    // that predated the `export` produced an unsigned build in the middle of
+    // testing whether a Developer ID certificate stops the keychain prompt,
+    // and the answer would have been "no" from a test that never signed
+    // anything. The variable is read here *and* by Tauri, so one line covers
+    // both and says which of the two things happened (#29).
+    match std::env::var("APPLE_SIGNING_IDENTITY") {
+        Ok(id) if !id.trim().is_empty() => println!("signing  as {id}"),
+        _ => {
+            println!("signing  AD-HOC — APPLE_SIGNING_IDENTITY is unset.");
+            println!("         The bundle runs, and carries no certificate: the");
+            println!("         keychain grant holding the device identity is asked");
+            println!("         for again after every rebuild (#29).");
+        }
+    }
+
     // The command-line tool travels inside the app. It is what an agent
     // actually calls, so shipping the app without it would leave the headline
     // use case needing a second, separate install.

@@ -6,13 +6,27 @@ Two different problems wear the same word, and **one certificate solves both**
 | | Fixes | Costs |
 |---|---|---|
 | A self-signed certificate | ~~the keychain prompt on every rebuild~~ **nothing, measured** | nothing |
-| **A Developer ID certificate** | the rebuild prompt *and* Gatekeeper's warning | a paid Apple Developer membership |
+| **A Developer ID certificate** | the rebuild prompt (**measured**) *and* Gatekeeper's warning (needs notarisation) | a paid Apple Developer membership |
 
-**The self-signed route was tried on macOS 26 and did not work.** It is kept
-below because the mechanism it explains is the mechanism both routes rely on,
-and because the negative result is worth more written down than deleted. But
-if you are here to stop the keychain prompt, go to the paid half — it is the
-only thing measured to do it.
+The rebuild prompt result, on macOS 26.5:
+
+| signing | designated requirement | rebuild |
+|---|---|---|
+| ad-hoc | `cdhash H"24a1051…"` | prompts |
+| self-signed | `identifier … and certificate leaf = H"…"` | **prompts** |
+| Developer ID | `identifier … and anchor apple generic and certificate leaf[subject.OU] = …` | **silent, twice** |
+
+Two consecutive rebuilds, each `CDHash` verified different before installing
+so neither could pass vacuously. `anchor apple generic` is the difference: a
+trusted anchor is what a keychain ACL can name.
+
+**Both halves of that table are now measured on macOS 26.5**, one negative and
+one positive, on the same Mac within an hour of each other. The self-signed
+route was tried and does not work. The Developer ID route was tried and does.
+
+The self-signed section is kept because the mechanism it explains is the
+mechanism both routes rely on, and because a negative result is worth more
+written down than deleted.
 
 ### What was actually measured
 
@@ -268,20 +282,31 @@ Confirm what you have:
 security find-identity -v -p codesigning
 ```
 
-> **Not yet verified.** Nobody has run this against a real Developer ID
-> certificate. The expectation is a line reading
-> `Developer ID Application: Your Name (TEAMID)`, and that whole string —
-> quotes excluded — being `APPLE_SIGNING_IDENTITY`. It is an expectation, not
-> a transcript, and this file has already shipped two plausible inventions in
-> this exact spot: first that `-v` reporting zero meant the certificate type
-> was wrong, then a replacement example composed rather than run. Both read
-> as authoritative and both were wrong. Replace this box with the literal
-> output the first time someone runs it.
+Captured on macOS 26.5, the first time anyone ran it:
 
-`-v` is right *here*, unlike in the self-signed section above: a Developer ID
-certificate chains to Apple's trusted root, so it is valid as well as usable
-and the narrower check is the better one. That much is reasoning too — sound,
-and about a case nobody has executed.
+```console
+$ security find-identity -v -p codesigning
+  1) 8C73BFFFE78B52E605D15CA1F1CE20428EE5B434 "Developer ID Application: Patrick Hogg (KC7NLB7CX8)"
+     1 valid identities found
+```
+
+That quoted string, quotes excluded, is `APPLE_SIGNING_IDENTITY`.
+
+`-v` is right *here*, unlike in the self-signed section above, and the
+unfiltered command shows why in macOS's own words. With both certificates in
+one keychain:
+
+```console
+$ security find-identity
+  1) A494CDD8744573039B35C14E2FE6953AEEE8DA26 "voicecast dev" (CSSMERR_TP_NOT_TRUSTED)
+  2) 8C73BFFFE78B52E605D15CA1F1CE20428EE5B434 "Developer ID Application: Patrick Hogg (KC7NLB7CX8)"
+     2 identities found
+```
+
+`CSSMERR_TP_NOT_TRUSTED`. The self-signed certificate was never malformed; it
+was untrusted, which is exactly the thing a keychain ACL cannot anchor to. The
+two certificates differ by one word from the operating system, and that word
+is the whole of #29.
 
 ## 3. Get notarisation credentials
 
