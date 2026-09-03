@@ -180,11 +180,48 @@ With `--json`, for agents:
 {
   "id": "m_8fk2p",
   "targets": [
-    { "device": "desk",   "status": "spoken",      "duration_ms": 3210 },
-    { "device": "pixel",  "status": "spoken",      "duration_ms": 3140 },
-    { "device": "iphone", "status": "unreachable", "reason": "background" }
+    { "device": "desk",   "endpoint_id": "9f2c…", "status": "spoken",      "took_ms": 3210, "detail": null },
+    { "device": "pixel",  "endpoint_id": "41ab…", "status": "spoken",      "took_ms": 3140, "detail": null },
+    { "device": "iphone", "endpoint_id": "7c15…", "status": "unreachable", "took_ms": null, "detail": "background" }
   ]
 }
+```
+
+`endpoint_id` is the full public key, not the elision shown here. It is in
+every row because `device` is a label: local, freely chosen, and not unique.
+Two devices can carry the same one, and this device's own name beats a peer
+that shares it — so a report naming only the label can say `spoken` about a
+device you did not mean. Match on `endpoint_id` and the row is unambiguous.
+
+### When a name means more than one device
+
+A bare name that matches devices in **different spaces** is refused; qualify
+it as `work/laptop`. A name matching two devices in the **same** space is also
+refused, and the error lists their ids, because qualifying cannot separate
+them and the fix is to rename one on the device itself.
+
+The case that is *not* refused is this device's own name. It wins outright —
+your own machine is what you meant — but the peers it beat are reported:
+
+```
+$ voicecast --to laptop "deploying"
+  laptop           spoken       (this device's own name was used; 1 other device
+                                 also answers to it and was not sent to: a37d705ec0f61d92)
+```
+
+The send succeeded and the exit code is `0`. The detail is there because the
+alternative is a one-row report that reads as a clean send while a second
+machine you might have meant heard nothing. Whether that case should refuse
+instead of reporting is issue #39; it would break any caller relying on
+today's behaviour, so it is not decided here.
+
+In the table, an id column appears on **every** row as soon as any two rows
+share a device name, and on none otherwise:
+
+```
+  other            [b59aeb94436b9b53] spoken       3.7s
+  twin             [a37d705ec0f61d92] spoken       2.2s
+  twin             [ec9de4e234d041e3] spoken       1.9s
 ```
 
 ### Per-target status

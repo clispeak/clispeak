@@ -645,6 +645,16 @@ pub enum PeerMessage {
 pub struct TargetResult {
     /// The device's label.
     pub device: String,
+    /// Which device that label actually resolved to.
+    ///
+    /// A label is local, freely chosen, and not unique: two devices can carry
+    /// the same one, and this device's own name shadows a peer that shares it.
+    /// When that happened the report said "spoken" and named a label that was
+    /// true of several devices, so the one thing it exists to say — which
+    /// device — was the thing it could not. Defaulted, so a node built before
+    /// this still parses.
+    #[serde(default)]
+    pub endpoint_id: String,
     /// How it ended.
     pub status: Status,
     /// How long speaking took, when the caller waited for it.

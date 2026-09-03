@@ -570,7 +570,7 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
                 devices: targets
                     .into_iter()
                     .map(|t| match t {
-                        Target::Here => shared.name.clone(),
+                        Target::Here { .. } => shared.name.clone(),
                         Target::Peer { name, .. } => name,
                     })
                     .collect(),
@@ -844,10 +844,17 @@ struct Outgoing {
 }
 
 /// One resolved destination for a message.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum Target {
     /// This device.
-    Here,
+    ///
+    /// `shadowed` holds the peers that answer to the same name and were not
+    /// sent to. This device's own label wins outright, which is defensible —
+    /// but it used to win *silently*, and a one-row report saying "spoken"
+    /// reads as a clean send whether or not a second machine answered to the
+    /// name. Carrying them here is what makes the ambiguity visible on first
+    /// read rather than traceable afterwards. See #39.
+    Here { shadowed: Vec<String> },
     /// A peer, by label, public key, and the space it was found in.
     Peer {
         name: String,
@@ -905,11 +912,7 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
         .collect();
 
     let mut targets: Vec<Target> = Vec::new();
-    let push = |t: Target, targets: &mut Vec<Target>| {
-        if !targets.contains(&t) {
-            targets.push(t);
-        }
-    };
+    let push = push_target;
     let peer = |k: &Known| Target::Peer {
         name: k.name.clone(),
         id: k.id.clone(),
@@ -945,7 +948,12 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
             // non-default space made `main/all` reach nothing at all on a
             // machine whose default had moved on.
             if spaces.get(&space).is_some() {
-                push(Target::Here, &mut targets);
+                push(
+                    Target::Here {
+                        shadowed: Vec::new(),
+                    },
+                    &mut targets,
+                );
             }
             for k in known.iter().filter(|k| k.space == space) {
                 push(peer(k), &mut targets);
@@ -954,7 +962,22 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
         }
 
         if scope.is_none() && (name.eq_ignore_ascii_case("here") || name == shared.name) {
-            push(Target::Here, &mut targets);
+            // `here` is unambiguous by construction. A bare name equal to our
+            // own label is not: a peer may answer to it too, and this branch
+            // takes the local device without consulting the roster at all.
+            // That is the right choice — your own machine is what you meant —
+            // but the peers it beat belong in the report, or the send reads as
+            // clean to anyone who did not already suspect a clash.
+            let shadowed = if name.eq_ignore_ascii_case("here") {
+                Vec::new()
+            } else {
+                known
+                    .iter()
+                    .filter(|k| k.name == name)
+                    .map(|k| k.id.clone())
+                    .collect()
+            };
+            push(Target::Here { shadowed }, &mut targets);
             continue;
         }
 
@@ -987,9 +1010,39 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
             }
             [only] => push(peer(only), &mut targets),
             several => {
-                let where_ = several
+                let mut seen: Vec<&str> = several.iter().map(|k| k.space.as_str()).collect();
+                seen.sort_unstable();
+                let distinct = {
+                    let mut d = seen.clone();
+                    d.dedup();
+                    d.len() == seen.len()
+                };
+                // Qualifying separates them only when the spaces differ. Two
+                // devices sharing a name *inside* one space were told to
+                // "Qualify it: work/twin  or  work/twin" — the same command
+                // twice, and the one that had just failed. An agent following
+                // that suggestion loops, and neither device is addressable by
+                // any selector this resolver accepts. Issue #39.
+                if !distinct {
+                    let rows = several
+                        .iter()
+                        .map(|k| {
+                            format!(
+                                "\n  {}  in {}",
+                                &k.id[..16.min(k.id.len())],
+                                spaces.label(&k.space)
+                            )
+                        })
+                        .collect::<String>();
+                    return Err(format!(
+                        "more than one device is called '{name}' in the same space{rows}\n\
+                         Qualifying by space cannot separate them. Rename one on the \
+                         device itself: voicecast rename <new>"
+                    ));
+                }
+                let where_ = seen
                     .iter()
-                    .map(|k| spaces.label(&k.space))
+                    .map(|id| spaces.label(id))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let hint = several
@@ -1009,6 +1062,60 @@ async fn resolve(shared: &Arc<Shared>, selector: &str) -> Result<Vec<Target>, St
         return Err(format!("'{selector}' names no devices"));
     }
     Ok(targets)
+}
+
+/// Add a target unless it is already there.
+///
+/// `Here` collapses on identity, not on payload. Two selector elements can
+/// both mean this device while disagreeing about what they shadowed —
+/// `--to here,laptop` on a machine called `laptop` — and comparing the whole
+/// value would push it twice and speak it twice, which is exactly what this
+/// dedup exists to stop. The shadow lists merge instead, so whichever element
+/// saw a clash still reports it.
+fn push_target(t: Target, targets: &mut Vec<Target>) {
+    if let Target::Here { shadowed } = t {
+        match targets
+            .iter_mut()
+            .find(|e| matches!(e, Target::Here { .. }))
+        {
+            Some(Target::Here { shadowed: existing }) => {
+                for id in shadowed {
+                    if !existing.contains(&id) {
+                        existing.push(id);
+                    }
+                }
+            }
+            _ => targets.push(Target::Here { shadowed }),
+        }
+        return;
+    }
+    if !targets.contains(&t) {
+        targets.push(t);
+    }
+}
+
+/// Say that other devices answer to the name this row was addressed by.
+///
+/// `None` when nothing was shadowed, so the common case adds no text at all.
+fn also_answers_to(shadowed: &[String]) -> Option<String> {
+    if shadowed.is_empty() {
+        return None;
+    }
+    let ids = shadowed
+        .iter()
+        .map(|id| id[..16.min(id.len())].to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let n = shadowed.len();
+    let (device, answers, was) = if n == 1 {
+        ("device", "answers", "was")
+    } else {
+        ("devices", "answer", "were")
+    };
+    Some(format!(
+        "this device's own name was used; {n} other {device} also {answers} \
+         to it and {was} not sent to: {ids}"
+    ))
 }
 
 /// Every space label this device knows, for an error message.
@@ -1060,13 +1167,17 @@ async fn deliver(
         let outgoing = outgoing.clone();
         set.spawn(async move {
             let result = match target {
-                Target::Here => {
+                Target::Here { shadowed } => {
                     let (status, took_ms, detail) = speak_here(&shared, &outgoing).await;
                     TargetResult {
                         device: shared.name.clone(),
+                        endpoint_id: shared.identity.id().to_string(),
                         status,
                         took_ms,
-                        detail,
+                        // Never overwrites a real explanation: a device that
+                        // refused has something more useful to say than that
+                        // the name was also taken elsewhere.
+                        detail: detail.or_else(|| also_answers_to(&shadowed)),
                     }
                 }
                 Target::Peer { name, id, space } => {
@@ -1102,12 +1213,14 @@ async fn to_peer(
     match send_to_peer(shared, transport, peer_id, space, outgoing).await {
         Ok(status) => TargetResult {
             device: name.to_string(),
+            endpoint_id: peer_id.to_string(),
             took_ms: outgoing.wait.then(|| started.elapsed().as_millis() as u64),
             status,
             detail: None,
         },
         Err(e) => TargetResult {
             device: name.to_string(),
+            endpoint_id: peer_id.to_string(),
             status: Status::Unreachable,
             took_ms: None,
             detail: Some(format!("{e:#}")),
@@ -1309,22 +1422,25 @@ async fn control(
         let control = control.clone();
         set.spawn(async move {
             let result = match target {
-                Target::Here => TargetResult {
+                Target::Here { shadowed } => TargetResult {
                     device: shared.name.clone(),
+                    endpoint_id: shared.identity.id().to_string(),
                     status: apply_control(&shared, &control),
                     took_ms: None,
-                    detail: None,
+                    detail: also_answers_to(&shadowed),
                 },
                 Target::Peer { name, id, space } => {
                     match send_control(&transport, &id, &space, &control).await {
                         Ok(status) => TargetResult {
                             device: name,
+                            endpoint_id: id,
                             status,
                             took_ms: None,
                             detail: None,
                         },
                         Err(e) => TargetResult {
                             device: name,
+                            endpoint_id: id,
                             status: Status::Unreachable,
                             took_ms: None,
                             detail: Some(format!("{e:#}")),
@@ -2843,5 +2959,109 @@ mod tests {
             pick_space_label(&spaces, [Some("   "), None, None]),
             "space-2"
         );
+    }
+
+    /// The regression that adding a payload to `Here` invites.
+    ///
+    /// `--to here,laptop` on a machine called `laptop` produces two elements
+    /// that both mean this device and disagree about what they shadowed.
+    /// Comparing the whole value would make the machine say it twice.
+    #[test]
+    fn this_device_collapses_however_it_was_named() {
+        let mut targets = Vec::new();
+        push_target(Target::Here { shadowed: vec![] }, &mut targets);
+        push_target(
+            Target::Here {
+                shadowed: vec!["peer-a".into()],
+            },
+            &mut targets,
+        );
+        assert_eq!(targets.len(), 1, "this device speaks once");
+    }
+
+    /// And the shadow survives the collapse, whichever order it arrives in.
+    #[test]
+    fn collapsing_keeps_what_either_element_shadowed() {
+        for order in [false, true] {
+            let mut targets = Vec::new();
+            let (first, second) = if order {
+                (vec![], vec!["peer-a".to_string()])
+            } else {
+                (vec!["peer-a".to_string()], vec![])
+            };
+            push_target(Target::Here { shadowed: first }, &mut targets);
+            push_target(Target::Here { shadowed: second }, &mut targets);
+            assert_eq!(
+                targets,
+                vec![Target::Here {
+                    shadowed: vec!["peer-a".to_string()]
+                }],
+                "a clash seen by either element has to reach the report"
+            );
+        }
+    }
+
+    /// Merging must not report the same device twice.
+    #[test]
+    fn the_same_shadowed_device_is_not_listed_twice() {
+        let mut targets = Vec::new();
+        for _ in 0..2 {
+            push_target(
+                Target::Here {
+                    shadowed: vec!["peer-a".into()],
+                },
+                &mut targets,
+            );
+        }
+        assert_eq!(
+            targets,
+            vec![Target::Here {
+                shadowed: vec!["peer-a".to_string()]
+            }]
+        );
+    }
+
+    /// Peers still dedup on the whole value, which is what they always did.
+    #[test]
+    fn the_same_peer_named_twice_is_one_target() {
+        let mut targets = Vec::new();
+        let peer = || Target::Peer {
+            name: "laptop".into(),
+            id: "abc".into(),
+            space: "s".into(),
+        };
+        push_target(peer(), &mut targets);
+        push_target(peer(), &mut targets);
+        assert_eq!(targets.len(), 1);
+    }
+
+    /// Nothing shadowed adds no text at all, so the common report is unchanged.
+    #[test]
+    fn a_clean_send_says_nothing_extra() {
+        assert_eq!(also_answers_to(&[]), None);
+    }
+
+    /// One shadowed device reads as one, and names it.
+    #[test]
+    fn a_shadowed_device_is_named_and_counted() {
+        let note = also_answers_to(&["0123456789abcdef0123456789".to_string()])
+            .expect("a shadowed device is worth saying");
+        assert!(note.contains("1 other device"), "{note}");
+        assert!(note.contains("answers"), "singular verb: {note}");
+        assert!(note.contains("0123456789abcdef"), "names it: {note}");
+        assert!(
+            !note.contains("0123456789abcdef0"),
+            "truncated to 16 like the device list: {note}"
+        );
+    }
+
+    /// Two read as two. The first version of this dropped the count in the
+    /// plural and said only "other devices".
+    #[test]
+    fn two_shadowed_devices_are_counted() {
+        let note = also_answers_to(&["aaaa".to_string(), "bbbb".to_string()])
+            .expect("two shadowed devices are worth saying");
+        assert!(note.contains("2 other devices"), "{note}");
+        assert!(note.contains("aaaa") && note.contains("bbbb"), "{note}");
     }
 }
