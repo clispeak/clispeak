@@ -18,6 +18,13 @@ on:
     tags: ['v*']
   # So the packaging path can be exercised without minting a version.
   workflow_dispatch:
+    inputs:
+      only:
+        description: "One platform, when testing a fix to that job"
+        required: false
+        type: choice
+        default: all
+        options: [all, linux, macos, windows, android]
 
 permissions:
   contents: write
@@ -26,53 +33,64 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  desktop:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            name: macos
-            # Unsigned: signing needs a certificate in a keychain we do not
-            # have. macOS will warn on first open until that is sorted.
-            # The workspace target directory is at the repository root, not
-            # under the Tauri crate — the bundler writes there like any other
-            # cargo output. Getting this wrong built the bundle successfully
-            # and then failed the upload, which reads as a build failure.
-            artefacts: target/release/bundle/dmg/*.dmg
-          - os: windows-latest
-            name: windows
-            artefacts: target/release/bundle/nsis/*.exe
+  macos:
+    name: macos
+    if: inputs.only == null || inputs.only == 'all' || inputs.only == 'macos'
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.name }}
+          key: release-macos
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Frontend dependencies
         working-directory: app
         run: npm ci || npm install
-
-      # Stages the CLI as a sidecar, fetches Piper and a voice, then runs
-      # `tauri build` with the bundle config. Platform-generic: a .dmg on
-      # macOS, an NSIS installer on Windows, from one recipe.
       - name: Build the bundle
         run: cargo run -p xtask -- bundle
-
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.artefacts }}
+          name: macos
+          # Unsigned: signing needs a certificate in a keychain we do not
+          # have. macOS warns on first open until that is sorted.
+          #
+          # The workspace target directory is at the repository root, not
+          # under the Tauri crate — the bundler writes there like any other
+          # cargo output. Getting this wrong built the bundle and then failed
+          # the upload, which reads as a build failure.
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  windows:
+    name: windows
+    if: inputs.only == null || inputs.only == 'all' || inputs.only == 'windows'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-windows
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Frontend dependencies
+        working-directory: app
+        run: npm ci || npm install
+      - name: Build the bundle
+        run: cargo run -p xtask -- bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: target/release/bundle/nsis/*.exe
           if-no-files-found: error
 
   android:
     name: android
+    if: inputs.only == null || inputs.only == 'all' || inputs.only == 'android'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,6 +133,7 @@ jobs:
 
   flatpak:
     name: linux
+    if: inputs.only == null || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -177,7 +196,7 @@ jobs:
 
   draft:
     name: draft release
-    needs: [desktop, android, flatpak]
+    needs: [macos, windows, android, flatpak]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
