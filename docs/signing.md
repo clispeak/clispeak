@@ -478,16 +478,32 @@ That is neither `accepted` nor `rejected`. It means the signature could not be
 evaluated at all, so read it as a statement about the artefact rather than
 about Gatekeeper's opinion of it — the tool is not broken.
 
-And on the disk image, `-t exec` is the wrong assessment type. Ask the
-question a downloader's Finder asks:
+On the disk image, ask the question a downloader's Finder asks:
 
 ```bash
 spctl -a -vvv -t open --context context:primary-signature voicecast_0.1.0_aarch64.dmg
 xcrun stapler validate voicecast_0.1.0_aarch64.dmg
 ```
 
-`-t exec` on a `.dmg` will still print something, and on a signed one that
-something would not mean what it looks like it means.
+**This page previously said `-t exec` on a `.dmg` gives an answer that does
+not mean what the reader thinks. Measured on a signed image, that is wrong:**
+both forms give the same, correct verdict.
+
+```console
+-t open --context context:primary-signature   rejected / source=Unnotarized Developer ID
+-t exec                                       rejected / source=Unnotarized Developer ID
+```
+
+`-t open` is still the more precise question to ask about a disk image, and it
+is what this page recommends. But the practical warning attached to it was
+reasoning about a signed image at a time when no signed image existed, and it
+did not survive one being built. Corrected rather than quietly dropped,
+because the wrong version was specific enough to act on.
+
+Signed and un-notarised is a **named** rejection, not a silent one — Gatekeeper
+says `source=Unnotarized Developer ID`, and the app inside a mounted copy
+assesses the same way. What a downloader sees once the `.app` carries a
+stapled ticket and the `.dmg` does not is still unmeasured, and is #108.
 
 The release job runs the first two of these itself and fails the build if
 credentials were supplied and the artefact came out without them.
