@@ -1215,11 +1215,6 @@ fn label(status: &Status) -> &'static str {
     }
 }
 
-/// Show what happened on each device, and pick an exit code to match.
-///
-/// The exit code is what an agent branches on, so it has to distinguish
-/// "everything worked" from "some of it did" from "none of it did" — see the
-/// table in `docs/cli.md`.
 /// The leading bytes of an endpoint id, enough to tell two devices apart.
 ///
 /// Sixteen, matching what `voicecast devices` prints, so a reader can compare
@@ -1228,6 +1223,11 @@ fn short_id(id: &str) -> &str {
     &id[..16.min(id.len())]
 }
 
+/// Show what happened on each device, and pick an exit code to match.
+///
+/// The exit code is what an agent branches on, so it has to distinguish
+/// "everything worked" from "some of it did" from "none of it did" — see the
+/// table in `docs/cli.md`.
 fn report(msg_id: &str, targets: &[voicecast_proto::TargetResult], json: bool) -> u8 {
     use voicecast_proto::Status;
 

@@ -67,9 +67,15 @@ fn portability() -> anyhow::Result<()> {
     }
 
     frontend_dialogs()?;
-    jni_keep_rules()?;
+    let jni = jni_keep_rules()?;
 
-    println!("portability ok: {} crates clean", PORTABLE.len());
+    // The counts are said out loud because a gate that passed and a gate that
+    // never ran print the same thing otherwise — which is how the JNI check
+    // came to be doubted the day after it was written, reasonably.
+    println!(
+        "portability ok: {} crates clean, {jni} JNI classes kept",
+        PORTABLE.len()
+    );
     Ok(())
 }
 
@@ -143,12 +149,12 @@ fn frontend_dialogs() -> anyhow::Result<()> {
 /// Mechanical because the failure mode is adding a fourth class and finding
 /// out from a crash report. Comments are skipped so this file's own
 /// explanation cannot satisfy the rule it enforces.
-fn jni_keep_rules() -> anyhow::Result<()> {
+fn jni_keep_rules() -> anyhow::Result<usize> {
     let sources = PathBuf::from("crates/voicecast-engine/src");
     let rules = PathBuf::from("app/src-tauri/gen/android/app/proguard-rules.pro");
     let Ok(text) = std::fs::read_to_string(&rules) else {
         // Not a checkout with an Android project in it; nothing to say.
-        return Ok(());
+        return Ok(0);
     };
 
     // What the rules already cover, as `com.voicecast.app.Speech`.
@@ -160,6 +166,7 @@ fn jni_keep_rules() -> anyhow::Result<()> {
         .collect();
 
     let mut findings = Vec::new();
+    let mut checked = 0usize;
     for file in rust_files(&sources)? {
         let body = std::fs::read_to_string(&file)?;
         for (i, line) in body.lines().enumerate() {
@@ -167,6 +174,7 @@ fn jni_keep_rules() -> anyhow::Result<()> {
                 continue;
             }
             for (at, _) in line.match_indices(NEEDLE) {
+                checked += 1;
                 let rest = &line[at + 1..];
                 let Some(end) = rest.find(QUOTE) else {
                     continue;
@@ -193,7 +201,7 @@ fn jni_keep_rules() -> anyhow::Result<()> {
              app/src-tauri/gen/android/app/proguard-rules.pro"
         );
     }
-    Ok(())
+    Ok(checked)
 }
 
 /// An opening quote followed by the package every JNI lookup starts with.
