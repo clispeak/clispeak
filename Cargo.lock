@@ -6430,10 +6430,12 @@ name = "voicecast-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "ciborium",
  "clap",
  "directories",
  "interprocess",
+ "rand",
  "serde",
  "serde_json",
  "tokio",
@@ -6447,6 +6449,7 @@ name = "voicecast-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "chrono",
  "ciborium",
  "data-encoding",

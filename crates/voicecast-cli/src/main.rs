@@ -1097,6 +1097,31 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
         }
     };
 
+    // Before anything is sent. Until now this connected and started talking,
+    // and `Request` is everything a device can be told to do — so on Linux,
+    // where the socket name has no permissions at all, any other user could
+    // drive this node, and on macOS, where it lives in `/tmp`, any other user
+    // could take the name first and receive what was meant for it (#54).
+    let token = match config::dir().as_deref().map(frame::read_token) {
+        Some(Ok(t)) => t,
+        _ => {
+            err("error: no local socket token, so this node cannot be identified");
+            err("Open the voicecast app, or start voicecastd, then try again.");
+            return Ok(exit::NO_NODE);
+        }
+    };
+    if let Err(e) = frame::offer_handshake(&mut stream, &token).await {
+        err(&format!(
+            "error: the node on this socket could not be identified: {e:#}"
+        ));
+        err(
+            "Nothing was sent to it. Either it belongs to a different node — a \
+             VOICECAST_CONFIG_DIR that does not match VOICECAST_SOCKET does this \
+             — or something else on this machine has taken the socket name.",
+        );
+        return Ok(exit::NO_NODE);
+    }
+
     // Once the socket is open, a failure is the node going away rather than
     // anything the caller did. Mapping these through `anyhow` gave exit 1 and
     // "reading frame length: early eof", so an agent told to fix its command

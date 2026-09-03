@@ -279,6 +279,22 @@ The frontend is plain HTML and JavaScript with a Tailwind build step — no
 framework and no bundler, because the interesting behaviour lives in
 `voicecast-core`, shared with the CLI.
 
+## Who can drive your node
+
+The CLI talks to the node over a local socket, and the two prove themselves to
+each other before anything is sent — a secret in the config directory, which
+is kept readable only by you.
+
+That matters because the socket *name* has no permissions on any platform here:
+Linux's abstract namespace has none by design, and on macOS the socket lands in
+`/tmp`. So another user on the same machine cannot make your devices speak,
+read your history, or mint an invite to your space. They can still take the
+name before your node does, which stops it starting — that is a nuisance, not
+a leak, and it is written up in `docs/architecture.md`.
+
+Anyone who can read your config directory can drive your node. That is the
+same directory that holds your identity key, so the boundary is the same one.
+
 ## Licence
 
 **MIT OR Apache-2.0**, at your option — the Rust ecosystem's usual pair.

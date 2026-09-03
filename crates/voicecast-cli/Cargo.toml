@@ -12,6 +12,9 @@ name = "voicecast"
 path = "src/main.rs"
 
 [dependencies]
+blake3 = "1.8"
+rand = "0.10.2"
+
 voicecast-proto.workspace = true
 voicecast-text.workspace = true
 anyhow.workspace = true

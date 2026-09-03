@@ -538,6 +538,12 @@ impl Node {
 
     /// Run both loops until one of them fails.
     pub async fn serve(&self) -> Result<()> {
+        // Before the listener exists, so there is never a socket accepting
+        // connections with no secret to check them against.
+        let config_dir = crate::identity::config_dir()?;
+        let token =
+            crate::ipc::install_token(&config_dir).context("writing the local socket token")?;
+
         let listener = bind_ipc(&socket_name()).await?;
 
         let socket = socket_name();
@@ -566,8 +572,13 @@ impl Node {
                     let shared = Arc::clone(&shared);
                     let transport = Arc::clone(&transport);
                     tokio::spawn(async move {
-                        if let Err(e) = handle_cli(&shared, &transport, stream).await {
-                            eprintln!("cli: {e:#}");
+                        if let Err(e) = handle_cli(&shared, &transport, stream, &token).await {
+                            // A liveness probe is not a failure worth printing;
+                            // anything else is, including a caller that offered
+                            // the wrong token.
+                            if !e.is::<crate::ipc::Probe>() {
+                                eprintln!("cli: {e:#}");
+                            }
                         }
                     });
                 }
@@ -603,7 +614,19 @@ impl Node {
 }
 
 /// Serve one CLI connection.
-async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Stream) -> Result<()> {
+async fn handle_cli(
+    shared: &Arc<Shared>,
+    transport: &Arc<Transport>,
+    mut s: Stream,
+    token: &crate::ipc::Token,
+) -> Result<()> {
+    // Before the request is even read. `Request` is everything this device
+    // can be told to do — speak, invite, join, rotate, revoke, read the
+    // history, quit — and until now any local user could send one, because
+    // the socket is a name with no permissions on Linux and a file in a
+    // world-writable directory on macOS (#54).
+    crate::ipc::accept_handshake(&mut s, token).await?;
+
     let request: Request = read_frame(&mut s).await?;
     let response = match request {
         Request::Speak {
