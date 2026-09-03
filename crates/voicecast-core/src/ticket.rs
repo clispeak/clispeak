@@ -81,10 +81,12 @@ impl Ticket {
     pub fn remember(&self) {
         let Some(path) = Self::path() else { return };
         if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
+            let _ = crate::store::create_dir_private(dir);
         }
         if let Ok(text) = serde_json::to_string(self) {
-            let _ = std::fs::write(path, text);
+            // Holds the live token: private, and atomic so a
+            // crash cannot leave half a ticket to be re-read.
+            let _ = crate::store::write_private(&path, text.as_bytes());
         }
     }
 

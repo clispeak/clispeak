@@ -14,6 +14,7 @@ pub mod policy;
 mod queue;
 pub mod roster;
 pub mod spaces;
+pub mod store;
 pub mod ticket;
 pub mod transport;
 

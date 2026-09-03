@@ -131,11 +131,13 @@ impl KeyStore for FileKeyStore {
 
     fn save(&self, key: &[u8; 32]) -> Result<(), IdentityError> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| IdentityError::Store(e.to_string()))?;
+            crate::store::create_dir_private(parent)
+                .map_err(|e| IdentityError::Store(e.to_string()))?;
         }
         // Create with 0600 from the outset rather than writing then chmod'ing:
         // the gap between the two would leave the key briefly world-readable.
-        write_private(&self.path, key).map_err(|e| IdentityError::Store(e.to_string()))
+        crate::store::write_private(&self.path, key)
+            .map_err(|e| IdentityError::Store(e.to_string()))
     }
 
     fn describe(&self) -> String {
@@ -225,7 +227,7 @@ fn migrate_between(old: &Path, current: &Path) -> Result<Vec<String>, IdentityEr
     if old == current || !old.exists() {
         return Ok(Vec::new());
     }
-    std::fs::create_dir_all(current).map_err(|e| IdentityError::Store(e.to_string()))?;
+    crate::store::create_dir_private(current).map_err(|e| IdentityError::Store(e.to_string()))?;
 
     let mut moved = Vec::new();
     for name in STATE_FILES {
@@ -289,8 +291,9 @@ fn default_name() -> &'static str {
 /// Choose this device's label, remembering it across restarts.
 pub fn set_device_name(name: &str) -> Result<(), IdentityError> {
     let dir = config_dir()?;
-    std::fs::create_dir_all(&dir).map_err(|e| IdentityError::Store(e.to_string()))?;
-    std::fs::write(dir.join("name"), name.trim()).map_err(|e| IdentityError::Store(e.to_string()))
+    crate::store::create_dir_private(&dir).map_err(|e| IdentityError::Store(e.to_string()))?;
+    crate::store::write_private(&dir.join("name"), name.trim().as_bytes())
+        .map_err(|e| IdentityError::Store(e.to_string()))
 }
 
 /// The voice and rate this device was last set to.
@@ -307,8 +310,8 @@ pub fn load_voice_settings() -> Option<(String, f32)> {
 /// Remember the voice and rate for next time.
 pub fn save_voice_settings(id: &str, rate: f32) -> Result<(), IdentityError> {
     let dir = config_dir()?;
-    std::fs::create_dir_all(&dir).map_err(|e| IdentityError::Store(e.to_string()))?;
-    std::fs::write(dir.join("voice"), format!("{id}\n{rate}"))
+    crate::store::create_dir_private(&dir).map_err(|e| IdentityError::Store(e.to_string()))?;
+    crate::store::write_private(&dir.join("voice"), format!("{id}\n{rate}").as_bytes())
         .map_err(|e| IdentityError::Store(e.to_string()))
 }
 
@@ -345,27 +348,6 @@ fn usable_hostname(raw: &str) -> Option<String> {
 /// Permissions are set at creation on Unix. Elsewhere the containing
 /// directory is the protection, which is why the key lives in a
 /// per-application config directory rather than anywhere shared.
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    set_owner_only(&mut opts);
-
-    let mut file = opts.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
-
-#[cfg(unix)]
-fn set_owner_only(opts: &mut std::fs::OpenOptions) {
-    use std::os::unix::fs::OpenOptionsExt;
-    opts.mode(0o600);
-}
-
-#[cfg(not(unix))]
-fn set_owner_only(_opts: &mut std::fs::OpenOptions) {}
-
 #[cfg(test)]
 mod migration_tests {
     use super::*;

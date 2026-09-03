@@ -118,11 +118,11 @@ impl History {
     /// Write to disk.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            crate::store::create_dir_private(dir)?;
         }
         let text = serde_json::to_string(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, text)
+        crate::store::write_private(path, text.as_bytes())
     }
 }
 

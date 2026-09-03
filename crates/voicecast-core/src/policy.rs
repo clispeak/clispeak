@@ -215,11 +215,15 @@ pub fn load() -> Policies {
 pub fn save(policy: &Policies) -> Result<(), crate::IdentityError> {
     let p = path()?;
     if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| crate::IdentityError::Store(e.to_string()))?;
+        crate::store::create_dir_private(dir)
+            .map_err(|e| crate::IdentityError::Store(e.to_string()))?;
     }
     let text = serde_json::to_string_pretty(policy)
         .map_err(|e| crate::IdentityError::Store(e.to_string()))?;
-    std::fs::write(&p, text).map_err(|e| crate::IdentityError::Store(e.to_string()))
+    // A truncated policy reads as 'nothing configured', so a muted
+    // device would quietly un-mute itself.
+    crate::store::write_private(&p, text.as_bytes())
+        .map_err(|e| crate::IdentityError::Store(e.to_string()))
 }
 
 #[cfg(test)]

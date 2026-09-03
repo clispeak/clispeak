@@ -282,11 +282,14 @@ impl Spaces {
     /// Write to disk.
     pub fn save(&self, path: &Path) -> Result<(), RosterError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| RosterError::Storage(e.to_string()))?;
+            crate::store::create_dir_private(parent)
+                .map_err(|e| RosterError::Storage(e.to_string()))?;
         }
         let mut buf = Vec::new();
         ciborium::into_writer(self, &mut buf).map_err(|e| RosterError::Storage(e.to_string()))?;
-        std::fs::write(path, buf).map_err(|e| RosterError::Storage(e.to_string()))
+        // Losing this file loses every pairing, so it is never
+        // truncated in place.
+        crate::store::write_private(path, &buf).map_err(|e| RosterError::Storage(e.to_string()))
     }
 }
 
