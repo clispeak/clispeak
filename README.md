@@ -295,6 +295,13 @@ a leak, and it is written up in `docs/architecture.md`.
 Anyone who can read your config directory can drive your node. That is the
 same directory that holds your identity key, so the boundary is the same one.
 
+**The Flatpak is packaging, not containment.** It grants itself write access
+to `~/.local/bin`, which is on your PATH ahead of `/usr/bin`, and to
+`~/.claude`, which holds hooks your agent runs. Either is enough to escape the
+sandbox, and they are there because an app that offers to install a tool and
+then silently fails to is worse than one that says what it can reach. Install
+it because it is convenient, not because it is contained.
+
 ## Licence
 
 **MIT OR Apache-2.0**, at your option — the Rust ecosystem's usual pair.

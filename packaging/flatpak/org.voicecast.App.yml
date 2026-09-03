@@ -40,6 +40,23 @@ finish-args:
   - --own-name=org.kde.StatusNotifierItem-2-1
   # Where the app offers to put the command-line tool, so an agent can call it
   # without paying sandbox startup on every message.
+  #
+  # **These next two grants make the sandbox nominal, and that is stated here
+  # rather than discovered.** `~/.local/bin` is on the user's PATH ahead of
+  # `/usr/bin` on every mainstream distribution, so write access to it is
+  # write access to the next command they type. `~/.claude` holds Claude
+  # Code's hooks, which are commands it runs on the user's behalf. Either one
+  # alone is an escape from the sandbox; together they are two.
+  #
+  # They are still here because the alternative is worse in a way users
+  # actually meet: an unshared write *appears to succeed* inside a sandbox and
+  # never reaches the host, so an app that offers to install a tool and then
+  # silently does not is the failure this project keeps paying for. The
+  # honest position is that this Flatpak is packaging, not containment
+  # (#82, decision 77).
+  #
+  # Flathub will refuse `~/.local/bin` outright, so publishing there needs a
+  # different answer, not a smaller version of this one.
   - --filesystem=~/.local/bin:create
   # Where agents keep skills. Narrow on purpose: an unshared write inside the
   # sandbox appears to succeed and never reaches the host, so the app must be

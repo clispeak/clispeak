@@ -24,3 +24,18 @@ app/src-tauri/binaries/
 *.jks
 *.keystore
 *.p12
+
+# Flatpak build output. `build-dir/` is 160MB and is invisible today only
+# because `flatpak build-init` writes its own `.gitignore` containing `*`
+# inside it — an ignore rule this repository does not own and did not ask
+# for. `repo/` and `*.flatpak` are created by `release.yml` and were covered
+# by nothing at all.
+packaging/flatpak/build-dir/
+packaging/flatpak/repo/
+.flatpak-builder/
+*.flatpak
+
+# Never committed, and named here rather than assumed. Nothing reads a `.env`
+# in this project today; the entry exists so that the day something does, the
+# file is already ignored rather than ignored afterwards.
+.env
