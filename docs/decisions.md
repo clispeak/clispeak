@@ -1716,10 +1716,26 @@ also the thing to do, since tapping opens the Activity. Making the service own
 the node would remove the class of problem and is a larger change; it is noted
 on the issue rather than pretended away.
 
-**Why none of this was caught.** The Kotlin compiled only on a `v*` tag. So a
-syntax error or a bad resource reference in the Android shell reached a
-release build without anything having read it, which is the same shape as
-`voicecast-app` being excluded from the Android Rust build in decision 51.
-`./gradlew :app:compileUniversalReleaseKotlin` compiles the Kotlin and
-processes the manifest and resources without needing the NDK, in about sixteen
-seconds, and now runs on every push and pull request.
+**Why none of this was caught, and why it is still not.** The Kotlin compiles
+only on a `v*` tag, so a syntax error or a bad resource reference in the
+Android shell reaches a release build with nothing having read it — the same
+shape as `voicecast-app` being excluded from the Android Rust build in
+decision 51.
+
+Closing that turned out to be more expensive than it looks, and the attempt is
+worth recording so the next person does not repeat it.
+`./gradlew :app:compileUniversalReleaseKotlin` runs in sixteen seconds on a
+machine that has already built the app, which made it look like a cheap check.
+It is not, on a fresh checkout: `tauri.settings.gradle`,
+`app/tauri.build.gradle.kts`, `app/tauri.properties`, `proguard-tauri.pro` and
+— decisively — the whole `com/voicecast/app/generated/` package that
+`MainActivity` extends are all written by the Tauri CLI and all correctly
+gitignored, because they carry absolute paths. Hand-writing the first two in
+CI worked and revealed the third; hand-writing the generated *sources* is not
+something to attempt.
+
+So compiling the Android shell means running the Tauri CLI's Android build,
+which needs a full NDK and takes minutes rather than seconds. That is a real
+cost on every pull request and a decision about CI spend rather than a tidy-up,
+which is #96 rather than a step bolted onto a bug fix. The two Kotlin fixes
+above were compiled locally, where the generated sources already exist.
