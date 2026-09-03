@@ -23,6 +23,9 @@ serde_json = "1.0.151"
 # clock. `clock` pulls the platform's timezone on every target we build for.
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 rand = "0.10.2"
+# Keyed hashing for the local socket handshake. `blake3::Hash` also compares
+# in constant time, which is why the proof check is between hashes.
+blake3 = "1.8"
 thiserror.workspace = true
 iroh = "1.1"
 data-encoding = "2.11.1"

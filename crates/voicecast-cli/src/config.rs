@@ -31,10 +31,20 @@ pub struct Config {
 /// not depend on the node's crate — see the socket name for the same trade —
 /// so this has to stay in step by hand.
 pub fn path() -> Option<PathBuf> {
+    dir().map(|d| d.join("config.toml"))
+}
+
+/// The directory the node keeps its state in, resolved the same way the node
+/// resolves it.
+///
+/// The node's own copy is `voicecast_core::identity::config_dir`, which also
+/// honours a path the host set — only used on mobile, where there is no CLI.
+/// Kept in step by hand, like the socket name and the frame format.
+pub fn dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("VOICECAST_CONFIG_DIR") {
-        return Some(PathBuf::from(dir).join("config.toml"));
+        return Some(PathBuf::from(dir));
     }
-    directories::ProjectDirs::from("", "", "voicecast").map(|d| d.config_dir().join("config.toml"))
+    directories::ProjectDirs::from("", "", "voicecast").map(|d| d.config_dir().to_path_buf())
 }
 
 /// Load the config, treating anything unreadable as empty.

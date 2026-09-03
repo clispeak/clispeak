@@ -343,6 +343,33 @@ QR code or ticket.
 print, it can be convinced to say. Rate limiting, quiet hours, and a mute
 toggle are mitigations, not afterthoughts.
 
+### The local socket
+
+**The CLI and the node prove themselves to each other before a word is sent.**
+Both read a 32-byte secret from the config directory, which is kept at 0700,
+and exchange keyed hashes over nonces. Without that, the socket was open to
+every other user on the machine — and `Request` is everything a device can be
+told to do: speak, invite, join, rotate, revoke, read the history, quit
+(#54, decision 76).
+
+**The socket name is not protected by the operating system, on any platform we
+support.** Linux's abstract namespace carries no permissions at all, and
+`interprocess` puts the macOS socket in `/tmp` — its own source calls that
+"the world-writable temporary directory". So the secret is doing the work that
+a file mode would do elsewhere, which is why the node answers *first*: a
+client that spoke first would hand its text to whoever had taken the name.
+
+**What this does not fix.** Another local user can still take the socket name
+before the node does, and that denies service — the node fails to bind, or the
+app decides one is already running. Nothing leaks, because that listener
+cannot prove itself and the CLI refuses it, but the app does not start. The
+fix for that is a socket in a directory only the owner can enter, which
+changes the name-length budget in decision 35 and is not done.
+
+**Anyone who can read the config directory is the owner as far as this is
+concerned.** That is the intended boundary: it is the same directory holding
+the identity key, so a reader of one is a holder of the other.
+
 ## Platform matrix
 
 This table describes what is built, not what is planned. Where a row names
