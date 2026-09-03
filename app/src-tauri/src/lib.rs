@@ -994,9 +994,50 @@ async fn speak(state: State<'_, AppState>, text: String) -> Result<(), String> {
         return Err(rejection.to_string());
     }
     match state.node.speak(text, Priority::Normal, None).await {
+        // `speak` reports per device, as the CLI has always seen it. This
+        // matched only `Accepted` and `Finished`, so the node queued the
+        // message, spoke it, and the interface then said the send had failed
+        // — showing the debug formatting of a successful report as an error.
+        // Work done, failure announced, which is the same drift that showed
+        // `unexpected response: Left { … }` after the leave reply changed.
+        Response::Report { targets, .. } => spoken_or_why(&targets),
         Response::Accepted { .. } | Response::Finished { .. } => Ok(()),
         other => Err(describe(other)),
     }
+}
+
+/// Whether a report counts as the message being taken, and why if not.
+///
+/// The app speaks on this device only, so there is one target — but the
+/// answer is written over all of them, because "some device refused" is the
+/// question, not "the first one did".
+///
+/// A refusal is surfaced rather than swallowed. Muting is a decision worth
+/// reporting back: pressing Speak on a muted device and being told nothing
+/// looks like the button is broken.
+fn spoken_or_why(targets: &[voicecast_proto::TargetResult]) -> Result<(), String> {
+    use voicecast_proto::Status;
+    let heard = |s: &Status| matches!(s, Status::Spoken | Status::Queued | Status::Speaking);
+    if targets.iter().any(|t| heard(&t.status)) {
+        return Ok(());
+    }
+    let why = targets
+        .iter()
+        .map(|t| match (&t.status, t.detail.as_deref()) {
+            (Status::Muted, _) => "this device is muted".to_string(),
+            (Status::QuietHours, _) => "quiet hours are on".to_string(),
+            (Status::NoEngine, Some(d)) => d.to_string(),
+            (Status::NoEngine, None) => "no working speech engine".to_string(),
+            (s, Some(d)) => format!("{s:?}: {d}"),
+            (s, None) => format!("{s:?}"),
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(if why.is_empty() {
+        "nothing was spoken".into()
+    } else {
+        why
+    })
 }
 
 /// Turn an unexpected response into something worth showing a person.
@@ -1407,5 +1448,82 @@ mod tests {
         assert!(written.contains("$HOME/.local/bin"), "{written}");
 
         std::fs::remove_dir_all(&home).ok();
+    }
+}
+
+/// Reading a report, which is platform-independent and so tested everywhere.
+///
+/// Its own module because the one above is `#[cfg(all(test, target_os =
+/// "macos"))]` — tests dropped in there compile on every target and run on
+/// one, which is indistinguishable from passing.
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    /// The bug this closes: a successful report read as a failure.
+    ///
+    /// The node queued the message and spoke it, and the interface showed the
+    /// debug formatting of that very report as an error toast. Work done,
+    /// failure announced.
+    #[test]
+    fn a_queued_message_is_success() {
+        use voicecast_proto::{Status, TargetResult};
+        let report = [TargetResult {
+            device: "Phone".into(),
+            endpoint_id: "97514a80e9425dd3".into(),
+            status: Status::Queued,
+            took_ms: None,
+            detail: None,
+        }];
+        assert!(spoken_or_why(&report).is_ok());
+    }
+
+    /// A muted device says so rather than failing silently or lying.
+    #[test]
+    fn a_muted_device_says_why() {
+        use voicecast_proto::{Status, TargetResult};
+        let report = [TargetResult {
+            device: "Phone".into(),
+            endpoint_id: "x".into(),
+            status: Status::Muted,
+            took_ms: None,
+            detail: None,
+        }];
+        assert_eq!(spoken_or_why(&report).unwrap_err(), "this device is muted");
+    }
+
+    /// An engine failure carries the engine's own reason, not a stand-in.
+    ///
+    /// Decision 30: "Piper is not installed in any of …" sends someone to the
+    /// right place; "no speech engine" sends them to install what they have.
+    #[test]
+    fn an_engine_failure_keeps_its_reason() {
+        use voicecast_proto::{Status, TargetResult};
+        let report = [TargetResult {
+            device: "Laptop".into(),
+            endpoint_id: "x".into(),
+            status: Status::NoEngine,
+            took_ms: None,
+            detail: Some("Piper is not installed in any of: /app/share/voicecast".into()),
+        }];
+        assert!(
+            spoken_or_why(&report)
+                .unwrap_err()
+                .contains("/app/share/voicecast")
+        );
+    }
+
+    /// One device speaking is enough, even if another refused.
+    #[test]
+    fn one_device_speaking_is_not_a_failure() {
+        use voicecast_proto::{Status, TargetResult};
+        let row = |status| TargetResult {
+            device: "d".into(),
+            endpoint_id: "x".into(),
+            status,
+            took_ms: None,
+            detail: None,
+        };
+        assert!(spoken_or_why(&[row(Status::Muted), row(Status::Spoken)]).is_ok());
     }
 }
