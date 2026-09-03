@@ -183,7 +183,18 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 | macOS | Piper | tray app |
 | Android | system text-to-speech | foreground service + battery exemption |
 | Windows | Piper | tray app |
-| iOS | not yet wired | — |
+| iOS | Apple's own | **foreground only** — see below |
+
+**iOS only speaks while the app is on screen**, and that is the platform
+rather than an unfinished corner. Backgrounded, it stops answering somewhere
+between five and ten minutes — measured on the simulator, which suspends less
+aggressively than a real phone, so expect worse. Nothing available fixes it:
+the audio background mode keeps an app alive while it is *playing*, not while
+it is *waiting*, and everything that wakes a suspended iOS app needs a push
+server. There is no server here, which is the point of the project.
+
+So a phone in a pocket is exactly the case iOS cannot serve. Android can, and
+does.
 
 Piper streams raw audio to whatever player the system has — `paplay`,
 `pw-play`, `aplay`, or sox. macOS ships none that read raw audio on stdin, so
