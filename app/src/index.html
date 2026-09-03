@@ -442,6 +442,14 @@
                  focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
                  dark:border-neutral-700 dark:bg-neutral-900" />
         <p id="skill-hint" class="mt-1 text-xs text-neutral-500 dark:text-neutral-400"></p>
+        <!-- Hidden while the path already is the default: a reset that
+             resets nothing is a control that teaches the reader it does
+             nothing. -->
+        <button id="skill-default" hidden
+          class="mt-1.5 text-xs text-accent-600 underline underline-offset-2
+                 hover:text-accent-500 dark:text-accent-400">
+          Use the default location
+        </button>
       </div>
 
       <button id="skill-install"

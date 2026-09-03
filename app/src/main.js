@@ -737,6 +737,11 @@ async function refreshSkill() {
     : "Any path. Agents that keep skills elsewhere can be pointed at their own directory.";
   $("skill-install").textContent =
     skill.state === "absent" ? "Install the skill" : "Reinstall";
+  // Offered only when there is something to undo. Comparing against the
+  // field rather than the reported path so the button appears as soon as
+  // someone types a different one, not a poll later.
+  $("skill-default").hidden =
+    $("skill-path").value.trim() === skill.default_path;
 }
 
 /** One row in the spaces list. */
@@ -1580,6 +1585,20 @@ $("rename-form").onsubmit = async (e) => {
     await refresh();
   });
 };
+
+$("skill-default").onclick = () =>
+  withButton($("skill-default"), "…", async () => {
+    const previous = await call("reset_skill_path");
+    await refreshSkill();
+    // The old copy is deliberately left where it was — it is the user's file
+    // and this button did not offer to delete it. Saying where it is beats
+    // leaving a skill somewhere that will never be updated again.
+    say(
+      previous
+        ? `back to the default. The copy at ${previous} is still there and will not be kept in step.`
+        : "back to the default",
+    );
+  });
 
 $("skill-install").onclick = () =>
   withButton($("skill-install"), "…", async () => {
