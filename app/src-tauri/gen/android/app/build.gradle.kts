@@ -13,6 +13,24 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Signing, when there is a key to sign with.
+//
+// `keystore.properties` is gitignored and holds the path to a keystore and
+// its passwords — see `docs/signing-android.md`. Absent, everything below is
+// skipped and the release build comes out unsigned, which is the state today
+// and is not an error. Android will not install an unsigned APK, so this is
+// the difference between a build and something anyone can be handed.
+//
+// Deliberately a file rather than environment variables: the release workflow
+// writes one from its secrets, so there is a single path through this, and a
+// local build and a CI build sign the same way.
+val keystoreProperties = Properties().apply {
+    val propFile = file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     compileSdk = 36
     namespace = "com.voicecast.app"
@@ -23,6 +41,20 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        // Only when the file was there. `findByName` below then returns null
+        // and the release build is simply unsigned, rather than failing at
+        // configuration time on a machine that has no key and does not need
+        // one.
+        if (keystoreProperties.getProperty("storeFile") != null) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -37,6 +69,12 @@ android {
             }
         }
         getByName("release") {
+            // Null when no keystore was configured, which leaves the APK
+            // unsigned rather than falling back to the debug key. The debug
+            // key is public and shared by every developer on earth, so a
+            // release accidentally signed with it is worse than one that
+            // will not install.
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

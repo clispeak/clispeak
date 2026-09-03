@@ -205,12 +205,66 @@ jobs:
       # context does not see — that context holds only what a workflow, job
       # or step declares, so `${{ env.ANDROID_NDK_LATEST_HOME }}` expands to
       # nothing and the build fails looking for an NDK at the empty path.
+      # Signs only when all four secrets are present. With none of them the
+      # job still builds and says the APK is unsigned — which is today, and
+      # is not an error. See docs/signing-android.md.
+      #
+      # `gen/android/app/`, next to build.gradle.kts: `file()` in a Gradle
+      # script resolves against the module directory, so a copy one level up
+      # is read as absent and the build comes out unsigned with nothing said.
+      - name: Configure signing
+        id: signing
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE" ] || [ -z "$KEYSTORE_PASSWORD" ] \
+             || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "no Android signing secrets; the APK will be unsigned"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          dir=app/src-tauri/gen/android/app
+          printf '%s' "$KEYSTORE" | base64 -d > "$dir/release.jks"
+          {
+            echo "storeFile=$GITHUB_WORKSPACE/$dir/release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > "$dir/keystore.properties"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
       - name: Build the APK
         working-directory: app
         run: |
           export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           echo "using NDK at $NDK_HOME"
           npx @tauri-apps/cli android build --apk --target aarch64
+
+      # Read the signature back rather than trusting that the secrets took.
+      # A build configured to sign that silently did not is indistinguishable
+      # from a signed one without asking — the same reasoning as the macOS
+      # job's `codesign -d -r-` check.
+      - name: Check what signed it
+        run: |
+          apk=$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -1)
+          echo "artefact: $apk"
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          if [ "${{ steps.signing.outputs.signed }}" != "true" ]; then
+            echo "built unsigned, as configured — Android will not install this"
+            case "$apk" in
+              *unsigned*) exit 0 ;;
+              *) echo "expected an unsigned artefact and did not get one"; exit 1 ;;
+            esac
+          fi
+          "$signer" verify --print-certs "$apk"
+
+      - name: Remove the keystore
+        if: always()
+        run: rm -f app/src-tauri/gen/android/app/release.jks \
+                   app/src-tauri/gen/android/app/keystore.properties
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
