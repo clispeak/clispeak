@@ -3770,6 +3770,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-avf-audio"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13a380031deed8e99db00065c45937da434ca987c034e13b87e4441f9e4090be"
+dependencies = [
+ "bitflags 2.13.1",
+ "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-cloud-kit"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6414,6 +6425,7 @@ dependencies = [
  "anyhow",
  "directories",
  "iroh",
+ "rustls",
  "serde",
  "tauri",
  "tauri-build",
@@ -6485,7 +6497,11 @@ name = "voicecast-engine"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "dispatch2",
  "jni 0.21.1",
+ "objc2",
+ "objc2-avf-audio",
+ "objc2-foundation",
  "serde_json",
  "thiserror 2.0.20",
 ]

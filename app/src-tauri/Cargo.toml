@@ -27,6 +27,13 @@ voicecast-text = { version = "0.1.0", path = "../../crates/voicecast-text" }
 iroh = "1.1"
 directories = "6.0.0"
 
+# iOS builds reqwest without a default rustls crypto provider selected, so
+# iroh's first HTTPS client panics at startup with "No rustls crypto provider
+# is configured". Installing one explicitly is the documented fix; `ring` is
+# already in the tree, so this selects rather than adds.
+[target.'cfg(target_os = "ios")'.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 voicecast-keystore.workspace = true
 

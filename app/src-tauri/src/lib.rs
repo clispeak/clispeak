@@ -1322,11 +1322,19 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
     // process to spawn.
     #[cfg(target_os = "ios")]
     {
-        return Arc::new(voicecast_engine::SilentEngine::new(
-            "voicecast has no speech engine on iOS yet — this device can join \
-             a space, receive messages and keep their history, but cannot \
-             speak them",
-        ));
+        // `AVSpeechSynthesizer`, which is what iOS speech is — not a
+        // stand-in, so its tier is `Full`.
+        return match voicecast_engine::IosEngine::new() {
+            Ok(engine) => Arc::new(engine),
+            // Its own reason, not a stand-in's. The failure this is most
+            // likely to carry is the audio session refusing playback, which
+            // means the phone would have spoken silently — worth saying
+            // rather than replacing with "no engine".
+            Err(e) => {
+                eprintln!("the iOS speech engine did not start: {e}");
+                Arc::new(voicecast_engine::SilentEngine::new(e.reason()))
+            }
+        };
     }
 
     #[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
@@ -1444,12 +1452,34 @@ async fn start_node() -> anyhow::Result<Node> {
     Node::new(engine, identity, transport, name).await
 }
 
+/// iOS needs a rustls crypto provider chosen before anything builds an
+/// HTTPS client.
+///
+/// iroh reaches for one during startup and reqwest panics rather than
+/// erroring — "No rustls crypto provider is configured" — so the app died
+/// before its first frame. Every other target resolves a default through
+/// feature unification; iOS does not, and nothing said so until it ran.
+/// `ring` rather than `aws-lc-rs` because `ring` is already in the tree, so
+/// this selects a provider rather than adding one.
+///
+/// Ignoring the result is deliberate: the call fails only if a provider is
+/// already installed, which is the state being asked for.
+#[cfg(target_os = "ios")]
+fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// Start the app.
 ///
 /// # Panics
 /// If Tauri itself cannot start, since there is nothing to show without it.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before the builder, because the node starts inside `setup` and iroh
+    // builds an HTTPS client on its way up.
+    #[cfg(target_os = "ios")]
+    install_crypto_provider();
+
     tauri::Builder::default()
         .setup(|app| {
             // Where this device's state lives has to be settled first:

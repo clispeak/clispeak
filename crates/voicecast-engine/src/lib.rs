@@ -40,6 +40,13 @@ pub use espeak::EspeakEngine;
 // Unix does — so the same engine serves every desktop, which is what makes a
 // message sound the same wherever it lands. Kept as a gate rather than
 // dropped so this reads as a deliberate list of platforms, not an oversight.
+// The platform synthesiser, which is the only speech iOS has — every other
+// unix engine here spawns a process and iOS does not permit that (#126).
+#[cfg(target_os = "ios")]
+mod ios;
+#[cfg(target_os = "ios")]
+pub use ios::IosEngine;
+
 // Same reasoning as espeak above: iOS is unix and cannot spawn a process.
 #[cfg(any(all(unix, not(target_os = "ios")), windows))]
 mod piper;
