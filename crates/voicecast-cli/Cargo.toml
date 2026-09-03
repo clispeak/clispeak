@@ -12,7 +12,15 @@ name = "voicecast"
 path = "src/main.rs"
 
 [dependencies]
-blake3 = "1.8"
+# `no_neon` because blake3's NEON path does not link on iOS: the C object
+# `blake3_neon.o` leaves `_blake3_hash4_neon` undefined for arm64, and the
+# five-target matrix caught it — `cargo build` for aarch64-apple-ios failed
+# at link with everything green on Linux. blake3's build script compiles that
+# C on any little-endian aarch64 unless this is set, so it also applies to
+# Android and Apple silicon; the portable Rust fallback is correct and the
+# inputs here are fifty bytes. Features are additive, so this holds for every
+# blake3 in the tree.
+blake3 = { version = "1.8", features = ["no_neon"] }
 rand = "0.10.2"
 
 voicecast-proto.workspace = true
