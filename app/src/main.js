@@ -650,6 +650,11 @@ async function refreshSpaces() {
     invoke("list_devices").catch(() => []),
   ]);
   if (!spaces) return;
+  // Kept so an unqualified invite can still name the space it joins. The
+  // request stays unqualified — the node picks the default when it mints the
+  // ticket — but "Joins home" is what a person needs to read before handing
+  // the code to another device.
+  defaultSpace = spaces.find((s) => s.is_default)?.label ?? null;
   const several = spaces.length > 1;
   $("spaces").replaceChildren(
     ...spaces.map((space) => spaceCard(space, devices, several)),
@@ -949,12 +954,24 @@ $("speak-form").onsubmit = async (e) => {
   });
 };
 
+/** Undoes what opening the invite dialog bound, so it can be opened again. */
+let closeInvite = () => {};
+
+/** This device's default space, for naming an invite that did not name one. */
+let defaultSpace = null;
+
 /**
- * Show an invite for one space.
+ * Show an invite for one space, in a dialog.
  *
  * The space travels on the ticket, so what the button said when it was
  * pressed is what the joining device gets — even if the default changes
- * before the code is scanned.
+ * before the code is scanned. It is named at the top of the dialog for the
+ * same reason: an invite that joined the wrong space cannot be taken back
+ * once somebody has scanned it.
+ *
+ * The ticket is fetched before the dialog opens, so it never appears holding
+ * the previous space's code. A failure leaves it shut, with `call` having
+ * already said why.
  */
 async function showInvite(space) {
   const { url, qr, expires_in } = await call("make_invite", { space });
@@ -962,13 +979,46 @@ async function showInvite(space) {
   $("qr").innerHTML = qr;
   $("qr").hidden = !qr;
   $("ticket").textContent = url;
-  $("invite-for").textContent = space ? `Joins ${space}.` : "";
+  // The space is the fact this dialog exists to make unmissable, so it is
+  // said in the heading rather than left to be inferred from the code.
+  const joins = space ?? defaultSpace;
+  $("invite-for").replaceChildren(
+    document.createTextNode("Joins "),
+    Object.assign(document.createElement("span"), {
+      className: "font-semibold text-neutral-900 dark:text-neutral-100",
+      textContent: joins ?? "the default space",
+    }),
+  );
   $("expiry").textContent = `Expires in ${Math.max(1, Math.round(expires_in / 60))} min. Single use.`;
-  $("invite-out").hidden = false;
-  // The panel sits below the space cards, so a button pressed on a card can
-  // open it several hundred pixels out of view — which looks exactly like
-  // nothing happening.
-  $("invite-out").scrollIntoView({ behavior: "smooth", block: "center" });
+
+  const box = $("invite-modal");
+  box.hidden = false;
+  // Focus lands on the way out rather than on the code: there is nothing here
+  // to fill in, and a keyboard user's next move is to leave.
+  $("invite-done").focus();
+
+  const onKey = (e) => {
+    if (e.key === "Escape") closeInvite();
+  };
+  closeInvite = () => {
+    box.hidden = true;
+    // The code is spent once it is used, and leaving it in the DOM means the
+    // next open can flash the old one before the new one arrives.
+    $("qr").replaceChildren();
+    $("ticket").textContent = "";
+    $("invite-close").onclick = null;
+    $("invite-done").onclick = null;
+    box.onclick = null;
+    document.removeEventListener("keydown", onKey);
+    closeInvite = () => {};
+  };
+  $("invite-close").onclick = closeInvite;
+  $("invite-done").onclick = closeInvite;
+  // Only the backdrop itself, so a click inside the panel does not dismiss it.
+  box.onclick = (e) => {
+    if (e.target === box) closeInvite();
+  };
+  document.addEventListener("keydown", onKey);
   say("");
 }
 
