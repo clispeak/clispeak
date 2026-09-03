@@ -149,6 +149,17 @@ it while doing under two minutes of real work per job. A macOS minute bills at
 ten times a Linux one. Cutting the number of runs is the only lever that
 reaches that; making the jobs faster is not (#101).
 
+**Do not mark ready in the same breath as a push.** Marking ready about a
+second after a push produced no run at all — the push's own run had already
+evaluated the pull request as a draft and skipped the matrix, and the
+`ready_for_review` event never became a run. Toggling draft and back with
+half a minute between produced one immediately, so the trigger is fine and
+the race is real. It fails the way everything in this file fails: the pull
+request reads as ready, the checks read as passing, and four of the five
+never ran. **Before merging, read the check rollup and count five** — a
+`matrix.target: SKIPPED` in place of four named targets is what this looks
+like.
+
 `app/src/styles.css` is generated and **not** committed. Tauri's
 `beforeBuildCommand` rebuilds it, so `tauri build` and `tauri android build`
 are covered — but a plain `cargo build -p voicecast-app`, which is how the

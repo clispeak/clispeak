@@ -243,19 +243,20 @@ and CI.
 passes a **path**. So the file has to exist on disk before the build runs, and
 nothing places it for you.
 
-**On your Mac**, you can skip `APPLE_API_KEY_PATH` entirely. With
-`APPLE_API_KEY` and `APPLE_API_ISSUER` set and the path variable unset, the
-bundler looks for `AuthKey_<KEYID>.p8` in these directories, in order:
+**Set all three variables, on your Mac as well as in CI.** Keep the `.p8`
+wherever you like — `~/.appstoreconnect/private_keys/` is where Apple's own
+tools look, so it is a reasonable home — and point `APPLE_API_KEY_PATH` at it
+explicitly.
 
-```
-./private_keys
-~/private_keys
-~/.private_keys
-~/.appstoreconnect/private_keys
-```
-
-Put it in `~/.appstoreconnect/private_keys/` — the last one is also where
-Apple's own tools look — and set two variables instead of three.
+There *is* a fallback. With `APPLE_API_KEY` and `APPLE_API_ISSUER` set and the
+path variable unset, the bundler searches `./private_keys`,
+`~/private_keys`, `~/.private_keys` and `~/.appstoreconnect/private_keys` for
+`AuthKey_<KEYID>.p8`. Do not build the instruction on it. When the search
+misses, you land in step 3 of the next section: notarisation is skipped, a
+warning goes into the build log, and a signed but un-notarised app comes out.
+Naming the path makes a missing key loud instead of quiet, and it makes your
+Mac and CI the same shape rather than two stories that read as a
+contradiction later.
 
 **In CI there is no home directory to have put it in**, so the release job
 writes the file out of a secret and sets `APPLE_API_KEY_PATH` to where it
@@ -282,13 +283,37 @@ matters and the failure modes are quiet:
 Step 3 is why the release job checks afterwards instead of trusting the build.
 A warning in three hundred lines of build log is not a report.
 
-Step 5 is a real difference and I have not been able to test what a downloader
-sees, since I do not have a Mac. The `.app` carries its ticket, so dragging it
-out of the disk image gives Gatekeeper everything it needs offline. Whether
-opening the `.dmg` itself is clean is the open question. **Before announcing a
-release, download the `.dmg` on a Mac that has never seen this project and
-open it.** That is the only test that counts, and it is the same rule as
-installing the release APK rather than the debug one.
+### Step 5 is a gap, and it has a fix
+
+Say it plainly: **the disk image is assessed by Gatekeeper, and no ticket for
+it exists anywhere** — not stapled to it, and not in Apple's database, because
+Tauri never submits it.
+
+Measured on a Mac rather than reasoned about. A downloaded `.dmg` carries
+`com.apple.quarantine`, and the attribute *propagates* to the `.app` copied
+out of it. So both are assessed. The app is fine — it carries its own stapled
+ticket, which is exactly what lets it pass offline. The disk image has
+nothing.
+
+`stapler` will tell you, and it works on a `.dmg`:
+
+```bash
+xcrun stapler validate voicecast_0.1.0_aarch64.dmg
+# → "does not have a ticket stapled to it"
+```
+
+What that costs a downloader in practice is the only untested part left, and
+it is a much narrower question than "is opening the dmg clean".
+
+**It is fixable rather than merely regrettable.** `xcrun notarytool submit`
+accepts a `.dmg` and `stapler` staples one — that is the ordinary shape for a
+direct download. So the options are an extra submit-and-staple step after the
+bundle, or shipping the `.app` in a zip instead. Tracked as #108 rather than left as a
+paragraph here.
+
+Until then: **before announcing a release, download the `.dmg` on a Mac that
+has never seen this project and open it.** Same rule as installing the release
+APK rather than the debug one.
 
 ## 5. The secrets, in one place
 
@@ -337,6 +362,28 @@ spctl -a -vvv -t exec voicecast.app
   offline.
 - `source=Notarized Developer ID` — what Gatekeeper will conclude. `source=No
   matching rule` or a rejection means it would refuse.
+
+**`spctl` has a third answer and it is not a verdict.** Against the ad-hoc
+bundle today it says:
+
+```
+voicecast.app: code has no resources but signature indicates they must be present
+```
+
+That is neither `accepted` nor `rejected`. It means the signature could not be
+evaluated at all, so read it as a statement about the artefact rather than
+about Gatekeeper's opinion of it — the tool is not broken.
+
+And on the disk image, `-t exec` is the wrong assessment type. Ask the
+question a downloader's Finder asks:
+
+```bash
+spctl -a -vvv -t open --context context:primary-signature voicecast_0.1.0_aarch64.dmg
+xcrun stapler validate voicecast_0.1.0_aarch64.dmg
+```
+
+`-t exec` on a `.dmg` will still print something, and on a signed one that
+something would not mean what it looks like it means.
 
 The release job runs the first two of these itself and fails the build if
 credentials were supplied and the artefact came out without them.
