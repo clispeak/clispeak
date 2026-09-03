@@ -1827,15 +1827,17 @@ async fn sync_roster(
         PeerMessage::JoinRefused { .. } => {
             let peer = conn.remote_id().to_string();
             let mut spaces = shared.spaces.lock().await;
-            // Only the space that peer was in: being dropped from one space
-            // says nothing about any other.
-            if let Some(id) = spaces.space_of(&peer)
-                && let Some(roster) = spaces.get_mut(&id)
+            // The space this sync was about, not whichever one this peer
+            // happens to share with us first. Being dropped from one space
+            // says nothing about any other, and `space_of` answers with the
+            // default before anything else — so a peer leaving a second
+            // space was removed from the one it was still a member of (#51).
+            if let Some(roster) = spaces.get_mut(space)
                 && roster.allows(&conn.remote_id())
             {
                 roster.revoke(&peer);
                 spaces.save(&shared.spaces_path)?;
-                eprintln!("{peer} no longer shares a space with us; removed");
+                eprintln!("{peer} no longer shares that space with us; removed");
             }
         }
         other => anyhow::bail!("unexpected reply to roster sync: {other:?}"),
@@ -2017,7 +2019,7 @@ async fn do_join(
         PeerMessage::JoinAccepted {
             member,
             members,
-            space: _,
+            space: agreed,
             label: theirs,
         } => {
             let mut spaces = shared.spaces.lock().await;
@@ -2027,7 +2029,12 @@ async fn do_join(
             // one space and became wrong the moment it could hold several: a
             // device in `home` that joined `work` lost `home`.
             let all = members.into_iter().chain(std::iter::once(member));
-            let joined = Roster::from_parts(all.collect(), Vec::new());
+            let mut joined = Roster::from_parts(all.collect(), Vec::new());
+            // The inviter has already told us what this space is called, and
+            // its answer beats the one derived here — see `adopt_id`.
+            if let Some(agreed) = agreed.as_deref() {
+                joined.adopt_id(agreed);
+            }
             let count = joined.members().count();
 
             // A space holding only this device is one nobody ever joined —
@@ -2150,6 +2157,7 @@ async fn revoke(shared: &Arc<Shared>, name: &str, space: Option<&str>) -> Respon
 /// Telling them is best-effort; the local removal is not. Leaving must work
 /// with no network at all.
 async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&str>) -> Response {
+    cancel_open_invite(shared).await;
     let space = match space_named(shared, space).await {
         Ok(id) => id,
         Err(message) => return Response::Error { message },
@@ -2216,6 +2224,24 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&
 
 /// Replace this space with a fresh one founded here.
 ///
+/// Cancel any invite still open on this device.
+///
+/// The three operations that call this change what an outstanding ticket
+/// would admit somebody *to*, and a ticket is a bearer token with a
+/// five-minute life: it names a space by id and carries a token this device
+/// checks against its own copy. Rotating while one was on screen left that
+/// copy in place, so the ticket stayed valid, and the space it named was
+/// gone — which is how a scan after the panic button was pressed landed in
+/// the space the panic button had just built (#50).
+///
+/// Locks `pending` and nothing else. `accept_join` takes `pending` before
+/// `spaces`, so every caller here must cancel *before* taking the spaces
+/// lock or the two orders meet in the middle.
+async fn cancel_open_invite(shared: &Arc<Shared>) {
+    shared.pending.lock().await.take();
+    Ticket::forget();
+}
+
 /// The panic button. Revocation is eventually consistent, so a device that
 /// has been offline since the revoke still honours the revoked member until
 /// it syncs — fine for a laptop that was sold, useless for a phone that was
@@ -2231,6 +2257,10 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&
 /// Everyone has to be re-invited, which is the cost of locking one device out
 /// immediately. It is only bearable because joining is cheap.
 async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
+    // Before the spaces lock, and before the space is even resolved: a
+    // ticket that outlives a rotation is the failure this guards, and
+    // cancelling one that turns out not to have needed it costs a re-show.
+    cancel_open_invite(shared).await;
     let space = match space_named(shared, space).await {
         Ok(id) => id,
         Err(message) => return Response::Error { message },
@@ -2383,6 +2413,7 @@ async fn new_space(shared: &Arc<Shared>, label: &str) -> Response {
 /// Announced, like `leave`: the point is to be forgotten by the devices left
 /// behind, and telling them is what makes that immediate rather than eventual.
 async fn leave_space(shared: &Arc<Shared>, label: &str) -> Response {
+    cancel_open_invite(shared).await;
     let mut spaces = shared.spaces.lock().await;
     let Some(id) = spaces.by_label(label) else {
         return Response::Error {
@@ -2696,12 +2727,16 @@ async fn space_for(
     remote: &iroh::EndpointId,
 ) -> Option<String> {
     let spaces = shared.spaces.lock().await;
-    if let Some(id) = named
-        && spaces.get(&id).is_some()
-    {
-        return Some(id);
+    match named {
+        // A peer that names a space is answered about that space or not at
+        // all. The fallback below is for peers too old to name one, and
+        // letting it fire for a space we no longer hold merged one space's
+        // membership into another: a device that left `work` had every work
+        // device merged into its `home` roster on the next presence check,
+        // after which they could speak to it (#51).
+        Some(id) => spaces.get(&id).is_some().then_some(id),
+        None => spaces.space_of(&remote.to_string()),
     }
-    spaces.space_of(&remote.to_string())
 }
 
 /// Decide whether to admit a joiner, and sign its record if so.
@@ -2747,9 +2782,21 @@ async fn accept_join(
     // Those differ the moment someone changes the default between showing an
     // invite and it being scanned, and the ticket is what the person pressing
     // the button was answering.
-    let space_id = wanted
-        .filter(|id| spaces.get(id).is_some())
-        .unwrap_or_else(|| spaces.default_id().to_string());
+    let space_id = match wanted {
+        Some(id) if spaces.get(&id).is_some() => id,
+        // Falling back to the default here was the whole of #50: a ticket
+        // shown before `rotate` named a space that no longer existed, so
+        // whoever scanned it afterwards was admitted to the space rotating
+        // had just created — the one the rotation existed to protect.
+        Some(_) => {
+            return PeerMessage::JoinRefused {
+                reason: "the space that invite was for is no longer on this device. \
+                         Show a new invite there"
+                    .into(),
+            };
+        }
+        None => spaces.default_id().to_string(),
+    };
     let Some(roster) = spaces.get_mut(&space_id) else {
         return PeerMessage::JoinRefused {
             reason: "that space is no longer on this device".into(),

@@ -141,15 +141,24 @@ impl Roster {
         self.derived_id()
     }
 
-    /// Adopt an id agreed elsewhere, if this roster has none yet.
+    /// Adopt an id agreed elsewhere.
+    ///
+    /// A derived id is a fallback: it is what a roster can work out from its
+    /// own members when nobody has told it otherwise. When the other end has
+    /// said what the space is called, that answer is better, because it is
+    /// the one every existing member is already using. Deriving instead is
+    /// how a joiner and an inviter ended up holding the same space under two
+    /// ids once the founder had left — `founder:t` on one side, the lowest
+    /// remaining member on the other — after which every message between
+    /// them named a space the other did not hold (#51).
     ///
     /// Returns whether anything changed, so the caller knows to save.
     pub fn adopt_id(&mut self, id: &str) -> bool {
-        if self.id.is_empty() && !id.is_empty() {
-            self.id = id.to_string();
-            return true;
+        if id.is_empty() || self.id == id {
+            return false;
         }
-        false
+        self.id = id.to_string();
+        true
     }
 
     /// The id implied by the founder's own entry.

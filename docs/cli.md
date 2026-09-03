@@ -356,6 +356,11 @@ $ voicecast space rotate
   [ QR ]
 ```
 
+Rotating also cancels any invite still open on this device. A ticket names a
+space by id and lives for five minutes, so one shown just before the panic
+button was pressed would otherwise still be scannable — and the space it named
+would be gone, which used to admit the scanner to the replacement instead.
+
 The excluded device is locked out *immediately* rather than eventually,
 because it was never in the new space. This is only practical because joining
 is cheap — three survivors is two scans.

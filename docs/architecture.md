@@ -163,7 +163,8 @@ blocks and phones have cameras, so this direction needs zero typing.
 **The one-time token is not optional.** Without it, a QR photographed over your
 shoulder — or sitting in terminal scrollback, or in a screen recording — is
 permanent access to your speakers. It expires in five minutes and is consumed
-on first use.
+on first use — and `rotate`, `leave` and `space leave` cancel one that is
+still open, since all three change what it would admit somebody to.
 
 **The safety code** is `hash(sorted(key_a, key_b))` truncated to 8 digits and
 shown on both screens. Mostly redundant when a QR was scanned (the visual

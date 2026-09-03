@@ -478,3 +478,42 @@ fn an_impossible_rename_stamp_does_not_pin_a_name() {
     // frozen the label.
     assert!(on_alice.rename(&bob.public().to_string(), "desk"));
 }
+
+#[test]
+fn an_id_agreed_with_the_inviter_beats_the_one_derived_here() {
+    // #51. A roster derives its id from the founder's own entry, which works
+    // until the founder leaves: the two sides then derive from different
+    // members and hold the same space under two ids, after which every
+    // message names a space the other does not have. The inviter's answer is
+    // the one every existing member already uses, so it wins.
+    let alice = device();
+    let bob = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob.public().to_string(), "bob");
+    let agreed = on_alice.space_id();
+
+    // What the joiner builds once the founder has left: with no self-signed
+    // entry left to derive from, it falls back to the lowest remaining
+    // member, which is not what anybody else calls this space.
+    let without_founder: Vec<_> = on_alice
+        .members()
+        .filter(|m| m.endpoint_id != alice.public().to_string())
+        .cloned()
+        .collect();
+    let mut joined = Roster::from_parts(without_founder, Vec::new());
+    assert_ne!(
+        joined.space_id(),
+        agreed,
+        "this is the divergence the fix is for"
+    );
+    assert!(
+        joined.adopt_id(&agreed),
+        "an id that differs from the derived one must be adopted"
+    );
+    assert_eq!(joined.space_id(), agreed, "both sides now name one space");
+
+    // Idempotent, so a second sync does not report a change and force a save.
+    assert!(!joined.adopt_id(&agreed));
+    assert!(!joined.adopt_id(""), "nothing to adopt is not a change");
+}
