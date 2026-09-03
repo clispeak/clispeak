@@ -137,3 +137,206 @@ scripts and a Gradle plugin, any of which can read the environment. That is
 the surface #70 was about, and a signing key is a worse thing to lose there
 than a token, because a token can be revoked without anyone having installed
 something.
+
+---
+
+# The paid half: Developer ID and notarisation
+
+Everything above ends the rebuild prompt on this Mac. None of it helps anyone
+who downloads the app. This half does, and it costs money and about a day of
+waiting.
+
+Two artefacts are needed and they are not the same thing. **Signing** with a
+Developer ID certificate says who built the app. **Notarisation** is Apple
+scanning that signed app and issuing a ticket saying they have seen it.
+Gatekeeper wants both. A Developer ID signature without notarisation is still
+refused, so there is no half-way state worth stopping at.
+
+## 1. Enrol in the Apple Developer Program
+
+<https://developer.apple.com/programs/> — 99 USD a year, renewed annually or
+the certificates stop being trusted for new downloads.
+
+Choose **Individual** unless there is a reason not to. An Organization
+enrolment needs a D-U-N-S number for the legal entity and takes days to weeks
+longer; it exists so the certificate carries a company name rather than a
+person's. That is a licensing-and-identity decision, not a technical one, and
+it interacts with the still-open question of what this project is (#24). An
+Individual enrolment can be moved to an Organization later.
+
+Enrolment is not instant. Budget for it.
+
+## 2. Create a Developer ID Application certificate
+
+**Developer ID Application** is the one. Not "Apple Development", not "Apple
+Distribution", not "Mac App Distribution" — those are for Xcode builds and for
+the App Store, and Gatekeeper will not accept them for a direct download.
+There is also a **Developer ID Installer** certificate, which signs `.pkg`
+installers; we ship a `.dmg` and a `.app`, so it is not needed.
+
+Easiest path, on the Mac that will hold the key:
+
+Xcode → **Settings** → **Accounts** → select the Apple ID → **Manage
+Certificates…** → **+** → **Developer ID Application**.
+
+Without Xcode, generate a certificate signing request in Keychain Access
+(**Keychain Access** → menu → **Certificate Assistant** → **Request a
+Certificate From a Certificate Authority**, saved to disk) and upload it at
+<https://developer.apple.com/account/resources/certificates>.
+
+**Apple limits a team to five Developer ID Application certificates, and
+revoking one invalidates every app signed with it that has not been
+notarised.** Notarised builds survive revocation, because the ticket vouches
+for them independently. Make one, back up the private key, and do not make a
+second to "test something".
+
+Back it up the same way as the Android keystore: export the certificate *and
+its private key* as a `.p12` from Keychain Access, and keep it somewhere that
+is not this laptop. Losing it is not as final as losing an Android signing key
+— you can make another, four times — but it is not free either.
+
+Confirm what you have:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+The line you want reads `Developer ID Application: Your Name (TEAMID)`. That
+whole string, quotes excluded, is `APPLE_SIGNING_IDENTITY`.
+
+## 3. Get notarisation credentials
+
+There are two ways to authenticate, and `tauri build` accepts either. **Use
+the API key.** Both were read out of `tauri-bundler` 2.9.4 rather than out of
+documentation.
+
+| | Variables | What it is |
+|---|---|---|
+| **API key** *(use this)* | `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH` | a scoped, revocable key belonging to the team |
+| App-specific password | `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | a password attached to your personal Apple ID |
+
+The API key wins for one reason: it can be revoked on its own. An
+app-specific password is a credential on the Apple ID that owns the
+membership, and the blast radius of losing one is the account rather than the
+key. `APPLE_TEAM_ID` is **required** on the password route — the bundler
+raises a hard error without it, while every other missing-credential case only
+warns.
+
+To create the key: App Store Connect → **Users and Access** → **Integrations**
+→ **App Store Connect API** → generate a key. The *Developer* role is enough
+to notarise.
+
+That page gives you three things, and one of them exactly once:
+
+- **Key ID** — a short string. This is `APPLE_API_KEY`.
+- **Issuer ID** — a UUID, shown once per team at the top of the page. This is
+  `APPLE_API_ISSUER`.
+- **`AuthKey_<KEYID>.p8`** — **downloadable once.** Lose it and you revoke the
+  key and make another. Back it up when you download it, not later.
+
+### Where the `.p8` has to be
+
+This is the part that is easy to get wrong, and it differs between your Mac
+and CI.
+
+`tauri-bundler` never hands the key's *contents* to `notarytool`; it only ever
+passes a **path**. So the file has to exist on disk before the build runs, and
+nothing places it for you.
+
+**On your Mac**, you can skip `APPLE_API_KEY_PATH` entirely. With
+`APPLE_API_KEY` and `APPLE_API_ISSUER` set and the path variable unset, the
+bundler looks for `AuthKey_<KEYID>.p8` in these directories, in order:
+
+```
+./private_keys
+~/private_keys
+~/.private_keys
+~/.appstoreconnect/private_keys
+```
+
+Put it in `~/.appstoreconnect/private_keys/` — the last one is also where
+Apple's own tools look — and set two variables instead of three.
+
+**In CI there is no home directory to have put it in**, so the release job
+writes the file out of a secret and sets `APPLE_API_KEY_PATH` to where it
+wrote it, exactly as the Android job does with the keystore. It is removed
+again on every path out of the job.
+
+## 4. What `tauri build` actually does with all this
+
+Read out of `tauri-bundler` 2.9.4 rather than assumed, because the order
+matters and the failure modes are quiet:
+
+1. If `APPLE_SIGNING_IDENTITY` is absent, **nothing** below happens — no
+   signing and therefore no notarisation.
+2. The app is signed inside out: sidecars and frameworks first, the bundle
+   last. Hardened runtime is on by default, which notarisation requires.
+3. Notarisation credentials are looked up. **If they are missing, the build
+   logs a warning and carries on**, producing a signed but un-notarised app.
+   The one exception is an Apple ID and password with no team ID, which is a
+   hard error.
+4. The `.app` is submitted, and on success the ticket is **stapled** to it.
+5. The `.dmg` is built around the stapled app and signed — but the `.dmg`
+   itself is not submitted and not stapled.
+
+Step 3 is why the release job checks afterwards instead of trusting the build.
+A warning in three hundred lines of build log is not a report.
+
+Step 5 is a real difference and I have not been able to test what a downloader
+sees, since I do not have a Mac. The `.app` carries its ticket, so dragging it
+out of the disk image gives Gatekeeper everything it needs offline. Whether
+opening the `.dmg` itself is clean is the open question. **Before announcing a
+release, download the `.dmg` on a Mac that has never seen this project and
+open it.** That is the only test that counts, and it is the same rule as
+installing the release APK rather than the debug one.
+
+## 5. The secrets, in one place
+
+`release.yml` reads these. With none of them set the job builds an unsigned
+app and says so, which is the state today and is not an error.
+
+| Secret | Holds |
+|---|---|
+| `APPLE_CERTIFICATE` | the Developer ID `.p12`, base64-encoded |
+| `APPLE_CERTIFICATE_PASSWORD` | the password set when exporting it |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_API_KEY` | the Key ID |
+| `APPLE_API_ISSUER` | the Issuer UUID |
+| `APPLE_API_KEY_P8` | the `AuthKey_<KEYID>.p8`, base64-encoded |
+
+The last is named `_P8` rather than `_PATH` deliberately: it holds the file's
+*contents*, and the job turns it into a path. A secret called
+`APPLE_API_KEY_PATH` holding a path would be a path to nothing.
+
+```bash
+base64 -i voicecast.p12 | pbcopy              # APPLE_CERTIFICATE
+base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy      # APPLE_API_KEY_P8
+```
+
+**The macOS signing key does go into CI now, and decision 57 said it should
+not.** That decision was about a *self-signed* certificate, which would have
+put a private key in a job that runs several hundred build scripts in exchange
+for changing nothing a downloader sees. A Developer ID certificate changes
+everything a downloader sees, so the trade is different — the same reasoning
+as decision 60 reached for Android, and the same one-job containment applies:
+written, used, removed.
+
+## 6. Checking it worked
+
+On the artefact, not on the build log.
+
+```bash
+codesign -dv --verbose=4 voicecast.app 2>&1 | grep -E 'Authority|TeamIdentifier'
+xcrun stapler validate voicecast.app
+spctl -a -vvv -t exec voicecast.app
+```
+
+- `Authority=Developer ID Application: …` — signed with the right kind of
+  certificate. `Signature=adhoc` means the identity never reached `codesign`.
+- `The validate action worked!` — the ticket is attached, so this works
+  offline.
+- `source=Notarized Developer ID` — what Gatekeeper will conclude. `source=No
+  matching rule` or a rejection means it would refuse.
+
+The release job runs the first two of these itself and fails the build if
+credentials were supplied and the artefact came out without them.
