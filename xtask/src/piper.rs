@@ -388,22 +388,51 @@ fn signing_identity() -> String {
 /// all, so that path keeps `--timestamp=none`: an ad-hoc bundle is not going
 /// to be notarised, and failing the local build over it would be a gate
 /// against something nobody was attempting.
+///
+/// **The hardened runtime is conditional too, and that one is not a nicety.**
+/// It enables library validation, which requires a loaded library to carry
+/// the same team identifier as the process loading it. `piper` is spawned as
+/// its own process and loads three dylibs from beside itself through the
+/// `LC_RPATH` written above. Under a Developer ID they share a team and it
+/// works — measured. Under an ad-hoc signature *neither has a team at all*,
+/// and macOS does not treat that as a match:
+///
+/// ```text
+/// Library not loaded: @rpath/libespeak-ng.1.dylib
+/// Reason: code signature not valid for use in process:
+///         mapping process and mapped file (non-platform) have different Team IDs
+/// ```
+///
+/// So applying it unconditionally would have made the app mute for every
+/// build without a certificate — every other developer's local build, and the
+/// artefact CI produces today, since `release.yml` builds unsigned while no
+/// secrets are set. A strictly wider blast radius than the notarisation
+/// rejection it fixes.
+///
+/// The cost of the condition is real and worth naming: a local build no
+/// longer exercises the loader restrictions the shipped one has, so a
+/// hardened-runtime problem can now only be found on a signed build. That is
+/// the trade, and it is the better half of it — a signed build is testable
+/// here, and a mute app on every unsigned build is not a thing to trade for
+/// coverage.
 fn sign(path: &Path) -> Result<()> {
     let identity = signing_identity();
-    let timestamp = if identity == "-" {
-        "--timestamp=none"
+    let adhoc = identity == "-";
+    // Both are conditional on a real certificate, for different reasons, and
+    // the second one is the reason this function has a long comment.
+    let mut args = vec!["--force"];
+    if adhoc {
+        // An ad-hoc signature cannot be timestamped.
+        args.push("--timestamp=none");
     } else {
-        "--timestamp"
-    };
+        args.push("--timestamp");
+        args.push("--options");
+        args.push("runtime");
+    }
+    args.push("--sign");
+    args.push(&identity);
     let status = Command::new("codesign")
-        .args([
-            "--force",
-            timestamp,
-            "--options",
-            "runtime",
-            "--sign",
-            &identity,
-        ])
+        .args(&args)
         .arg(path)
         .status()
         .context("running codesign")?;
