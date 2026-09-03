@@ -243,7 +243,11 @@ impl Speaker {
     }
 
     /// Abandon the current message and carry on with the queue.
-    pub fn skip(&self) {
+    ///
+    /// Returns whether there was anything to abandon. `skip` on an idle
+    /// device used to report `cancelled` like any other, which told a caller
+    /// it had stopped something that was never playing (#116).
+    pub fn skip(&self) -> bool {
         // While paused there is nothing in flight for a cut to interrupt:
         // the message is held in `resume` and the thread is asleep. The cut
         // would sit unread until the next message picked one up and threw it
@@ -263,9 +267,11 @@ impl Speaker {
             // this id, the same as every other way a message ends.
             (self.on_finish)(&job.msg_id, Ended::plain(Status::Cancelled));
             job.finish(Ended::plain(Status::Cancelled));
-            return;
+            return true;
         }
+        let speaking = self.inner.0.lock().expect("queue lock").speaking.is_some();
         self.cut(Cut::Skip);
+        speaking
     }
 
     /// Drop one message, wherever it is.
@@ -307,8 +313,13 @@ impl Speaker {
     }
 
     /// Abandon everything, queue included.
-    pub fn clear(&self) {
+    ///
+    /// Returns how many messages it ended, so a caller can tell "cancelled
+    /// three" from "there was nothing to cancel" — which used to be reported
+    /// identically, as `cancelled`, on an empty queue (#116).
+    pub fn clear(&self) -> usize {
         let (lock, cond) = &*self.inner;
+        let was_speaking;
         let abandoned: Vec<Job> = {
             let mut inner = lock.lock().expect("queue lock");
             inner.cut = Some(Cut::Clear);
@@ -320,12 +331,17 @@ impl Speaker {
             // mean to be, so it must be a way out rather than a deeper way
             // in (#109).
             inner.paused = false;
+            was_speaking = inner.speaking.is_some();
             let mut all: Vec<Job> = inner.urgent.drain(..).collect();
             all.extend(inner.resume.take());
             all.extend(inner.normal.drain(..));
             cond.notify_all();
             all
         };
+        // Counted before they are consumed. `speaking` is included because a
+        // message mid-flight is ended by this too, and a caller who stopped
+        // one thing should not be told nothing happened.
+        let ended = abandoned.len() + usize::from(was_speaking);
         // Told individually rather than left to time out: each of these has a
         // caller that asked to be informed, and silence would read as a hang.
         for job in abandoned {
@@ -333,16 +349,19 @@ impl Speaker {
             job.finish(Ended::plain(Status::Cancelled));
         }
         self.engine.stop();
+        ended
     }
 
     /// Hold speech without discarding it.
     ///
     /// The message being spoken is put back whole at its current chunk, so
     /// resuming picks up where the sound stopped rather than skipping ahead.
-    pub fn pause(&self) {
+    pub fn pause(&self) -> bool {
         let (lock, cond) = &*self.inner;
+        let holding;
         {
             let mut inner = lock.lock().expect("queue lock");
+            holding = inner.speaking.is_some();
             inner.paused = true;
             if inner.speaking.is_some() {
                 inner.cut = Some(Cut::Resume);
@@ -350,14 +369,22 @@ impl Speaker {
             cond.notify_all();
         }
         self.engine.stop();
+        holding
     }
 
     /// Start speaking again after a pause.
-    pub fn unpause(&self) {
+    ///
+    /// Returns whether there was anything held. `resume` on an idle device
+    /// used to report `speaking`, which is a claim about a device that is
+    /// making no sound (#116).
+    pub fn unpause(&self) -> bool {
         let (lock, cond) = &*self.inner;
         let mut inner = lock.lock().expect("queue lock");
         inner.paused = false;
+        let anything =
+            inner.resume.is_some() || !inner.normal.is_empty() || !inner.urgent.is_empty();
         cond.notify_all();
+        anything
     }
 
     /// Stop the thread, for a clean shutdown.
@@ -1066,6 +1093,39 @@ mod tests {
             snap.speaking.as_deref(),
             Some("m1"),
             "a held message is still what this device is playing"
+        );
+        speaker.shutdown();
+    }
+
+    #[tokio::test]
+    async fn the_controls_say_whether_they_did_anything() {
+        let engine = FakeEngine::new();
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+
+        // An idle device. Every one of these used to report success at
+        // stopping, holding or resuming something that was never there, which
+        // an agent reads as work it caused (#116).
+        assert!(!speaker.skip(), "nothing to skip on an idle queue");
+        assert_eq!(speaker.clear(), 0, "nothing to clear on an idle queue");
+        assert!(!speaker.pause(), "nothing was playing to hold");
+        assert!(!speaker.unpause(), "nothing was waiting to resume");
+
+        // And with something in flight, the same calls say so.
+        speaker.submit(job("m1", &["one", "two"]).0, false);
+        settle().await;
+        assert!(speaker.pause(), "a message was playing when it was held");
+        settle().await;
+        assert!(speaker.unpause(), "the held message was there to resume");
+        settle().await;
+        assert!(speaker.skip(), "a message was playing when it was skipped");
+        settle().await;
+
+        speaker.submit(job("m2", &["a"]).0, false);
+        speaker.submit(job("m3", &["b"]).0, false);
+        settle().await;
+        assert!(
+            speaker.clear() >= 2,
+            "clear counts what it ended, so `stop` can say how much"
         );
         speaker.shutdown();
     }

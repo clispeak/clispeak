@@ -1489,13 +1489,16 @@ async fn control(
         let control = control.clone();
         set.spawn(async move {
             let result = match target {
-                Target::Here { shadowed } => TargetResult {
-                    device: my_name(&shared),
-                    endpoint_id: shared.identity.id().to_string(),
-                    status: apply_control(&shared, &control),
-                    took_ms: None,
-                    detail: also_answers_to(&shadowed),
-                },
+                Target::Here { shadowed } => {
+                    let (status, note) = apply_control(&shared, &control);
+                    TargetResult {
+                        device: my_name(&shared),
+                        endpoint_id: shared.identity.id().to_string(),
+                        status,
+                        took_ms: None,
+                        detail: both(also_answers_to(&shadowed), note),
+                    }
+                }
                 Target::Peer { name, id, space } => {
                     match send_control(&transport, &id, &space, &control).await {
                         Ok((status, detail)) => TargetResult {
@@ -1533,33 +1536,75 @@ async fn control(
 }
 
 /// Do it here.
-fn apply_control(shared: &Arc<Shared>, control: &Control) -> Status {
+/// Apply a control here, and say what it actually did.
+///
+/// Every arm but the first used to return a fixed status describing the
+/// *intent*: `stop` and `skip` said `cancelled` with nothing to cancel,
+/// `pause` said `queued` with nothing queued, and `resume` said `speaking` on
+/// a device making no sound. An agent reading that would record work that
+/// never happened (#116).
+///
+/// The reasoning was already here, in the one arm that had it — `stop --id`
+/// distinguishes `Cancelled` from `Dropped` "rather than reporting a
+/// cancellation that never was". This is that sentence applied to the other
+/// four.
+///
+/// `pause` and `resume` have no honest word in a vocabulary written for
+/// messages, so they keep their nearest status and carry the truth in the
+/// detail, which the CLI already prints in parentheses. Adding a `Status`
+/// variant would be clearer and would break the wire for any older peer, so
+/// it is Patrick's call and not made here.
+fn apply_control(shared: &Arc<Shared>, control: &Control) -> (Status, Option<String>) {
     match control {
         Control::Stop { msg_id: Some(id) } => {
             // Distinguished so `stop --id` on a message that already finished
             // says so, rather than reporting a cancellation that never was.
             if shared.speaker.stop_message(id) {
-                Status::Cancelled
+                (Status::Cancelled, None)
             } else {
-                Status::Dropped
+                (Status::Dropped, Some("no such message here".into()))
             }
         }
-        Control::Stop { msg_id: None } => {
-            shared.speaker.clear();
-            Status::Cancelled
-        }
+        Control::Stop { msg_id: None } => match shared.speaker.clear() {
+            0 => (
+                Status::Dropped,
+                Some("nothing was playing or waiting".into()),
+            ),
+            1 => (Status::Cancelled, None),
+            n => (Status::Cancelled, Some(format!("{n} messages"))),
+        },
         Control::Skip => {
-            shared.speaker.skip();
-            Status::Cancelled
+            if shared.speaker.skip() {
+                (Status::Cancelled, None)
+            } else {
+                (Status::Dropped, Some("nothing was being spoken".into()))
+            }
         }
         Control::Pause => {
-            shared.speaker.pause();
-            Status::Queued
+            if shared.speaker.pause() {
+                (Status::Queued, Some("held mid-message".into()))
+            } else {
+                (Status::Queued, Some("held; nothing was playing".into()))
+            }
         }
         Control::Resume => {
-            shared.speaker.unpause();
-            Status::Speaking
+            if shared.speaker.unpause() {
+                (Status::Speaking, None)
+            } else {
+                (
+                    Status::Speaking,
+                    Some("resumed; nothing was waiting".into()),
+                )
+            }
         }
+    }
+}
+
+/// Both notes, when both apply, so neither is silently dropped.
+fn both(a: Option<String>, b: Option<String>) -> Option<String> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+        (a, b) => a.or(b),
     }
 }
 
@@ -2844,19 +2889,12 @@ async fn handle_peer<C: crate::transport::PeerConnection>(
                         .is_some_and(|r| r.allows(&remote)),
                     None => false,
                 };
-                let status = if allowed {
+                let (status, detail) = if allowed {
                     apply_control(shared, &control)
                 } else {
-                    Status::Rejected
+                    (Status::Rejected, None)
                 };
-                write_msg(
-                    &mut send,
-                    &PeerMessage::Report {
-                        status,
-                        detail: None,
-                    },
-                )
-                .await?;
+                write_msg(&mut send, &PeerMessage::Report { status, detail }).await?;
             }
             PeerMessage::Hello { .. } => {}
             other => anyhow::bail!("unexpected message: {other:?}"),
