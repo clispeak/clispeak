@@ -1,8 +1,13 @@
 # Releasing
 
-**Nothing here is built yet.** This is the plan, written down so the decisions
-in it are visible before anyone implements them. Issues #22 to #25 track the
-work.
+**Most of this is built.** `.github/workflows/release.yml` packages four
+platforms on a `v*` tag and leaves the result as a draft. What is left is not
+engineering: licensing (#24), how a private repository serves public downloads
+(#23), a download page (#25), and the two signing credentials (#29, #31).
+
+This file was written before any of it existed and said so for months after it
+did, which is how an agent came to start building the release chain a second
+time. It now describes what runs.
 
 ## What we are aiming at
 
@@ -37,9 +42,10 @@ has a pull request open already.
 
 ## Builds run on version tags, not on every push
 
-CI today runs six jobs on every push to `main` and every pull request:
-compile checks for the five targets plus a Linux gate job. That is the
-portability rule doing its job and it should stay.
+CI runs five jobs on every push to `main` and every pull request: compile
+checks for the five targets, one of which also runs fmt, clippy, the
+portability gate and the tests. That is the portability rule doing its job and
+it should stay.
 
 **Packaging is different and should not be on that trigger.** Building a
 Flatpak, a signed `.app`, an APK and a Windows installer is minutes of macOS
@@ -49,7 +55,12 @@ compiles. So:
 | Trigger | Runs |
 |---|---|
 | push to `main`, pull request | compile for five targets, fmt, clippy, portability, tests |
-| tag `v*` | the above, then package every platform and attach the artefacts |
+| tag `v*` | package every platform, checksum the artefacts, attach them to a draft |
+
+**A tag does not re-run the compile checks.** `ci.yml` triggers on pushes and
+pull requests, not on tags, so a tag packages whatever `main` already proved.
+That is deliberate and worth knowing: it means a tag pushed to a commit CI
+never saw is packaged without ever being checked.
 
 **What it actually costs.** This repository is private, so Actions minutes come
 out of an allowance. From the usage page for 2 September 2026 — one day, during

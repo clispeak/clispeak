@@ -46,10 +46,19 @@ direct, and switching between wifi and cellular caused zero reconnects.
 moment it is installed:
 
 ```bash
+git submodule update --init                 # the manifest's shared-modules
+npm --prefix app ci
+npm --prefix app run build:css              # styles.css is generated, not committed
+cargo build --release -p voicecast-app -p voicecast-cli
 cd packaging/flatpak
 flatpak-builder --force-clean --user --install build-dir org.voicecast.App.yml
 flatpak run org.voicecast.App
 ```
+
+The first four lines are not optional and used to be missing here. The
+manifest takes the two binaries from `target/release`, so they have to exist;
+and `cargo build` — unlike `tauri build` — does not run Tailwind, so without
+the CSS step the app installs and comes up unstyled with nothing to say why.
 
 The app installs the `voicecast` command to `~/.local/bin` on first launch, and
 re-installs it whenever the app is updated. The command deliberately stays on

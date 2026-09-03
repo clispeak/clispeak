@@ -260,8 +260,14 @@ it and send the parts.
 
 ## Devices and membership
 
+`devices` prints a name, the first sixteen characters of the endpoint id, the
+space when a device is in more than the default one, and a marker on this
+machine. It does not print when a device was last seen, which the wire has
+always carried: `voicecast devices --json` has it as `last_seen_secs`, and
+that is the field to read when something reports `unreachable`.
+
 ```
-$ voicecast devices                    # names, platform, status, voice, last seen
+$ voicecast devices                    # name, short id, space, which one is here
 $ voicecast invite                     # QR + ticket to add a device
 $ voicecast invite | pbcopy            # the ticket alone, for pasting over SSH
 $ voicecast preview <ticket>           # what that invite would join
@@ -340,9 +346,8 @@ A device can belong to several spaces at once, kept fully separate.
 
 ```
 $ voicecast space list
-  NAME    DEVICES   ROLE      DEFAULT
-  work    3         member    *
-  home    4         founder
+  work             3   devices
+  home             4   devices  (default)
 
 $ voicecast space new home           # found a new space from this device
 $ voicecast leave --space work       # tell the others, then remove it here
@@ -366,7 +371,6 @@ window matters — a stolen phone rather than a sold laptop — rotate instead:
 $ voicecast space rotate
   Created a replacement for 'home'.
   Re-invite surviving devices:  desk, laptop, ipad
-  [ QR ]
 ```
 
 Rotating also cancels any invite still open on this device. A ticket names a
@@ -503,9 +507,11 @@ work (on top of the above)
 
 ```toml
 # config.toml
-default_space  = "home"
 default_target = "here"
 default_priority = "normal"
+# There is no `default_space` here. Which space bare names resolve in is
+# state the node holds, not a client setting, because every device in the
+# space has to agree: set it with `voicecast space default <name>`.
 
 [groups]
 phones = ["pixel", "iphone"]

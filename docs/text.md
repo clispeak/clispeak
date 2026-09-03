@@ -88,8 +88,12 @@ See src/main.rs:42 for the fix.     ->  shredded
 Dr. Chen approved v1.2.3 (e.g.).    ->  five fragments
 ```
 
-Rather than an ever-growing regex, spans that must never be split are
-**masked with placeholders** before splitting and restored after:
+Rather than an ever-growing regex, spans that must never be split are found
+first and then **refused as split points** — the chunker walks the text with
+those ranges marked and will not break inside one. Masking and restoring was
+the original plan and is not what `protect.rs` does; the ranges never leave
+the function, so there is nothing to restore and nothing to get wrong when a
+placeholder survives into the output.
 
 - File paths and identifiers — `src/main.rs:42`
 - Decimals, versions, IP addresses — `3.14`, `v1.2.3`, `10.0.0.1`

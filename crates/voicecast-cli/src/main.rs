@@ -595,7 +595,7 @@ fn run_skill(install: bool, path: Option<&std::path::Path>) -> u8 {
         None => match skill::default_destination() {
             Some(path) => path,
             None => {
-                err("error: no home directory; pass --to with a path");
+                err("error: no home directory; pass --path with a destination");
                 return exit::USAGE;
             }
         },
