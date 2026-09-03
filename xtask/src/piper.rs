@@ -24,7 +24,15 @@ const PIPER_TAG: &str = "2023.11.14-2";
 /// The phonemize release carrying the macOS dylibs.
 const PHONEMIZE_TAG: &str = "2023.11.14-4";
 /// The voice the app ships with, matching the Flatpak manifest.
-const VOICE: &str = "en_US-lessac-medium";
+///
+/// **Public domain, and that is why it is this one.** The previous default,
+/// `en_US-lessac-medium`, is trained on the Blizzard Challenge 2013 Lessac
+/// corpus, whose licence grants use "exclusively for Research Purposes only"
+/// and bars distribution outright — so it could not be shipped in anything,
+/// and downloading it for a user is not obviously better than shipping it.
+/// LJ Speech has no restrictions at all: "There are no restrictions on its
+/// use... you may use it without attribution" (decision 79).
+const VOICE: &str = "en_US-ljspeech-medium";
 
 /// One downloaded file and the hash it must have.
 struct Pinned {
@@ -98,18 +106,18 @@ fn piper_for_host() -> Result<(Pinned, Option<Pinned>)> {
 /// The voice model and its sidecar config.
 fn voice_files() -> [Pinned; 2] {
     let base = format!(
-        "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/{VOICE}"
+        "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/ljspeech/medium/{VOICE}"
     );
     [
         Pinned {
             url: format!("{base}.onnx"),
-            sha256: "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f",
-            name: "en_US-lessac-medium.onnx",
+            sha256: "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+            name: "en_US-ljspeech-medium.onnx",
         },
         Pinned {
             url: format!("{base}.onnx.json"),
-            sha256: "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0",
-            name: "en_US-lessac-medium.onnx.json",
+            sha256: "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
+            name: "en_US-ljspeech-medium.onnx.json",
         },
     ]
 }
