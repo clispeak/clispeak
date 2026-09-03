@@ -1,13 +1,40 @@
 # Signing the macOS app
 
-Two different problems wear the same word. Keeping them apart is most of the
-decision, because the cheap fix solves one of them completely and the other
-not at all.
+Two different problems wear the same word, and **one certificate solves both**
+— which is not what this file said until someone tried it.
 
 | | Fixes | Costs |
 |---|---|---|
-| **A self-signed certificate** | the keychain prompt on every rebuild | nothing |
-| **A Developer ID certificate** | Gatekeeper's warning for other people | a paid Apple Developer membership |
+| A self-signed certificate | ~~the keychain prompt on every rebuild~~ **nothing, measured** | nothing |
+| **A Developer ID certificate** | the rebuild prompt *and* Gatekeeper's warning | a paid Apple Developer membership |
+
+**The self-signed route was tried on macOS 26 and did not work.** It is kept
+below because the mechanism it explains is the mechanism both routes rely on,
+and because the negative result is worth more written down than deleted. But
+if you are here to stop the keychain prompt, go to the paid half — it is the
+only thing measured to do it.
+
+### What was actually measured
+
+On macOS 26.5, with a self-signed Code Signing certificate:
+
+- `codesign` used it without complaint — `Authority=voicecast dev`, and
+  `--verify --deep` reported `satisfies its Designated Requirement`.
+- The designated requirement changed from `cdhash H"…"` to
+  `identifier "com.voicecast.app" and certificate leaf = H"…"`, which is the
+  stable shape this file said was the point.
+- **The keychain still prompted on every rebuild anyway.** Three builds, each
+  with a genuinely different `CDHash`, each answered with *Always Allow*, each
+  followed by another prompt on the next one. The process was parked on the
+  same stack as the original diagnosis in #29:
+  `SecKeychainFindGenericPassword` → `ClientSession::decrypt`.
+
+So the requirement being stable is necessary and is not sufficient. The
+untested explanation is that a keychain ACL needs a *trusted* anchor to name,
+and macOS does not trust a self-signed root — the same fact that makes
+`find-identity -v` report zero. A Developer ID certificate chains to Apple's
+root and has no such problem, which is why it is the answer for both halves
+and why nobody should spend an afternoon on the free one first.
 
 ## Why a rebuild asks for the keychain password
 
@@ -51,16 +78,55 @@ Keychain Access → *Certificate Assistant* → **Create a Certificate…**
 | Certificate Type | **Code Signing** |
 | Let me override defaults | not needed |
 
-Then check it took:
+Then check it took. This is the whole output on macOS 26, captured rather
+than composed:
 
 ```console
-$ security find-identity -v -p codesigning
-  1) A1B2C3…  "voicecast dev"
-     1 valid identities found
+$ security find-identity
+     1 identities found
+
+  Valid identities only
+     0 valid identities found
 ```
 
-Zero identities means the certificate type was not Code Signing — that is the
-one field the dialog defaults wrong.
+**Both halves of that are expected, and the second one is why this section
+had to be rewritten twice.**
+
+`1 identities found` is the answer: the certificate and its private key are in
+the keychain and paired. Note that it does *not* print the identity's name —
+`find-identity` only lists the valid ones, and a self-signed certificate is
+not one, so there is no line to read the name off. You know the name because
+you typed it into the dialog.
+
+`0 valid identities found` is *not* a failure. `-v` filters to identities the
+trust store calls valid, and macOS does not trust a self-signed root — by
+design, permanently, no matter what you do. This file used to say that zero
+identities meant the certificate type was wrong. It ran on the machine it was
+written for, said the setup had failed, and sent the reader looking for a
+mistake that was not there. The certificate was correct and signed the app on
+the first attempt.
+
+Trust and usability are different questions. `codesign` needs the certificate
+and its private key, which is what the unfiltered command reports.
+Gatekeeper's opinion of a self-signed root is settled — it does not trust it —
+and that is expected, not a fault to fix.
+
+So the check that actually answers the question is to sign something:
+
+```console
+$ codesign --force --sign "voicecast dev" /tmp/probe
+$ codesign -dv --verbose=2 /tmp/probe 2>&1 | grep Authority
+Authority=voicecast dev
+```
+
+If that says `Authority=voicecast dev`, it is working. If it says
+`Signature=adhoc`, the identity never reached `codesign`. And if
+`find-identity` with no flags reports zero, *then* the certificate type was
+not Code Signing — that is the one field the dialog defaults wrong.
+
+(Section 2 below uses `-v` deliberately: a Developer ID certificate chains to
+Apple's trusted root, so there it is valid *and* usable, and `-v` is the
+narrower, better check.)
 
 ## Using it
 
