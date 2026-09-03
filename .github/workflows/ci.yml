@@ -3,7 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
+  # `ready_for_review` is not in the default set, and without it the whole
+  # draft mechanism below is a trap: the expensive jobs skip while a pull
+  # request is a draft, and marking it ready fires no event, so they never
+  # run and the pull request sits with four skipped checks forever.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 # A newer push supersedes an in-flight run on the same ref — on a branch.
 #
@@ -56,6 +61,25 @@ jobs:
 
   build:
     name: ${{ matrix.target }}
+    # Not on a draft. The five-target rule is unchanged — nothing merges
+    # without this job green — but it is a rule about *merging*, and we were
+    # paying for the verdict on every push instead of on the one that asks
+    # for it.
+    #
+    # Measured on 3 September, one day: 3,649 billed Linux-equivalent
+    # minutes, which is more than a month's included allowance. macOS was
+    # 2,150 of that — 59% — from jobs doing under two minutes of real work,
+    # because a macOS minute bills at ten times a Linux one and Windows at
+    # twice. So the two runners that are 81% of the cost are 20% of the
+    # wall-clock, and cutting the *number of runs* is the only lever that
+    # touches them.
+    #
+    # The cheap job above still runs on every push, draft or not. That is
+    # deliberate: fmt, clippy, the portability gate and the whole test suite
+    # are where nearly every mistake is actually caught, they cost one Linux
+    # minute, and losing them on drafts would trade the money for exactly the
+    # feedback loop that makes drafts worth pushing to.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 45
     runs-on: ${{ matrix.os }}
     strategy:
