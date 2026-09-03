@@ -156,9 +156,16 @@ evaluated the pull request as a draft and skipped the matrix, and the
 half a minute between produced one immediately, so the trigger is fine and
 the race is real. It fails the way everything in this file fails: the pull
 request reads as ready, the checks read as passing, and four of the five
-never ran. **Before merging, read the check rollup and count five** — a
-`matrix.target: SKIPPED` in place of four named targets is what this looks
-like.
+never ran. **Before merging, read the check rollup and count five named targets.**
+
+Count them; do not look for the absence of a warning. `matrix.target:
+SKIPPED` is the draft run's result and it **stays in the rollup forever**,
+sitting beside the four real names on a pull request that has been fully
+verified. The draft run's Linux job stays too, so the rollup routinely shows
+seven rows for five jobs. It is a history, not a status. A rule phrased as
+"check there is no SKIPPED row" would reject every correctly-verified pull
+request from here on; a rule phrased as "count five names" is the one that
+separates the two cases.
 
 `app/src/styles.css` is generated and **not** committed. Tauri's
 `beforeBuildCommand` rebuilds it, so `tauri build` and `tauri android build`

@@ -2241,3 +2241,47 @@ it is #108 rather than a paragraph. Until a Developer ID certificate exists
 none of it is testable, and the document says to open the `.dmg` on a fresh Mac
 before announcing a release, in the same terms as installing the release APK
 rather than the debug one.
+
+## 66. Marking a pull request ready needs a gap, and the rollup is a history
+
+**Chosen:** do not mark a pull request ready in the same breath as a push, and
+before merging count five *named* targets in the check rollup rather than
+looking for the absence of a warning. Written down because the rule reads as
+fussiness until you know why, and because it is currently enforced by a person
+remembering it.
+
+**What happened.** #106 was pushed and marked ready about a second apart. The
+push's own run had already evaluated the pull request as a draft — so decision
+63's `if:` skipped the matrix — and the `ready_for_review` event never became a
+run at all. The result was a pull request reading as ready, with one check
+present and passing, and four of five targets never built. Toggling draft and
+back with thirty seconds between produced a run immediately, so the trigger is
+fine and the race is narrow and real.
+
+It was very nearly merged. That is the whole reason this is written down.
+
+**The rollup is a history, not a status.** `matrix.target: SKIPPED` is the
+draft run's result and it stays there permanently, beside the four real names,
+on a pull request that has been through the full five. The draft run's Linux
+job stays too, so seven rows for five jobs is normal. So the check has to be
+"count five names" — a rule phrased as "no SKIPPED row" would reject every
+correctly-verified pull request from here on, and one phrased as "the checks
+look green" cannot tell the two cases apart at all.
+
+**This is decision 63's sharp edge and it belongs to that decision, not to
+whoever trips on it.** Making the expensive jobs conditional bought most of a
+month's CI allowance back and introduced a state where a pull request can look
+finished and not be. Every other silent failure this project has met had a
+gate that could have caught it; this one has none. The five-target rule — the
+line `CLAUDE.md` opens with — is enforced here by a person counting.
+
+**The real fix is not this decision.** Required status checks naming the five
+would make a pull request with four that never ran unmergeable regardless of
+what anyone read, which is "check the CI run, not your terminal" applied to
+merging rather than to claiming. That is #5 and it is Patrick's to make. Until
+then this is a convention, and conventions are what this file exists to
+record the cost of.
+
+**Costs.** A pause between pushing and marking ready, which is nothing, and a
+rule that fails silently when forgotten, which is not. Noted rather than
+solved.
