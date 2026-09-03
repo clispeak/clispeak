@@ -110,7 +110,8 @@ steps: paste or scan, see which space it joins, then confirm. `join --name`
 picks what to call it here.
 
 Two nodes can share one machine for testing by overriding `VOICECAST_SOCKET`
-and `VOICECAST_CONFIG_DIR`.
+and `VOICECAST_CONFIG_DIR`. `VOICECAST_SOCKET` is a *name*, not a path — the
+platform decides where it lives, and on Linux there is no file anywhere.
 
 ## What it does
 
