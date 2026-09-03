@@ -106,8 +106,16 @@ export function openModal(box, { focus = null, onClose = null } = {}) {
   if (current) return null;
 
   // Captured before the dialog takes focus, which is the only moment it is
-  // still available. Restoring to `<body>` is what a dropped focus looks like.
-  const opener = document.activeElement;
+  // still available.
+  //
+  // `<body>` is not an opener, it is the absence of one, and treating it as
+  // one made `restoreFocus` report success for a restore it had not
+  // performed. That is how #113 hid: the caller had already disabled the
+  // button that opened this, which blurred it to `<body>` before we ever
+  // looked. Whoever caused the blur has to repair it — see `withButton` —
+  // and this now says plainly that it has nothing to restore to.
+  const active = document.activeElement;
+  const opener = active && active !== document.body ? active : null;
   const inerted = [];
   for (const sibling of document.body.children) {
     if (sibling !== box && !sibling.inert) {
@@ -154,6 +162,12 @@ export function openModal(box, { focus = null, onClose = null } = {}) {
     current = null;
     document.removeEventListener("keydown", onKey);
     box.removeEventListener("click", onClick);
+    // Let go of focus before hiding, or it stays on an element inside a
+    // hidden subtree — focus on something nobody can see, which reads to a
+    // screen reader as the page having nothing focused and to `restoreFocus`
+    // as somebody else having already taken it. This dialog took focus, so
+    // this dialog gives it back (#113).
+    if (box.contains(document.activeElement)) document.activeElement.blur();
     box.hidden = true;
     for (const sibling of inerted) sibling.inert = false;
     if (onClose) onClose();

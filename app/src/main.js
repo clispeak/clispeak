@@ -173,6 +173,12 @@ function ask(question, { input = null } = {}) {
 /** Run an async action with the button disabled, so it cannot double-fire. */
 async function withButton(button, label, action) {
   const original = button.textContent;
+  // Disabling the focused element moves focus to `<body>`, and this happens
+  // *before* `action` runs — so a dialog opened inside `action` captured
+  // `<body>` as its opener and restored focus to nothing when it closed. A
+  // keyboard user lost their place in the page every time they confirmed
+  // anything (#113). The blur happens here, so the repair belongs here.
+  const hadFocus = document.activeElement === button;
   button.disabled = true;
   button.textContent = label;
   try {
@@ -182,6 +188,12 @@ async function withButton(button, label, action) {
   } finally {
     button.disabled = false;
     button.textContent = original;
+    // Only if focus is still nowhere: anything that has deliberately taken it
+    // in the meantime — a dialog still open, a field the action focused —
+    // outranks putting it back.
+    if (hadFocus && button.isConnected && document.activeElement === document.body) {
+      button.focus();
+    }
   }
 }
 
