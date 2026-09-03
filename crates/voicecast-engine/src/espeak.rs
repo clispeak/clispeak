@@ -9,15 +9,16 @@
 //! espeak-ng does its own audio output, and one process per utterance is
 //! trivially cancellable by killing it.
 
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
+use crate::child::Running;
 use crate::{EngineError, SpeechEngine, Tier, Voice};
 
 /// Speaks via the `espeak-ng` binary.
 pub struct EspeakEngine {
     /// The utterance currently being spoken, so `stop` can kill it.
-    current: Mutex<Option<Child>>,
+    current: Mutex<Option<Arc<Running>>>,
     /// Words per minute.
     rate: u32,
 }
@@ -32,7 +33,7 @@ impl EspeakEngine {
         Command::new("espeak-ng")
             .arg("--version")
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .status()
             .map_err(|e| EngineError::Unavailable(format!("espeak-ng not runnable: {e}")))?;
 
@@ -52,7 +53,7 @@ impl SpeechEngine for EspeakEngine {
             .arg(self.rate.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| EngineError::Unavailable(format!("could not start espeak-ng: {e}")))?;
 
@@ -67,16 +68,16 @@ impl SpeechEngine for EspeakEngine {
                 .map_err(|e| EngineError::Unavailable(format!("write to espeak-ng: {e}")))?;
         }
 
-        *self.current.lock().expect("engine lock") = Some(child);
+        let running = Running::new("espeak-ng", child);
+        *self.current.lock().expect("engine lock") = Some(Arc::clone(&running));
 
-        let mut guard = self.current.lock().expect("engine lock");
-        if let Some(child) = guard.as_mut() {
-            child
-                .wait()
-                .map_err(|e| EngineError::Unavailable(format!("espeak-ng failed: {e}")))?;
-        }
-        *guard = None;
-        Ok(())
+        // Waited on outside the lock. Holding it across the wait is what made
+        // `stop` park until the utterance had finished and then kill nothing
+        // — issue #58 — and the entry has to stay in `current` while we wait,
+        // because that is how `stop` finds it.
+        let outcome = running.wait();
+        *self.current.lock().expect("engine lock") = None;
+        outcome
     }
 
     fn voices(&self) -> Vec<Voice> {
@@ -87,8 +88,11 @@ impl SpeechEngine for EspeakEngine {
     }
 
     fn stop(&self) {
-        if let Some(mut child) = self.current.lock().expect("engine lock").take() {
-            let _ = child.kill();
+        // Taken out under the lock and killed outside it, so this returns in
+        // the time a kill takes rather than the length of the utterance.
+        let running = self.current.lock().expect("engine lock").take();
+        if let Some(running) = running {
+            running.kill();
         }
     }
 

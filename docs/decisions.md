@@ -1175,3 +1175,62 @@ show for remote ones.
 **What this does not fix.** The receiver still cannot interrupt a chunk once
 the engine has it, because `stop` waits on the same lock playback holds — that
 is #58, and it is why the bound above matters more than it otherwise would.
+## 41. A process is waited on by polling, so it can be killed while we wait
+
+`stop` is the whole of an interrupt. The trait says "immediately, mid-sentence",
+and the queue's urgent messages, `skip`, `clear`, `pause` and `stop_message` all
+reduce to it. It did not work in any engine that spawns a process: `finish` held
+the `current` mutex across the wait, `stop` began by taking that mutex, so it
+parked until playback had finished and then found nothing to kill. Issue #58.
+
+Both things an engine must do to a child need `&mut Child`, from different
+threads, at the same time. `std` has no portable way to kill a process by
+handle from elsewhere, and inventing one means platform code in three places.
+
+**So the wait polls.** `try_wait` under the lock for an instant, release, sleep
+10 ms, repeat. `stop` takes the lock in one of those gaps and kills. The cost is
+a hundred wakeups a second against a process busy synthesising speech, which is
+not measurable; the bound on `stop` is the poll interval, which is far below
+what anyone hears as a delay. Measured on a Mac: a `stop` that took **13.1
+seconds** now takes **26 ms**, and the message reports `cancelled` where it used
+to report `spoken`.
+
+**A deliberate kill is not a failure.** Killing a process makes it exit
+non-zero, so checking exit status (#59, decision 40) would have turned every interrupt
+into "the player crashed". `Running` records that it was killed before it kills,
+and reports success for that exit. The queue already checked its own `cut`
+before the engine's error for this reason; this makes the engine honest on its
+own rather than relying on every caller to know.
+
+**Reaping.** `kill` without a `wait` left one zombie per interrupt for the life
+of the daemon, and interrupting is something a person does repeatedly.
+
+## 42. A process that ran and failed is not a process that spoke
+
+`wait()` returning `Ok` means the process was successfully waited for. It was
+being read as "the audio was heard". A player exiting 1 — `paplay` on a box with
+no PulseAudio session, `aplay` with no ALSA device — reported `spoken`, which is
+the one thing "report what happened" forbids. Issue #59.
+
+Both statuses are now checked, the synthesiser first: Piper failing while the
+player reads a truncated stream and exits 0 is a real shape, and the
+synthesiser's failure is the one worth reporting.
+
+**`EngineError` gains `Failed`.** A missing engine and a failing one need
+opposite responses — one is installed, the other is diagnosed — and collapsing
+them told someone whose audio device had gone to download a voice model. The
+variant carries the command, the exit code, and a bounded tail of stderr.
+
+**Why stderr is drained on a thread.** Reading it after the process exits
+deadlocks as soon as the output passes the pipe buffer: the child blocks
+writing, so it never exits, so nothing ever reads. A hang is worse than the lost
+message being fixed. The tail rather than the head, capped at 1 KB, because the
+last thing a process says before dying is the part worth having.
+
+**What this does not reach.** `queue.rs` maps any engine error to
+`Status::NoEngine` and discards its text, so the reason assembled here still
+does not arrive at the sender. That is a separate defect of the same shape this
+project keeps producing — the reason exists and something between it and the
+reader drops it — and it is filed rather than fixed here, because the mapping
+sits in the crate being reworked under the security cluster.
+
