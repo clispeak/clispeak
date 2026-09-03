@@ -2206,12 +2206,24 @@ macOS runner would write an empty key and fail later somewhere else. Added to
 the divergence table in `CLAUDE.md`, which is the fifth entry there that is
 not platform-*shaped* and would not have been caught by a `cfg`.
 
-**Costs, and one thing untested.** A paid membership, an enrolment that is not
-instant, and six secrets. Apple limits a team to five Developer ID Application
-certificates and revoking one invalidates every un-notarised app signed with
-it. And Tauri notarises and staples the `.app` but only *signs* the `.dmg` —
-the disk image is never submitted. What a downloader sees when opening the
-`.dmg` itself is therefore unverified, and cannot be verified from here. It is
-written into the document as the one thing to check on a real Mac before
-announcing a release, in the same terms as installing the release APK rather
-than the debug one.
+**All three variables locally, not two.** The bundler's search path for
+`AuthKey_<KEYID>.p8` is real, and building the instruction on it would be
+wrong: when the search misses, notarisation is skipped, a warning goes into
+the log and a signed but un-notarised app comes out. That is the exact
+degradation this decision adds a check for, reintroduced in the setup
+instructions. Naming the path makes a missing key loud, and makes the Mac and
+CI one story rather than two.
+
+**Costs, and the gap that is now an issue.** A paid membership, an enrolment
+that is not instant, and six secrets. Apple limits a team to five Developer ID
+Application certificates and revoking one invalidates every un-notarised app
+signed with it. And Tauri notarises and staples the `.app` but only *signs*
+the `.dmg` — the disk image is never submitted, so no ticket for it exists
+stapled or in Apple's database. Measured on a Mac: quarantine propagates from
+the image to the app copied out of it, so both are assessed; the app carries
+its ticket and the image carries nothing. That is narrower than "untested" and
+it is fixable — `notarytool` accepts a `.dmg` and `stapler` staples one — so
+it is #108 rather than a paragraph. Until a Developer ID certificate exists
+none of it is testable, and the document says to open the `.dmg` on a fresh Mac
+before announcing a release, in the same terms as installing the release APK
+rather than the debug one.
