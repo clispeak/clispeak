@@ -367,10 +367,43 @@ fn signing_identity() -> String {
     std::env::var("APPLE_SIGNING_IDENTITY").unwrap_or_else(|_| "-".to_string())
 }
 
-/// Sign one Mach-O file in place.
+/// Sign one Mach-O file in place, the way notarisation requires.
+///
+/// **`--options runtime` and a secure timestamp, or Apple rejects the whole
+/// bundle.** These four Mach-O files live in `Contents/Resources/speech/`,
+/// and `tauri-bundler` signs nested code only in `MacOS`, `Frameworks`,
+/// `Plugins`, `Helpers`, `XPCServices` and `Libraries` — `Resources` is not
+/// on that list. So this function is the *only* thing that signs them, and it
+/// used to pass `--timestamp=none` with no hardened runtime at all. Measured
+/// on a Developer ID build before the fix: the two executables in `MacOS`
+/// carried `flags=0x10000(runtime)` and a timestamp, and all four of these
+/// carried neither (#119).
+///
+/// Nothing would have said so. The bundle signs, `codesign -v` passes, it
+/// runs — and the rejection arrives from Apple during a release, which is the
+/// most expensive possible moment to learn it.
+///
+/// A timestamp needs Apple's timestamp server, so this is the one signing
+/// step that requires the network. Ad-hoc signatures cannot be timestamped at
+/// all, so that path keeps `--timestamp=none`: an ad-hoc bundle is not going
+/// to be notarised, and failing the local build over it would be a gate
+/// against something nobody was attempting.
 fn sign(path: &Path) -> Result<()> {
+    let identity = signing_identity();
+    let timestamp = if identity == "-" {
+        "--timestamp=none"
+    } else {
+        "--timestamp"
+    };
     let status = Command::new("codesign")
-        .args(["--force", "--timestamp=none", "--sign", &signing_identity()])
+        .args([
+            "--force",
+            timestamp,
+            "--options",
+            "runtime",
+            "--sign",
+            &identity,
+        ])
         .arg(path)
         .status()
         .context("running codesign")?;
