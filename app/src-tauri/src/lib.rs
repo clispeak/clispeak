@@ -244,6 +244,11 @@ fn ensure_on_path(home: &std::path::Path, dir: &std::path::Path) -> Result<bool,
 /// Compared by content rather than a version string: the two must speak the
 /// same protocol, and "different bytes" is exactly the question. Reading a
 /// few megabytes once at startup is cheaper than diagnosing a mismatch.
+/// Desktop only, like its caller. Android and iOS have no host to install
+/// onto and no shell to run it from — and without this the function is
+/// compiled there, called nowhere, and dead code is an error under the
+/// workspace's `-D warnings` (#69).
+#[cfg(desktop)]
 fn cli_needs_install() -> bool {
     let Some(dest) = cli_destination() else {
         return false;
@@ -272,6 +277,11 @@ fn cli_needs_install() -> bool {
 /// to the host, so the same pass rewrites a stale copy. Without that the two
 /// drift apart and the CLI ends up talking a protocol the node no longer
 /// speaks — a failure that looks like a bug rather than a stale install.
+/// Desktop only, like its caller. Android and iOS have no host to install
+/// onto and no shell to run it from — and without this the function is
+/// compiled there, called nowhere, and dead code is an error under the
+/// workspace's `-D warnings` (#69).
+#[cfg(desktop)]
 fn install_cli_on_host() {
     if cli_needs_install() {
         match install_cli() {
@@ -700,6 +710,11 @@ fn shellexpand_home(path: &str) -> String {
 /// Only ever rewrites a copy this app installed and recorded — it never
 /// creates one, because putting a file into somebody's agent configuration is
 /// something they should have asked for.
+/// Desktop only, like its caller. Android and iOS have no host to install
+/// onto and no shell to run it from — and without this the function is
+/// compiled there, called nowhere, and dead code is an error under the
+/// workspace's `-D warnings` (#69).
+#[cfg(desktop)]
 fn refresh_installed_skill() {
     let Some(record) = skill_record() else { return };
     let Ok(text) = std::fs::read_to_string(&record) else {

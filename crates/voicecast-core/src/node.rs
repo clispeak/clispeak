@@ -196,12 +196,27 @@ impl Node {
         let recorder: Arc<std::sync::Mutex<std::sync::Weak<Shared>>> =
             Arc::new(std::sync::Mutex::new(std::sync::Weak::new()));
         let notify = Arc::clone(&recorder);
+        let gate = Arc::clone(&recorder);
         let speaker = Speaker::new(
             Arc::clone(&engine),
             Arc::new(move |msg_id, ended: crate::queue::Ended| {
                 if let Some(shared) = notify.lock().expect("recorder lock").upgrade() {
                     remember_outcome(&shared, msg_id, ended.status);
                 }
+            }),
+            // Policy again, at the moment of speaking. Checking only at
+            // submit let a message accepted at 21:59 be spoken at 22:10 from
+            // behind a long document, inside quiet hours (#77). Weak for the
+            // same reason as the recorder above.
+            Arc::new(move |space: Option<&str>| {
+                let shared = gate.lock().expect("recorder lock").upgrade()?;
+                let policy = shared.policy.lock().expect("policy lock");
+                // Depth zero: the queue-depth rule drops a low-priority
+                // message that would arrive too late to matter, and it has
+                // already been applied once. Applying it again here, with
+                // this message about to be spoken rather than waiting behind
+                // anything, would be a different question with the same name.
+                policy.verdict(space, Priority::Normal, policy::local_minute(), 0)
             }),
         );
         let shared = Arc::new(Shared {
@@ -1318,6 +1333,7 @@ fn enqueue_inner(
             msg_id: msg_id.clone(),
             chunks,
             voice,
+            space: space.map(str::to_string),
             done,
         },
         p == Priority::High,
@@ -1765,6 +1781,9 @@ fn replay(shared: &Arc<Shared>, msg_id: &str) -> Response {
             msg_id: entry.msg_id.clone(),
             chunks,
             voice: None,
+            // A replay is this device speaking its own history, not the
+            // space's message arriving again.
+            space: None,
             done: None,
         },
         false,

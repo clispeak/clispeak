@@ -21,6 +21,11 @@ pub struct Job {
     pub chunks: Vec<String>,
     /// A voice to use for this message alone, if this device has it.
     pub voice: Option<String>,
+    /// The space it arrived in, so policy can be re-checked at speak time.
+    ///
+    /// `None` for text this device originated, which belongs to no space and
+    /// is governed by the device policy alone.
+    pub space: Option<String>,
     /// Signalled when speaking ends, for callers that asked to wait.
     ///
     /// Optional because the common case is fire-and-forget: an agent firing
@@ -144,17 +149,32 @@ pub struct Snapshot {
 /// not — so it cannot be what keeps a record. This fires either way.
 pub type OnFinish = Arc<dyn Fn(&str, Ended) + Send + Sync>;
 
+/// Asked, just before a message is spoken, whether it still may be.
+///
+/// Policy was checked once, when the message was accepted, and a queue takes
+/// time to drain: a message accepted at 21:59 behind a long document was
+/// spoken at 22:10, inside quiet hours, because nothing asked again. Quiet
+/// hours are about when noise happens, not about when a message arrives
+/// (#77).
+///
+/// `Some(status)` means "not now, and this is why". The message is dropped
+/// with that status rather than held, which matches what the same policy does
+/// to a message that arrives during quiet hours: it is recorded as unheard,
+/// and the sender that waited is told.
+pub type MaySpeak = Arc<dyn Fn(Option<&str>) -> Option<Status> + Send + Sync>;
+
 /// The speaking thread and the queue feeding it.
 #[derive(Clone)]
 pub struct Speaker {
     inner: Arc<(Mutex<Inner>, Condvar)>,
     engine: Arc<dyn SpeechEngine>,
     on_finish: OnFinish,
+    may_speak: MaySpeak,
 }
 
 impl Speaker {
     /// Start the speaking thread.
-    pub fn new(engine: Arc<dyn SpeechEngine>, on_finish: OnFinish) -> Self {
+    pub fn new(engine: Arc<dyn SpeechEngine>, on_finish: OnFinish, may_speak: MaySpeak) -> Self {
         let inner = Arc::new((
             Mutex::new(Inner {
                 urgent: VecDeque::new(),
@@ -172,6 +192,7 @@ impl Speaker {
             inner: Arc::clone(&inner),
             engine: Arc::clone(&engine),
             on_finish,
+            may_speak,
         };
         let worker = speaker.clone();
         std::thread::spawn(move || worker.run());
@@ -374,7 +395,14 @@ impl Speaker {
                 }
             };
 
-            let outcome = self.speak_job(job);
+            // Asked here rather than at submit, because a queue takes time
+            // to drain and policy is about when noise happens (#77). Once per
+            // message rather than per chunk: cutting a sentence in half at
+            // ten o'clock would be worse than finishing it.
+            let outcome = match (self.may_speak)(job.space.as_deref()) {
+                Some(status) => Some((job, Ended::plain(status))),
+                None => self.speak_job(job),
+            };
 
             let mut inner = lock.lock().expect("queue lock");
             inner.speaking = None;
@@ -397,6 +425,7 @@ impl Speaker {
             msg_id,
             chunks,
             voice,
+            space,
             mut done,
         } = job;
 
@@ -428,6 +457,7 @@ impl Speaker {
                         msg_id,
                         chunks: chunks[index..].to_vec(),
                         voice,
+                        space,
                         done: done.take(),
                     });
                     drop(inner);
@@ -469,6 +499,7 @@ impl Speaker {
                 msg_id,
                 chunks,
                 voice,
+                space,
                 done,
             },
             outcome,
@@ -566,10 +597,61 @@ mod tests {
                 msg_id: id.to_string(),
                 chunks: chunks.iter().map(|c| c.to_string()).collect(),
                 voice: None,
+                space: None,
                 done: Some(tx),
             },
             rx,
         )
+    }
+
+    #[tokio::test]
+    async fn quiet_hours_that_begin_while_a_message_waits_still_apply_to_it() {
+        // #77. Policy was checked once, when the message was accepted, and a
+        // queue takes time to drain: a message accepted at 21:59 behind a
+        // long document was spoken at 22:10, inside quiet hours, because
+        // nothing asked again. Quiet hours are about when noise happens.
+        let engine = FakeEngine::new();
+        let shut = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = Arc::clone(&shut);
+        let speaker = Speaker::new(
+            Arc::clone(&engine) as Arc<dyn SpeechEngine>,
+            Arc::new(|_, _| {}),
+            Arc::new(move |_| {
+                gate.load(std::sync::atomic::Ordering::SeqCst)
+                    .then_some(Status::QuietHours)
+            }),
+        );
+
+        // Accepted while the device is allowed to speak.
+        let (first, first_done) = job("m1", &["before"]);
+        speaker.submit(first, false);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), first_done)
+                .await
+                .expect("finished in time")
+                .expect("job finished")
+                .status,
+            Status::Spoken
+        );
+
+        // Ten o'clock arrives while the next one is still waiting.
+        shut.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (second, second_done) = job("m2", &["after"]);
+        speaker.submit(second, false);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), second_done)
+                .await
+                .expect("finished in time")
+                .expect("job finished")
+                .status,
+            Status::QuietHours,
+            "the policy that applies is the one in force when it would be said"
+        );
+        assert_eq!(
+            engine.spoken(),
+            vec!["before"],
+            "and nothing came out of the speaker"
+        );
     }
 
     #[tokio::test]
@@ -583,7 +665,7 @@ mod tests {
             code: "exit code 1".into(),
             detail: Some("connection refused".into()),
         });
-        let speaker = Speaker::new(engine, Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine, Arc::new(|_, _| {}), Arc::new(|_| None));
         let (job, done) = job("m1", &["hello"]);
         speaker.submit(job, false);
 
@@ -606,7 +688,7 @@ mod tests {
     async fn a_genuinely_missing_engine_still_says_so() {
         let engine =
             FakeEngine::failing(EngineError::Unavailable("no voice model installed".into()));
-        let speaker = Speaker::new(engine, Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine, Arc::new(|_, _| {}), Arc::new(|_| None));
         let (job, done) = job("m1", &["hello"]);
         speaker.submit(job, false);
 
@@ -643,7 +725,7 @@ mod tests {
     #[tokio::test]
     async fn what_is_being_spoken_counts_towards_the_wait() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
 
         let lines: Vec<String> = (0..40)
             .map(|i| format!("sentence number {i} here"))
@@ -672,7 +754,7 @@ mod tests {
     #[tokio::test]
     async fn pending_words_covers_everything_still_to_be_spoken() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
         assert_eq!(speaker.pending_words(), 0);
 
         let (first, _first_done) = job("m1", &["one two three", "four five"]);
@@ -697,7 +779,7 @@ mod tests {
     #[tokio::test]
     async fn urgent_interrupts_then_the_interrupted_message_resumes() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
 
         let (normal, normal_done) = job("m1", &["one", "two", "three"]);
         speaker.submit(normal, false);
@@ -731,7 +813,7 @@ mod tests {
     #[tokio::test]
     async fn skip_abandons_the_current_message_and_moves_on() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
 
         let (first, first_done) = job("m1", &["one", "two", "three"]);
         let (second, second_done) = job("m2", &["next"]);
@@ -760,7 +842,7 @@ mod tests {
     #[tokio::test]
     async fn clear_cancels_everything_including_what_is_waiting() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
 
         let (first, first_done) = job("m1", &["one", "two"]);
         let (second, second_done) = job("m2", &["never"]);
@@ -795,7 +877,7 @@ mod tests {
     #[tokio::test]
     async fn pause_holds_the_message_and_resume_finishes_it() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
 
         let (only, only_done) = job("m1", &["one", "two"]);
         speaker.submit(only, false);
@@ -825,7 +907,7 @@ mod tests {
     #[tokio::test]
     async fn the_queue_reports_what_is_waiting_in_playing_order() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
 
         speaker.submit(job("m1", &["a", "b"]).0, false);
         speaker.submit(job("m2", &["c"]).0, false);
