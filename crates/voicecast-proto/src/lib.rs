@@ -135,6 +135,25 @@ pub enum Request {
     Join {
         /// The `voicecast://join/...` string.
         ticket: String,
+        /// What to call the joined space on this device.
+        ///
+        /// `None` takes the name the inviter uses. A label is local — it is
+        /// how this device addresses the space in `work/laptop` — so two
+        /// people can reasonably disagree about it, and the one doing the
+        /// joining gets the last word.
+        #[serde(default)]
+        label: Option<String>,
+    },
+    /// Read an invite without acting on it.
+    ///
+    /// Purely local: it parses the ticket and reports what joining would do.
+    /// No device is contacted and the token is not spent, so this can be run
+    /// as the code is pasted. It exists because the destination is written
+    /// inside the ticket by whoever minted it — the joining device cannot
+    /// choose it, so the only honest thing to offer is to read it out first.
+    Preview {
+        /// The `voicecast://join/...` string.
+        ticket: String,
     },
     /// List devices in the space.
     Devices,
@@ -301,6 +320,20 @@ pub enum Response {
         /// than having to go and look.
         #[serde(default)]
         space: String,
+    },
+    /// What an invite would do, without doing it.
+    Preview {
+        /// The inviter's name for the space, when the ticket carries one.
+        ///
+        /// Absent for a ticket minted before labels travelled, which is not
+        /// an error — it means "the inviting device's default space", and the
+        /// interface should say that rather than invent a name.
+        #[serde(default)]
+        label: Option<String>,
+        /// Seconds until the invite stops being accepted.
+        expires_in: u64,
+        /// The inviting device's public key, for comparing against its screen.
+        endpoint_id: String,
     },
     /// The request was carried out but has nothing to report.
     Done,
@@ -528,6 +561,14 @@ pub enum PeerMessage {
         /// Which space was joined, so both sides agree on its id.
         #[serde(default)]
         space: Option<String>,
+        /// What the inviter calls it.
+        ///
+        /// Sent as well as riding on the ticket because the two can disagree:
+        /// a space renamed between minting an invite and it being scanned is
+        /// stale on the ticket and current here. Defaulted, so a peer that
+        /// predates this simply sends nothing and the joiner falls back.
+        #[serde(default)]
+        label: Option<String>,
     },
     /// The invite was refused.
     JoinRefused {

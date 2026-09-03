@@ -118,6 +118,28 @@
 <main id="screen-spaces" hidden class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
   <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
 
+    <!-- Joining, first on the screen. It is the first thing anyone does on a
+         second device, and it was previously below the space list — where a
+         list that grows pushes it further off the bottom the more you use the
+         app. Its own section rather than a card control, because the space it
+         joins is written inside the invite and this device does not get to
+         choose it: putting the button on a space's card would promise a
+         destination it cannot deliver. -->
+    <section>
+      <button id="join-open"
+        class="w-full rounded-xl border border-accent-500/40 bg-accent-500/10 px-4 py-3
+               text-sm font-medium text-accent-600 transition
+               hover:bg-accent-500/20 active:scale-[0.99]
+               dark:text-accent-400
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        Join a space with an invite
+      </button>
+      <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        Paste or scan a code from a device you already set up. You will be
+        shown which space it joins before anything happens.
+      </p>
+    </section>
+
     <section>
       <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
         Spaces
@@ -148,48 +170,6 @@
         A name on its own means the default space. Reach anywhere else by
         qualifying it, as in <span class="font-medium">work/laptop</span>.
       </p>
-    </section>
-
-    <!-- Pairing. Here rather than in settings: an invite is how a device enters
-         a space, so it belongs beside the spaces. -->
-    <section>
-      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-        Add a device
-      </h2>
-      <p class="mb-2 text-xs text-neutral-500 dark:text-neutral-400">
-        Each space has its own "Add a device". The invite carries the space
-        with it, so scanning it joins the one you asked for.
-      </p>
-
-      <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-        <button id="invite"
-          class="w-full rounded-lg border border-neutral-300 px-4 font-medium transition
-                 hover:bg-neutral-100 active:scale-[0.99]
-                 dark:border-neutral-700 dark:hover:bg-neutral-800
-                 focus-visible:outline-2 focus-visible:outline-offset-2">
-          Show an invite
-        </button>
-
-        <div class="my-4 flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-600">
-          <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
-          or
-          <span class="h-px flex-1 bg-neutral-200 dark:bg-neutral-800"></span>
-        </div>
-
-        <form id="join-form" class="flex gap-2">
-          <label for="join-input" class="sr-only">Invite code</label>
-          <input id="join-input" type="text" autocomplete="off" placeholder="Paste an invite"
-            class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 font-mono text-xs
-                   placeholder:font-sans placeholder:text-sm placeholder:text-neutral-400
-                   focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
-                   dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
-          <button id="join" type="submit"
-            class="shrink-0 rounded-lg border border-neutral-300 px-4 font-medium transition
-                   hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-            Join
-          </button>
-        </form>
-      </div>
     </section>
 
   </div>
@@ -561,6 +541,147 @@
         Done
       </button>
     </div>
+  </div>
+</div>
+
+<!-- Joining, in two steps: read the invite, then act on it.
+
+     One step was the bug. The destination lives inside the ticket, minted by
+     whoever pressed "Add a device" somewhere else, so a person pasting a code
+     had no way to know what they were about to join until they had joined it.
+     Parsing is local — no device is contacted and the single-use token is not
+     spent — so there is no cost to reading it out first. -->
+<div id="join-modal" hidden
+     class="fixed inset-0 z-50 flex items-center justify-center
+            bg-black/60 backdrop-blur-sm p-6"
+     role="dialog" aria-modal="true" aria-labelledby="join-title">
+  <div class="w-full max-w-sm rounded-xl border border-neutral-200 bg-white p-5
+              shadow-2xl dark:border-neutral-700 dark:bg-neutral-800">
+
+    <div class="flex items-start justify-between gap-3">
+      <h2 id="join-title" class="text-sm font-semibold">Join a space</h2>
+      <button id="join-close" type="button" aria-label="Close"
+        class="-mr-1 -mt-1 shrink-0 rounded-lg px-2 py-1 text-lg leading-none
+               text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800
+               dark:text-neutral-400 dark:hover:bg-neutral-700 dark:hover:text-neutral-100
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        &times;
+      </button>
+    </div>
+
+    <!-- Step one: the code. -->
+    <div id="join-step-code">
+      <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+        Show an invite on a device you already set up, then paste its code here.
+      </p>
+      <label for="join-input" class="sr-only">Invite code</label>
+      <textarea id="join-input" rows="3" autocomplete="off" spellcheck="false"
+        placeholder="voicecast://join/..."
+        class="mt-3 w-full resize-none rounded-lg border border-neutral-300 bg-white px-3 py-2
+               font-mono text-xs placeholder:font-sans placeholder:text-sm
+               placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
+               focus:ring-2 focus:ring-accent-500/30
+               dark:border-neutral-700 dark:bg-neutral-950
+               dark:placeholder:text-neutral-500"></textarea>
+      <div class="mt-4 flex justify-end gap-2">
+        <button id="join-cancel" type="button"
+          class="rounded-lg px-3 py-1.5 text-sm text-neutral-600 transition
+                 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-700
+                 focus-visible:outline-2 focus-visible:outline-offset-2">
+          Cancel
+        </button>
+        <button id="join-read" type="button"
+          class="rounded-lg bg-accent-600 px-3 py-1.5 text-sm font-medium text-white
+                 transition hover:bg-accent-500
+                 focus-visible:outline-2 focus-visible:outline-offset-2">
+          Continue
+        </button>
+      </div>
+    </div>
+
+    <!-- Step two: what that code will actually do, before it does it. -->
+    <div id="join-step-confirm" hidden>
+      <div class="mt-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3
+                  dark:border-neutral-700 dark:bg-neutral-900">
+        <p class="text-xs uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+          This invite joins
+        </p>
+        <p id="join-space" class="mt-0.5 truncate font-semibold"></p>
+        <p id="join-meta" class="mt-1 text-xs text-neutral-500 dark:text-neutral-400"></p>
+      </div>
+
+      <!-- The name is local: it is how this device writes `work/laptop`, and
+           nothing is sent when it changes. Offered because the inviter's name
+           for a space is not always the joiner's, and because a clash with a
+           space already held here has to be resolved by someone. -->
+      <label for="join-name" class="mt-4 block text-xs font-medium">
+        Call it, on this device
+      </label>
+      <input id="join-name" type="text" autocomplete="off"
+        class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm
+               focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+               dark:border-neutral-700 dark:bg-neutral-950" />
+      <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+        Only on this device. No one else is told.
+      </p>
+
+      <div class="mt-5 flex justify-end gap-2">
+        <button id="join-back" type="button"
+          class="rounded-lg px-3 py-1.5 text-sm text-neutral-600 transition
+                 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-700
+                 focus-visible:outline-2 focus-visible:outline-offset-2">
+          Back
+        </button>
+        <button id="join-go" type="button"
+          class="rounded-lg bg-accent-600 px-3 py-1.5 text-sm font-medium text-white
+                 transition hover:bg-accent-500
+                 focus-visible:outline-2 focus-visible:outline-offset-2">
+          Join
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Everything that acts on one space, behind one button on that space's card.
+
+     The card footer used to carry five buttons, which wrapped to three rows on
+     a phone, and every one of them had to repeat the space name to say what it
+     would act on — "Leave work", "Replace work". With the name in the dialog
+     title none of them do, and there is no reading of a button here that is
+     ambiguous about its target. -->
+<div id="manage-modal" hidden
+     class="fixed inset-0 z-50 flex items-center justify-center
+            bg-black/60 backdrop-blur-sm p-6"
+     role="dialog" aria-modal="true" aria-labelledby="manage-title">
+  <div class="w-full max-w-sm rounded-xl border border-neutral-200 bg-white p-5
+              shadow-2xl dark:border-neutral-700 dark:bg-neutral-800">
+
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-xs uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+          Space
+        </p>
+        <h2 id="manage-title" class="truncate text-base font-semibold"></h2>
+        <p id="manage-sub" class="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400"></p>
+      </div>
+      <button id="manage-close" type="button" aria-label="Close"
+        class="-mr-1 -mt-1 shrink-0 rounded-lg px-2 py-1 text-lg leading-none
+               text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800
+               dark:text-neutral-400 dark:hover:bg-neutral-700 dark:hover:text-neutral-100
+               focus-visible:outline-2 focus-visible:outline-offset-2">
+        &times;
+      </button>
+    </div>
+
+    <!-- Filled by the interface, so the destructive half can be separated
+         from the rest without two hand-written lists getting out of step. -->
+    <div id="manage-actions" class="mt-4 flex flex-col gap-2"></div>
+
+    <p class="mt-5 text-xs uppercase tracking-wider text-red-600/80 dark:text-red-400/80">
+      Careful
+    </p>
+    <div id="manage-danger" class="mt-2 flex flex-col gap-2"></div>
   </div>
 </div>
 

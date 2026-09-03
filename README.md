@@ -97,9 +97,17 @@ back to `espeak-ng` on `PATH`.
 
 ```bash
 voicecast invite             # on one device — prints a ticket, app shows a QR
-voicecast join <ticket>      # on the other
+voicecast preview <ticket>   # on the other — what that code would join
+voicecast join <ticket>      # ...and join it
 voicecast devices
 ```
+
+The destination is written *into* the ticket by whoever minted it, so the
+joining device does not get to choose it. `preview` reads it out first —
+locally, contacting nobody and spending nothing, so it can be run on a code
+before deciding to use it. In the app, joining goes through the same two
+steps: paste or scan, see which space it joins, then confirm. `join --name`
+picks what to call it here.
 
 Two nodes can share one machine for testing by overriding `VOICECAST_SOCKET`
 and `VOICECAST_CONFIG_DIR`.
@@ -138,9 +146,16 @@ eventually.
 
 An invite carries the space it was made for, so scanning it joins the one you
 asked for rather than whichever happens to be the default when it is scanned.
-Joining a space *adds* it — the one exception being the empty space a device
-founds for itself at first start, which a first pairing displaces rather than
-leaving abandoned beside the real one.
+It also carries what that space is *called*, so the joining device can name it
+the same thing rather than inventing one. Joining a space *adds* it — the one
+exception being the empty space a device founds for itself at first start,
+which a first pairing displaces rather than leaving abandoned beside the real
+one.
+
+A space's name is local. It is how this device writes `work/laptop`, nothing
+is sent when it changes, and two devices in one space may call it different
+things — `join --name` and **Manage → Rename** both set only what is on the
+device you run them from.
 
 See [cli.md](docs/cli.md) for the full surface and exit codes.
 

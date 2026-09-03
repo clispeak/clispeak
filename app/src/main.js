@@ -529,6 +529,10 @@ function spaceCard(space, devices, several) {
   title.textContent = space.label;
   head.append(title);
 
+  // A badge on the default and nothing on the others. Changing the default
+  // lives in the Manage dialog with everything else that acts on a space —
+  // a second place to do it is the duplication this screen was rebuilt to
+  // remove.
   if (space.is_default) {
     const badge = document.createElement("span");
     badge.className =
@@ -536,15 +540,6 @@ function spaceCard(space, devices, several) {
       "text-accent-600 dark:text-accent-400";
     badge.textContent = "default";
     head.append(badge);
-  } else {
-    const use = cardButton("Make default");
-    use.onclick = () =>
-      withButton(use, "…", async () => {
-        await call("default_space", { label: space.label });
-        say(`bare names now mean ${space.label}`);
-        await refresh();
-      });
-    head.append(use);
   }
   card.append(head);
 
@@ -564,88 +559,30 @@ function spaceCard(space, devices, several) {
 
   const foot = document.createElement("div");
   foot.className =
-    "flex flex-wrap gap-2 border-t border-neutral-200 px-3 py-2 " +
+    "flex items-center gap-2 border-t border-neutral-200 px-3 py-2 " +
     "dark:border-neutral-800";
 
-  const rename = cardButton("Rename");
-  rename.onclick = () =>
-    withButton(rename, "…", async () => {
-      const to = await ask(`New name for "${space.label}"`, {
-        input: space.label,
-      });
-      if (!to || to === space.label) return;
-      await call("rename_space", { label: space.label, to });
-      say(`renamed to ${to}`);
-      await refresh();
+  // One button rather than five. Every action on a space needs to say which
+  // space it acts on, and five buttons each repeating the name wrapped to
+  // three rows on a phone — so the name moves to the top of a dialog and the
+  // buttons inside it need no qualifier at all.
+  const manage = cardButton("Manage");
+  manage.onclick = () =>
+    withButton(manage, "…", async () => {
+      showManage(space, several);
     });
-  foot.append(rename);
+  foot.append(manage);
 
-  // Inviting names its space, so the button can sit on the card it belongs
-  // to rather than acting on whichever space happens to be default.
-  const add = cardButton(`Add a device`);
+  // Kept on the card, not buried in the dialog: adding a device is the one
+  // thing here that is done often, and the whole point of the layout is that
+  // the button sits on the space it invites into.
+  const add = cardButton("Add a device");
   add.onclick = () =>
     withButton(add, "…", async () => {
       await showInvite(space.label);
     });
   foot.append(add);
 
-  // Leaving, replacing and inviting all name their space now, so every card
-  // gets the same controls rather than only the default one.
-  const leave = cardButton(`Leave ${space.label}`, { danger: true });
-  leave.onclick = () =>
-    withButton(leave, "…", async () => {
-      if (
-        !(await ask(
-          `Leave ${space.label}? The other devices are told, and stop ` +
-            "reaching this one.",
-        ))
-      )
-        return;
-      say(await call("leave_space", { space: space.label }));
-      await refresh();
-    });
-
-  const rotate = cardButton(`Replace ${space.label}`, { danger: true });
-  rotate.onclick = () =>
-    withButton(rotate, "…", async () => {
-      if (
-        !(await ask(
-          `Replace ${space.label}? Every other device is locked out ` +
-            "immediately and has to be invited again.",
-        ))
-      )
-        return;
-      const left = await call("rotate_space", { space: space.label });
-      say(
-        left.length
-          ? `space replaced — re-invite ${left.join(", ")}`
-          : "space replaced",
-      );
-      await refresh();
-    });
-  foot.append(leave, rotate);
-
-  // Only where the difference matters. Forgetting is the escape hatch for a
-  // space whose other devices cannot be reached to be told — it removes the
-  // space here and sends nothing, so they go on counting this device a
-  // member. Leaving is what you want otherwise.
-  if (several) {
-    const forget = cardButton("Forget on this device", { danger: true });
-    forget.onclick = () =>
-      withButton(forget, "…", async () => {
-        if (
-          !(await ask(
-            `Forget ${space.label} on this device? Nothing is sent: the other ` +
-              "devices will still count this one as a member.",
-          ))
-        )
-          return;
-        await call("drop_space", { label: space.label });
-        say(`forgot ${space.label}`);
-        await refresh();
-      });
-    foot.append(forget);
-  }
   card.append(foot);
   return card;
 }
@@ -960,6 +897,191 @@ $("speak-form").onsubmit = async (e) => {
   });
 };
 
+/** Undoes what opening the manage dialog bound. */
+let closeManage = () => {};
+
+/** A full-width button for the manage dialog's stacked list. */
+function manageButton(label, note, { danger = false } = {}) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className =
+    "w-full rounded-lg border px-3 py-2 text-left text-sm transition " +
+    "focus-visible:outline-2 focus-visible:outline-offset-2 " +
+    (danger
+      ? "border-red-200 text-red-600 hover:bg-red-50 " +
+        "dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
+      : "border-neutral-300 hover:bg-neutral-100 " +
+        "dark:border-neutral-600 dark:hover:bg-neutral-700");
+  b.append(
+    Object.assign(document.createElement("span"), {
+      className: "font-medium",
+      textContent: label,
+    }),
+  );
+  // The consequence, next to the button that causes it. These actions differ
+  // from each other in what they send and what the other devices are left
+  // believing, which a one-word label cannot carry.
+  if (note) {
+    b.append(
+      Object.assign(document.createElement("span"), {
+        className:
+          "mt-0.5 block text-xs font-normal text-neutral-500 dark:text-neutral-400",
+        textContent: note,
+      }),
+    );
+  }
+  return b;
+}
+
+/**
+ * Everything that acts on one space, in a dialog titled with that space.
+ *
+ * The name at the top is the whole point. These actions used to sit in the
+ * card footer, where each had to spell out its target — "Leave work",
+ * "Replace work" — to be unambiguous, and five of them wrapped into three
+ * rows on a phone. Named once here, the buttons say what they do and nothing
+ * about the name is left to be inferred.
+ */
+function showManage(space, several) {
+  const box = $("manage-modal");
+  $("manage-title").textContent = space.label;
+  $("manage-sub").textContent = space.is_default
+    ? "Bare device names resolve here."
+    : `Reach devices in it as ${space.label}/<device>.`;
+
+  // Each action closes the dialog before doing anything: `ask` is another
+  // dialog at the same layer, and a confirmation stacked on the panel that
+  // raised it is not a shape this markup supports.
+  const run = (fn) => async () => {
+    closeManage();
+    await fn();
+  };
+
+  const actions = [];
+
+  if (!space.is_default) {
+    const def = manageButton(
+      "Make default",
+      "Device names with no space in front of them resolve here.",
+    );
+    def.onclick = run(async () => {
+      await call("default_space", { label: space.label });
+      say(`bare names now mean ${space.label}`);
+      await refresh();
+    });
+    actions.push(def);
+  }
+
+  const add = manageButton(
+    "Add a device",
+    "Shows a code that joins this space, and no other.",
+  );
+  add.onclick = run(() => showInvite(space.label));
+  actions.push(add);
+
+  const rename = manageButton("Rename", "Only on this device. No one is told.");
+  rename.onclick = run(async () => {
+    const to = await ask(`New name for "${space.label}"`, { input: space.label });
+    if (!to || to === space.label) return;
+    await call("rename_space", { label: space.label, to });
+    say(`renamed to ${to}`);
+    await refresh();
+  });
+  actions.push(rename);
+
+  const danger = [];
+
+  const leave = manageButton(
+    "Leave",
+    "The other devices are told, and stop reaching this one.",
+    { danger: true },
+  );
+  leave.onclick = run(async () => {
+    if (
+      !(await ask(
+        `Leave ${space.label}? The other devices are told, and stop ` +
+          "reaching this one.",
+      ))
+    )
+      return;
+    say(await call("leave_space", { space: space.label }));
+    await refresh();
+  });
+  danger.push(leave);
+
+  const rotate = manageButton(
+    "Replace",
+    "Everyone else is locked out at once and has to be invited again.",
+    { danger: true },
+  );
+  rotate.onclick = run(async () => {
+    if (
+      !(await ask(
+        `Replace ${space.label}? Every other device is locked out ` +
+          "immediately and has to be invited again.",
+      ))
+    )
+      return;
+    const left = await call("rotate_space", { space: space.label });
+    say(
+      left.length
+        ? `space replaced — re-invite ${left.join(", ")}`
+        : "space replaced",
+    );
+    await refresh();
+  });
+  danger.push(rotate);
+
+  // Only where the difference matters. Forgetting is the escape hatch for a
+  // space whose other devices cannot be reached to be told — it removes the
+  // space here and sends nothing, so they go on counting this device a
+  // member. Leaving is what you want otherwise.
+  if (several) {
+    const forget = manageButton(
+      "Forget on this device",
+      "Sends nothing. The others still count this device a member.",
+      { danger: true },
+    );
+    forget.onclick = run(async () => {
+      if (
+        !(await ask(
+          `Forget ${space.label} on this device? Nothing is sent: the other ` +
+            "devices will still count this one as a member.",
+        ))
+      )
+        return;
+      await call("drop_space", { label: space.label });
+      say(`forgot ${space.label}`);
+      await refresh();
+    });
+    danger.push(forget);
+  }
+
+  $("manage-actions").replaceChildren(...actions);
+  $("manage-danger").replaceChildren(...danger);
+
+  box.hidden = false;
+  actions[0]?.focus();
+
+  const onKey = (e) => {
+    if (e.key === "Escape") closeManage();
+  };
+  closeManage = () => {
+    box.hidden = true;
+    $("manage-actions").replaceChildren();
+    $("manage-danger").replaceChildren();
+    $("manage-close").onclick = null;
+    box.onclick = null;
+    document.removeEventListener("keydown", onKey);
+    closeManage = () => {};
+  };
+  $("manage-close").onclick = closeManage;
+  box.onclick = (e) => {
+    if (e.target === box) closeManage();
+  };
+  document.addEventListener("keydown", onKey);
+}
+
 /** Undoes what opening the invite dialog bound, so it can be opened again. */
 let closeInvite = () => {};
 
@@ -1028,13 +1150,6 @@ async function showInvite(space) {
   say("");
 }
 
-// The unqualified button invites into the default space. Each space card has
-// its own, which names the space it belongs to.
-$("invite").onclick = () =>
-  withButton($("invite"), "…", async () => {
-    await showInvite();
-  });
-
 $("copy").onclick = async () => {
   try {
     await navigator.clipboard.writeText($("ticket").textContent);
@@ -1044,15 +1159,110 @@ $("copy").onclick = async () => {
   }
 };
 
-$("join-form").onsubmit = async (e) => {
-  e.preventDefault();
-  await withButton($("join"), "…", async () => {
-    const members = await call("join_space", { ticket: $("join-input").value });
+/** Undoes what opening the join dialog bound. */
+let closeJoin = () => {};
+
+/**
+ * Join a space, in two steps: read the invite, then act on it.
+ *
+ * The destination is written into the ticket by whoever minted it, so this
+ * device cannot choose it — which is why joining is not offered on a space
+ * card, and why it is worth a step of its own to say what the code will do.
+ * `preview_invite` is local: no device is contacted and the single-use token
+ * is not spent, so reading a code costs nothing and can be undone by going
+ * back.
+ *
+ * `prefill` is for a scanned code, which arrives already known. It still
+ * stops at the confirmation — a scan is easy to do by accident, and a space
+ * joined by mistake has to be left again on both devices.
+ */
+function showJoin(prefill = "") {
+  const box = $("join-modal");
+  const code = $("join-step-code");
+  const confirm = $("join-step-confirm");
+
+  const step = (which) => {
+    code.hidden = which !== "code";
+    confirm.hidden = which !== "confirm";
+  };
+
+  $("join-input").value = prefill;
+  step("code");
+  box.hidden = false;
+  $("join-input").focus();
+
+  // Held between the steps: the confirmation names a space, and joining has
+  // to use the same code that was read, not whatever the field says by then.
+  let read = "";
+
+  const onRead = () =>
+    withButton($("join-read"), "…", async () => {
+      const ticket = $("join-input").value.trim();
+      if (!ticket) {
+        say("paste an invite first", "error");
+        return;
+      }
+      // Errors here are the ones the join would have raised — expired,
+      // truncated, not an invite — surfaced before anything is committed to.
+      const preview = await call("preview_invite", { ticket });
+      read = ticket;
+      $("join-space").textContent = preview.label ?? "their default space";
+      const mins = Math.max(1, Math.round(preview.expires_in / 60));
+      $("join-meta").textContent =
+        `From device ${preview.from} · expires in ${mins} min · single use`;
+      // Prefilled with the inviter's name, because agreeing is the common
+      // case and a name that matches across devices is one less thing to
+      // reconcile. A ticket that carried no name gets an empty field rather
+      // than an invented one.
+      $("join-name").value = preview.label ?? "";
+      step("confirm");
+      $("join-go").focus();
+    });
+
+  const onGo = () =>
+    withButton($("join-go"), "…", async () => {
+      const label = $("join-name").value.trim();
+      const joined = await call("join_space", {
+        ticket: read,
+        label: label || null,
+      });
+      closeJoin();
+      say(`joined '${joined.space}' — ${joined.members} devices`);
+      await refresh();
+    });
+
+  const onKey = (e) => {
+    if (e.key === "Escape") closeJoin();
+  };
+  closeJoin = () => {
+    box.hidden = true;
+    // A spent code left in the field is one that fails confusingly on the
+    // next open.
     $("join-input").value = "";
-    say(`joined — ${members} devices`);
-    await refresh();
-  });
-};
+    $("join-name").value = "";
+    read = "";
+    for (const id of ["join-close", "join-cancel", "join-read", "join-back", "join-go"]) {
+      $(id).onclick = null;
+    }
+    box.onclick = null;
+    document.removeEventListener("keydown", onKey);
+    closeJoin = () => {};
+  };
+  $("join-close").onclick = closeJoin;
+  $("join-cancel").onclick = closeJoin;
+  $("join-read").onclick = onRead;
+  $("join-back").onclick = () => {
+    step("code");
+    $("join-input").focus();
+  };
+  $("join-go").onclick = onGo;
+  box.onclick = (e) => {
+    if (e.target === box) closeJoin();
+  };
+  document.addEventListener("keydown", onKey);
+}
+
+$("join-open").onclick = () => showJoin();
 
 $("rename-form").onsubmit = async (e) => {
   e.preventDefault();
@@ -1138,13 +1348,12 @@ async function collectScannedInvite() {
     return;
   }
   if (!ticket) return;
-  try {
-    const members = await invoke("join_space", { ticket });
-    say(`joined from a scan — ${members} devices`);
-    await refresh();
-  } catch (e) {
-    say(String(e), "error");
-  }
+  // Shown rather than acted on. A scan is easy to do by accident, and the
+  // space it joins is decided by whoever made the code — the same reason a
+  // pasted invite gets a confirmation, and more so here, where nothing was
+  // typed at all.
+  showScreen("spaces");
+  showJoin(ticket);
 }
 
 showScreen("home");

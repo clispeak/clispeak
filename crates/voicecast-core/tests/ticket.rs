@@ -4,7 +4,7 @@ use voicecast_core::{Ticket, qr_svg};
 
 #[test]
 fn a_ticket_round_trips_through_its_url() {
-    let ticket = Ticket::mint("abc123".into(), None);
+    let ticket = Ticket::mint("abc123".into(), None, None);
     let url = ticket.to_url().expect("encode");
     assert!(url.starts_with("voicecast://join/"));
 
@@ -15,7 +15,7 @@ fn a_ticket_round_trips_through_its_url() {
 
 #[test]
 fn the_url_prefix_is_optional() {
-    let url = Ticket::mint("abc123".into(), None).to_url().unwrap();
+    let url = Ticket::mint("abc123".into(), None, None).to_url().unwrap();
     let bare = url.strip_prefix("voicecast://join/").unwrap();
     assert!(Ticket::parse(bare).is_ok(), "a bare code should still work");
 }
@@ -38,6 +38,7 @@ fn a_real_invite_fits_in_a_qr_code() {
     // flow — so pin that here rather than finding out on a phone.
     let url = Ticket::mint(
         "5dc736e3b1b945e3c46bdc4e09438021230d55ac8c4e98e993b41a8f93422eba".into(),
+        None,
         None,
     )
     .to_url()

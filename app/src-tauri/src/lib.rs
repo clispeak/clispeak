@@ -807,12 +807,60 @@ async fn make_invite(state: State<'_, AppState>, space: Option<String>) -> Resul
     }
 }
 
+/// What an invite would join, read before anything is committed to.
+///
+/// The destination is written into the ticket by whoever minted it, so the
+/// joining device cannot choose it — the only honest thing to offer is to
+/// read it out first. Local and side-effect free: no device is contacted and
+/// the single-use token is not spent.
+#[derive(Serialize)]
+pub struct InvitePreview {
+    /// The inviter's name for the space, absent on a ticket that predates
+    /// labels travelling.
+    label: Option<String>,
+    /// Seconds until it stops being accepted.
+    expires_in: u64,
+    /// The inviting device's key, shortened, for comparing against its screen.
+    from: String,
+}
+
 #[tauri::command]
-async fn join_space(state: State<'_, AppState>, ticket: String) -> Result<usize, String> {
-    match state.node.join(&ticket).await {
-        Response::Joined { members, .. } => Ok(members),
+fn preview_invite(state: State<'_, AppState>, ticket: String) -> Result<InvitePreview, String> {
+    match state.node.preview(&ticket) {
+        Response::Preview {
+            label,
+            expires_in,
+            endpoint_id,
+        } => Ok(InvitePreview {
+            label,
+            expires_in,
+            from: endpoint_id.chars().take(16).collect(),
+        }),
         other => Err(describe(other)),
     }
+}
+
+#[tauri::command]
+async fn join_space(
+    state: State<'_, AppState>,
+    ticket: String,
+    label: Option<String>,
+) -> Result<Joined, String> {
+    match state.node.join(&ticket, label).await {
+        Response::Joined { members, space } => Ok(Joined { members, space }),
+        other => Err(describe(other)),
+    }
+}
+
+/// The result of a join, including what the space ended up being called.
+///
+/// The name is returned because it can differ from the one asked for — a
+/// clash with a space already held here falls back — and a person told "you
+/// joined work" who then cannot find `work` has been misled.
+#[derive(Serialize)]
+pub struct Joined {
+    members: usize,
+    space: String,
 }
 
 /// Whether this device will keep receiving while asleep.
@@ -1190,6 +1238,7 @@ pub fn run() {
             node_status,
             list_devices,
             make_invite,
+            preview_invite,
             join_space,
             rename_device,
             battery_ok,

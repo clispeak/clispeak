@@ -214,7 +214,9 @@ discarding the message.
 $ voicecast devices                    # names, platform, status, voice, last seen
 $ voicecast invite                     # QR + ticket to add a device
 $ voicecast invite | pbcopy            # the ticket alone, for pasting over SSH
+$ voicecast preview <ticket>           # what that invite would join
 $ voicecast join <ticket>              # join a space from this device
+$ voicecast join <ticket> --name home  # ...calling it something else here
 $ voicecast invite --space work        # invite into a named space
 $ voicecast revoke <name>
 $ voicecast revoke <name> --space work
@@ -255,6 +257,27 @@ that cannot exist sends the reader hunting for somewhere that is not there.
 There is no `init`. A node creates its identity and founds its own space the
 first time it starts, so there is nothing for a separate command to do — and
 one that did nothing would be worse than its absence.
+
+`preview` exists because the joining device cannot choose what it joins. The
+space is written into the ticket when the invite is minted, so `join` on its
+own is a command whose effect you cannot see until it has happened:
+
+```
+$ voicecast preview voicecast://join/AE7Q...
+joins 'work'
+From 3332cac4fca203fa
+Expires in 4m 12s. Single use.
+Join it with:  voicecast join <the same code>
+```
+
+It is local. No device is contacted, the single-use token is not spent, and
+the same errors `join` would raise — expired, truncated, not an invite —
+arrive here instead, before anything is committed to. The app's Join dialog
+is the same two steps.
+
+By default the joined space takes the name the inviter uses for it; `--name`
+overrides that. The label is local either way: it is how *this* device writes
+`work/laptop`, and nothing about it is sent to anyone.
 
 `invite` needs no `--print-only` either. The ticket goes to stdout on its own;
 the expiry note and the instruction for the other device go to stderr. So

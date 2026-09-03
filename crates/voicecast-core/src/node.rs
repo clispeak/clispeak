@@ -254,8 +254,16 @@ impl Node {
     }
 
     /// Join a space using someone else's invite.
-    pub async fn join(&self, ticket: &str) -> Response {
-        join(&self.shared, &self.transport, ticket).await
+    ///
+    /// `label` is what this device will call it; `None` takes the inviter's
+    /// name for it.
+    pub async fn join(&self, ticket: &str, label: Option<String>) -> Response {
+        join(&self.shared, &self.transport, ticket, label).await
+    }
+
+    /// Read an invite without acting on it.
+    pub fn preview(&self, ticket: &str) -> Response {
+        preview(ticket)
     }
 
     /// Change this device's label.
@@ -584,7 +592,8 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
             }
         }
         Request::Invite { space } => invite(shared, space.as_deref()).await,
-        Request::Join { ticket } => join(shared, transport, &ticket).await,
+        Request::Join { ticket, label } => join(shared, transport, &ticket, label).await,
+        Request::Preview { ticket } => preview(&ticket),
         Request::Devices => devices(shared).await,
         Request::Rename { name } => rename(shared, &name).await,
         Request::Revoke { name, space } => revoke(shared, &name, space.as_deref()).await,
@@ -1787,7 +1796,10 @@ async fn invite(shared: &Arc<Shared>, space: Option<&str>) -> Response {
     // Recorded on the ticket rather than decided when the joiner arrives:
     // those are different questions, and the person pressing the button was
     // answering the first one.
-    let ticket = Ticket::mint(shared.identity.id().to_string(), Some(space));
+    // The label as well as the id: the id picks the roster, the label is what
+    // the joining device can show a person before it has spoken to anyone.
+    let label = shared.spaces.lock().await.label(&space).to_string();
+    let ticket = Ticket::mint(shared.identity.id().to_string(), Some(space), Some(label));
     let url = match ticket.to_url() {
         Ok(u) => u,
         Err(e) => {
@@ -1805,7 +1817,12 @@ async fn invite(shared: &Arc<Shared>, space: Option<&str>) -> Response {
 }
 
 /// Join a space using someone else's ticket.
-async fn join(shared: &Arc<Shared>, transport: &Arc<Transport>, raw: &str) -> Response {
+async fn join(
+    shared: &Arc<Shared>,
+    transport: &Arc<Transport>,
+    raw: &str,
+    label: Option<String>,
+) -> Response {
     let ticket = match Ticket::parse(raw) {
         Ok(t) => t,
         Err(e) => {
@@ -1814,10 +1831,29 @@ async fn join(shared: &Arc<Shared>, transport: &Arc<Transport>, raw: &str) -> Re
             };
         }
     };
-    match do_join(shared, transport, &ticket).await {
+    match do_join(shared, transport, &ticket, label.as_deref()).await {
         Ok((count, space)) => Response::Joined {
             members: count,
             space,
+        },
+        Err(e) => Response::Error {
+            message: format!("{e:#}"),
+        },
+    }
+}
+
+/// Read an invite without acting on it.
+///
+/// No network and no state: `Ticket::parse` already refuses an expired or
+/// mangled code with a sentence the person can act on, so the failure a
+/// preview reports is the same one the join would have reported — just
+/// before rather than after committing to it.
+fn preview(raw: &str) -> Response {
+    match Ticket::parse(raw) {
+        Ok(t) => Response::Preview {
+            label: t.label.clone(),
+            expires_in: t.remaining(),
+            endpoint_id: t.endpoint_id.clone(),
         },
         Err(e) => Response::Error {
             message: format!("{e:#}"),
@@ -1829,6 +1865,7 @@ async fn do_join(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
     t: &Ticket,
+    wanted: Option<&str>,
 ) -> Result<(usize, String)> {
     let peer = t.endpoint_id.parse().context("bad endpoint id in ticket")?;
     let conn = transport
@@ -1852,6 +1889,7 @@ async fn do_join(
             member,
             members,
             space: _,
+            label: theirs,
         } => {
             let mut spaces = shared.spaces.lock().await;
             // Adopt the space's membership wholesale rather than blending it
@@ -1869,15 +1907,31 @@ async fn do_join(
             // it stops a fresh device ending up with an abandoned space
             // beside the one it just joined.
             let me = shared.identity.id().to_string();
-            let label = if spaces.current_is_unshared(&me) {
-                let kept = spaces.label(spaces.default_id()).to_string();
+            // What to call it here. The joiner's choice first, then the name
+            // the inviter uses — live from the reply, which beats the ticket's
+            // copy if the space was renamed after the invite was minted — then
+            // the ticket, and only then a counter. Naming it `space-2` when
+            // every hop carried "work" was issue #36: the person is told what
+            // they are joining and then shown something else.
+            let name = pick_space_label(&spaces, [wanted, theirs.as_deref(), t.label.as_deref()]);
+            let id = if spaces.current_is_unshared(&me) {
+                // The empty space every node founds for itself is displaced
+                // rather than kept beside the one just joined. Its name goes
+                // with it: "main" was a placeholder for a roster that no
+                // longer exists, and keeping it would be the same bug in the
+                // other direction.
                 spaces.replace_current(joined);
-                kept
+                spaces.default_id().to_string()
             } else {
-                let name = next_space_label(&spaces);
-                spaces.insert(joined, &name);
-                name
+                spaces.insert(joined, &name)
             };
+            // Renaming after the fact rather than at insert, because the
+            // displacing branch re-keys the space and never sees `name`.
+            // A clash cannot happen — `pick_space_label` already skipped
+            // every taken name — but a refusal here is not worth failing a
+            // join that has already been accepted on the other side.
+            let _ = spaces.set_label(&id, &name);
+            let label = spaces.label(&id).to_string();
             spaces.save(&shared.spaces_path)?;
             Ok((count, label))
         }
@@ -2100,6 +2154,29 @@ async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
 /// labels are local, like device labels. Numbered rather than guessed from
 /// the inviter, because a guess that collides is worse than a placeholder
 /// somebody renames.
+/// The first of `wanted` that is usable as a local name, else a counter.
+///
+/// "Usable" means non-empty, legal, and not already the name of a different
+/// space here — labels qualify device names, so `work/laptop` cannot mean two
+/// things. Falling through the whole list is normal: it is what a ticket
+/// minted before labels travelled does, and what a second join from the same
+/// space does.
+fn pick_space_label<'a>(
+    spaces: &Spaces,
+    wanted: impl IntoIterator<Item = Option<&'a str>>,
+) -> String {
+    for candidate in wanted.into_iter().flatten() {
+        let candidate = candidate.trim();
+        if candidate.is_empty() || candidate.contains('/') || candidate.contains(',') {
+            continue;
+        }
+        if spaces.by_label(candidate).is_none() {
+            return candidate.to_string();
+        }
+    }
+    next_space_label(spaces)
+}
+
 fn next_space_label(spaces: &Spaces) -> String {
     (2..)
         .map(|n| format!("space-{n}"))
@@ -2544,10 +2621,15 @@ async fn accept_join(
         .get(&space_id)
         .map(|r| r.members().cloned().collect())
         .unwrap_or_default();
+    let label = spaces.label(&space_id).to_string();
     PeerMessage::JoinAccepted {
         member,
         members,
         space: Some(space_id),
+        // The name as it stands now, which is what the joiner should adopt.
+        // The ticket's copy was written when the invite was minted and is
+        // stale if the space has been renamed since.
+        label: Some(label),
     }
 }
 
@@ -2683,5 +2765,83 @@ mod tests {
         assert!(second.is_err(), "a second node must not take the socket");
         let message = second.unwrap_err().to_string();
         assert!(message.contains("already running"), "{message}");
+    }
+
+    /// The name travels; it should be used. Issue #36.
+    ///
+    /// Joining `work` used to produce a space called `space-2` on the joining
+    /// device — the label rides on both the ticket and the acceptance, and
+    /// `do_join` read neither. Since spaces are addressed by label, a locally
+    /// invented name makes every `work/laptop` a guess.
+    #[test]
+    fn a_joined_space_keeps_the_name_it_arrived_with() {
+        let spaces = Spaces::default();
+        assert_eq!(
+            pick_space_label(&spaces, [None, Some("work"), None]),
+            "work"
+        );
+    }
+
+    /// The joiner's own choice beats the inviter's name for it.
+    ///
+    /// The label is local — it is how *this* device writes `work/laptop` —
+    /// so two people can reasonably disagree and the one joining decides.
+    #[test]
+    fn the_joiner_gets_the_last_word_on_the_name() {
+        let spaces = Spaces::default();
+        assert_eq!(
+            pick_space_label(&spaces, [Some("theirs"), Some("ours"), None]),
+            "theirs"
+        );
+    }
+
+    /// A name already in use here falls through to the next candidate.
+    ///
+    /// Labels qualify device names, so two spaces called `work` would make
+    /// `work/laptop` mean two things.
+    #[test]
+    fn a_name_already_taken_is_skipped() {
+        use iroh_base::SecretKey;
+        let mut spaces = Spaces::default();
+        spaces.insert(
+            Roster::found(&SecretKey::from_bytes(&[1; 32]), "me"),
+            "work",
+        );
+        assert_eq!(
+            pick_space_label(&spaces, [Some("work"), None, None]),
+            "space-2"
+        );
+    }
+
+    /// A ticket that names nothing still produces a usable name.
+    ///
+    /// That is what a ticket minted before labels travelled looks like, and
+    /// it is not an error — the counter is the honest fallback.
+    #[test]
+    fn nothing_to_go_on_falls_back_to_the_counter() {
+        let spaces = Spaces::default();
+        assert_eq!(pick_space_label(&spaces, [None, None, None]), "space-2");
+    }
+
+    /// A label carrying a separator is refused rather than stored.
+    ///
+    /// `/` and `,` are how selectors are written, so a space called `a/b`
+    /// would be unaddressable — and the name comes off the wire, from a
+    /// device this one has just met.
+    #[test]
+    fn a_name_that_would_break_a_selector_is_not_taken() {
+        let spaces = Spaces::default();
+        assert_eq!(
+            pick_space_label(&spaces, [Some("a/b"), None, None]),
+            "space-2"
+        );
+        assert_eq!(
+            pick_space_label(&spaces, [Some("a,b"), None, None]),
+            "space-2"
+        );
+        assert_eq!(
+            pick_space_label(&spaces, [Some("   "), None, None]),
+            "space-2"
+        );
     }
 }

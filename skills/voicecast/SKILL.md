@@ -158,10 +158,27 @@ voicecast app, which is the node. On Linux it is a Flatpak, on macOS an app in
 voicecast invite
 ```
 
-That prints a ticket and the app shows a QR code. On the other device, scan it
-or run `voicecast join <ticket>`. Invites are single use and last five
-minutes. If a join is refused saying no invite is open, the ticket was used,
-expired, or the inviting app restarted — ask for a fresh one.
+That prints a ticket and the app shows a QR code. On the other device:
+
+```bash
+voicecast preview <ticket>   # what it would join, without joining
+voicecast join <ticket>      # ...and join it
+```
+
+**Always `preview` before `join` when helping someone set up.** Which space a
+ticket joins was decided by whoever minted it, not by the device using it, so
+`join` on its own is a command whose effect neither of you can see beforehand.
+`preview` is local — it contacts nobody and does not spend the ticket — and it
+reports the same failures `join` would: expired, truncated, not an invite. Read
+the space name back to the user before joining; a space joined by mistake has
+to be left on both devices.
+
+Add `--name` to `join` if the user wants it called something else here. The
+name is local to the device it is set on.
+
+Invites are single use and last five minutes. If a join is refused saying no
+invite is open, the ticket was used, expired, or the inviting app restarted —
+ask for a fresh one.
 
 **Nothing is being heard.** In order: `voicecast status` on that device for
 `muted` or a quiet window; `voicecast devices` to check it is still in the

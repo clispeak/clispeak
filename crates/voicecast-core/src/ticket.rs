@@ -35,16 +35,29 @@ pub struct Ticket {
     /// one the person pressing the button was answering.
     #[serde(default)]
     pub space: Option<String>,
+    /// What the inviter calls that space, for the joiner to read.
+    ///
+    /// `space` above is an id — `<founder>:<joined_at>` — which is exactly
+    /// right for deciding *which* roster and exactly wrong for showing to a
+    /// person. The label rides along so a joining device can say "this joins
+    /// work" before it has spoken to anyone, which is the only moment the
+    /// answer is still useful: after the round trip the join has happened.
+    ///
+    /// Advisory, and not to be trusted for anything but display — it is
+    /// whatever the inviting device wrote. The id is what selects the roster.
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 impl Ticket {
     /// Mint a ticket for `endpoint_id`, valid for [`TTL_SECS`].
-    pub fn mint(endpoint_id: String, space: Option<String>) -> Self {
+    pub fn mint(endpoint_id: String, space: Option<String>, label: Option<String>) -> Self {
         Self {
             endpoint_id,
             token: random_token(),
             expires_at: now() + TTL_SECS,
             space,
+            label,
         }
     }
 

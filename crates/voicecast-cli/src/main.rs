@@ -210,6 +210,15 @@ enum Command {
     Join {
         /// The `voicecast://join/...` string.
         ticket: String,
+        /// What to call the space on this device. Defaults to the inviter's
+        /// name for it.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Say what an invite would join, without joining it.
+    Preview {
+        /// The `voicecast://join/...` string.
+        ticket: String,
     },
     /// List devices in this space.
     Devices,
@@ -524,7 +533,11 @@ async fn run() -> anyhow::Result<u8> {
             Ok(req) => req,
             Err(code) => return Ok(code),
         },
-        Some(Command::Join { ticket }) => Request::Join {
+        Some(Command::Join { ticket, name }) => Request::Join {
+            ticket: ticket.clone(),
+            label: name.clone(),
+        },
+        Some(Command::Preview { ticket }) => Request::Preview {
             ticket: ticket.clone(),
         },
         // Handled above, before the node is contacted.
@@ -960,6 +973,28 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
                 expires_in % 60
             ));
             err("On the other device:  voicecast join <the line above>");
+            exit::OK
+        }
+        Response::Preview {
+            label,
+            expires_in,
+            endpoint_id,
+        } => {
+            // The space first, because it is the thing the invite does not
+            // let you choose and the reason this command exists.
+            match label {
+                Some(l) => out(&format!("joins '{l}'")),
+                // A ticket minted before labels travelled. Saying so beats
+                // inventing a name for a space we have not been told about.
+                None => out("joins the inviting device's default space"),
+            }
+            err(&format!(
+                "From {}\nExpires in {}m {}s. Single use.",
+                &endpoint_id[..16.min(endpoint_id.len())],
+                expires_in / 60,
+                expires_in % 60
+            ));
+            err("Join it with:  voicecast join <the same code>");
             exit::OK
         }
         Response::Done => exit::OK,
