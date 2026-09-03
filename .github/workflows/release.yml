@@ -152,11 +152,21 @@ jobs:
       - name: Build the binaries
         run: cargo build --release -p voicecast-app -p voicecast-cli
 
+      # The runtime is installed by name rather than left to
+      # `--install-deps-from`, which resolves quietly and gives nothing to
+      # read when it does not. These are the two the manifest names.
+      - name: Flatpak runtime
+        run: |
+          flatpak install --user -y flathub \
+            org.gnome.Platform//49 org.gnome.Sdk//49
+          flatpak --user list --runtime
+
       - name: Build the Flatpak
         working-directory: packaging/flatpak
         run: |
-          flatpak-builder --user --install-deps-from=flathub \
-            --repo=repo --force-clean build-dir org.voicecast.App.yml
+          set -x
+          flatpak-builder --user --repo=repo --force-clean \
+            build-dir org.voicecast.App.yml
           flatpak build-bundle repo voicecast.flatpak org.voicecast.App
 
       - uses: actions/upload-artifact@v4
