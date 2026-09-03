@@ -357,22 +357,30 @@ has no espeak at all, and the macOS bundle carries only Piper. So the floor
 exists on a Linux host whose distribution happens to provide espeak-ng, and
 nowhere else.
 
-**The app and the daemon then disagree about what to do**, which is worth
-knowing before reading a `no_engine`. They pick engines in separate code:
-`speech_engine()` in `app/src-tauri/src/lib.rs` for the app, `fallback()` in
-`crates/voicecast-daemon/src/main.rs` for `voicecastd`.
+**What happens when Piper will not start** is worth knowing before reading a
+`no_engine`. The app and the daemon pick engines in separate code —
+`speech_engine()` in `app/src-tauri/src/lib.rs`, `fallback()` in
+`crates/voicecast-daemon/src/main.rs` — and only Linux has a floor to fall to.
 
 | | Piper missing, espeak present | Piper missing, espeak missing |
 |---|---|---|
-| `voicecastd`, Unix | speaks via espeak | **refuses to start** |
-| `voicecastd`, Windows | — | starts silent, carrying Piper's reason |
-| app, Unix | speaks via espeak | starts silent, generic reason |
-| app, Windows | — | starts silent, carrying Piper's reason |
+| `voicecastd`, Linux | speaks via espeak | refuses to start, naming both |
+| `voicecastd`, macOS and Windows | — | starts silent, carrying Piper's reason |
+| app, Linux | speaks via espeak | starts silent, carrying Piper's reason |
+| app, macOS and Windows | — | starts silent, carrying Piper's reason |
 
-On macOS both Unix rows are reached with espeak absent, which is the ordinary
-case there. Issue #27 covers the two consequences: the daemon's refusal names
-an Arch package on a Mac, and the app's generic reason replaces whatever Piper
-actually said.
+**Every one of those reports Piper's own error**, because it is the part that
+names something a person can act on — a missing dylib, a signature the OS
+refuses, an Intel binary on arm64. Until #27 the two Unix rows did not: the
+daemon gated on `unix` rather than Linux, so macOS refused to start over an
+espeak floor it has never had and recommended an Arch package, and the app
+replaced Piper's reason with "no speech engine is installed on this device",
+which is false on any Mac where Piper is installed and merely broken.
+Decision 30 records the split.
+
+`voicecastd` on Linux still refuses rather than starting silent, and that is
+deliberate: espeak-ng is a genuine floor there, so reaching this case means
+the machine has nothing at all rather than one broken install.
 
 **iOS reaches no engine at all.** It compiles — the five-target rule sees to
 that — but it falls into the Unix branch of `speech_engine()`, where both
