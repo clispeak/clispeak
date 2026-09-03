@@ -48,6 +48,14 @@ use crate::{EngineError, SpeechEngine, Tier, Voice};
 /// has to land mid-sentence, and a wait that holds something is issue #58.
 const POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// How long to wait for a queued utterance to actually begin.
+///
+/// `speakUtterance` is asynchronous, so there is a window in which nothing is
+/// speaking yet and nothing is wrong. Long enough to cover the audio session
+/// and synthesiser starting; short enough that a chunk which finishes inside
+/// it costs a caller half a second rather than a hang.
+const START_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// Speech through the platform synthesiser.
 pub struct IosEngine {
     synth: MainThreadBound<objc2::rc::Retained<AVSpeechSynthesizer>>,
@@ -143,10 +151,30 @@ impl SpeechEngine for IosEngine {
 
         // Blocking, because the queue expects it. Nothing is held across the
         // sleep: `get_on_main` returns a `bool` and takes no lock with it.
-        while self
-            .synth
-            .get_on_main(|synth| unsafe { synth.isSpeaking() })
-        {
+        //
+        // **Wait for it to start before waiting for it to stop.**
+        // `speakUtterance` queues and returns; `isSpeaking()` is still false
+        // for a moment afterwards while the audio session and synthesiser
+        // spin up. A loop that only waits while speaking therefore exits
+        // immediately and reports a four-second sentence spoken in 0.4s —
+        // which is #61 on Android exactly, where `speak` returned on queueing
+        // and `--wait` lied to its caller about having been heard.
+        let deadline = std::time::Instant::now() + START_GRACE;
+        let mut started = false;
+        loop {
+            let speaking = self
+                .synth
+                .get_on_main(|synth| unsafe { synth.isSpeaking() });
+            if speaking {
+                started = true;
+            } else if started || std::time::Instant::now() >= deadline {
+                // Either it spoke and finished, or it never started within
+                // the grace. The second is not treated as an error: an
+                // utterance short enough to complete inside the grace looks
+                // identical from here, and reporting a failure for a message
+                // that was spoken would be the worse of the two mistakes.
+                break;
+            }
             std::thread::sleep(POLL);
         }
         Ok(())

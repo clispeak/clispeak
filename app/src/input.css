@@ -62,10 +62,18 @@
     color-scheme: dark;
   }
   body {
-    /* Safe areas matter on a phone: content otherwise slides under the
-       status bar and the gesture pill. */
+    /* The status bar only. Content would otherwise slide under it.
+
+       **Not the bottom.** The tab bar carries its own
+       `pb-[env(safe-area-inset-bottom)]`, which is the right place for it: a
+       bottom bar should reach the physical edge of the screen with its
+       *background*, and hold its icons above the home indicator with its
+       padding. Applying the inset here as well moved the whole bar up by the
+       inset a second time, leaving the icons floating with a band of empty
+       nav beneath them — which is what Patrick saw on the phone.
+
+       One inset, at the element that draws to the edge. */
     padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
     overscroll-behavior: none;
   }
   /* Touch targets. Anything tappable is at least 44px tall. */
