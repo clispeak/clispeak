@@ -67,6 +67,7 @@ fn portability() -> anyhow::Result<()> {
     }
 
     frontend_dialogs()?;
+    jni_keep_rules()?;
 
     println!("portability ok: {} crates clean", PORTABLE.len());
     Ok(())
@@ -126,6 +127,81 @@ fn frontend_dialogs() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// Fail if a class Rust looks up over JNI has no ProGuard keep rule.
+///
+/// R8 runs on release builds only, and it decides what to delete by looking
+/// for callers. `voicecast-engine` reaches its Kotlin by *name* —
+/// `find_class("com/voicecast/app/Speech")` — which no static analysis can
+/// see, so R8 renamed the class and the release APK died on launch with
+/// `NoSuchMethodError` while the debug APK, which does not minify, was fine.
+///
+/// That is the worst shape a bug can have here: every test anyone had run on
+/// a real phone was a debug build, so the fault existed only in the artefact
+/// built for other people. See issue #41.
+///
+/// Mechanical because the failure mode is adding a fourth class and finding
+/// out from a crash report. Comments are skipped so this file's own
+/// explanation cannot satisfy the rule it enforces.
+fn jni_keep_rules() -> anyhow::Result<()> {
+    let sources = PathBuf::from("crates/voicecast-engine/src");
+    let rules = PathBuf::from("app/src-tauri/gen/android/app/proguard-rules.pro");
+    let Ok(text) = std::fs::read_to_string(&rules) else {
+        // Not a checkout with an Android project in it; nothing to say.
+        return Ok(());
+    };
+
+    // What the rules already cover, as `com.voicecast.app.Speech`.
+    let kept: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("-keep"))
+        .filter_map(|l| l.split_whitespace().nth(2).map(str::to_string))
+        .collect();
+
+    let mut findings = Vec::new();
+    for file in rust_files(&sources)? {
+        let body = std::fs::read_to_string(&file)?;
+        for (i, line) in body.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for (at, _) in line.match_indices(NEEDLE) {
+                let rest = &line[at + 1..];
+                let Some(end) = rest.find(QUOTE) else {
+                    continue;
+                };
+                let dotted = rest[..end].replace('/', ".");
+                if !kept.contains(&dotted) {
+                    findings.push(format!(
+                        "  {}:{}: {dotted} is looked up by name and has no keep rule",
+                        file.display(),
+                        i + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    if !findings.is_empty() {
+        eprintln!("classes reached over JNI must survive R8:");
+        for f in &findings {
+            eprintln!("{f}");
+        }
+        anyhow::bail!(
+            "add `-keep class <name> {{ *; }}` to \
+             app/src-tauri/gen/android/app/proguard-rules.pro"
+        );
+    }
+    Ok(())
+}
+
+/// An opening quote followed by the package every JNI lookup starts with.
+///
+/// Assembled rather than written literally so this file does not contain the
+/// pattern it searches for, which would make the gate find itself.
+const QUOTE: char = '"';
+const NEEDLE: &str = "\"com/voicecast/";
 
 /// Every `.rs` file under `dir`, recursively.
 fn rust_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {

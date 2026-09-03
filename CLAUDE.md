@@ -25,6 +25,32 @@ divergence belongs in `voicecast-engine` or the Tauri shell. Anything that
 cannot be expressed portably gets a trait, not a conditional in the middle of
 business logic.
 
+**The divergence that has actually bitten was undeclared.** `portability`
+finds platform code that *announces itself* with a `cfg`. Every one of these
+compiled on all five targets and passed every gate:
+
+| | |
+|---|---|
+| `/etc/hostname` | a Linux file, so macOS and Windows called every device "this device" (#38) |
+| `Command::new("npx")` | resolves `npx.cmd` on no Windows box |
+| `target/release/voicecast` | has no `.exe` |
+| `sun_path` | 104 bytes on macOS; a long socket path refuses to bind |
+| `isMinifyEnabled` | true only for release, so R8 deleted the Kotlin the engine calls (#41) |
+
+A file path, a binary name, a separator, a length limit, a build flag. None is
+platform-*shaped*; a `cfg` on any of them would have been louder and would
+have been caught. When you write one, ask what the other four targets have
+there — and note the last row is not a platform difference at all. It is a
+difference between two builds for the same platform, and it fooled us the
+same way, because everything anyone had run on a real phone was a debug build.
+
+**Compiling on five is a weaker claim than it reads as.** `cargo test`
+runs once, on `ubuntu-latest`. The five matrix jobs only build. So a test
+asserting cross-platform behaviour is executed on Linux and nowhere else, and
+"CI green" means *compiles* on five, *tested* on one. That is a deliberate
+trade — macOS runners bill at ten times Linux — but say "build-verified" when
+that is what happened.
+
 ## Where things live
 
 | Crate | Holds | Must stay portable |
@@ -111,3 +137,10 @@ things no CI can cover are exactly the ones that have bitten: NAT traversal,
 Android doze, network switching, audio actually coming out of a speaker, and
 sockets left behind by a node that died. When a change touches those, test it
 on hardware and say which hardware.
+
+**Test the build you intend to ship.** Android's release build minifies and its
+debug build does not, so for months "tested on a phone" meant a build nobody
+would ever download — and the first release APK to reach a real phone died on
+launch (#41). Before a release, install the *release* artefact and open it. The
+same question applies to any packaged form: the Flatpak is `cargo build`, not
+`tauri build`, and does not regenerate the CSS.
