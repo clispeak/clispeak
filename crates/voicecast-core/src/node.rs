@@ -240,6 +240,21 @@ impl Node {
         self.shared.speaker.shutdown();
     }
 
+    /// Stop the node entirely, including its endpoint on the network.
+    ///
+    /// [`shutdown`] ends the speaking thread and leaves the transport online,
+    /// which is right when the process is going away anyway. It is wrong when
+    /// the node has failed to start and the process continues: the endpoint
+    /// stays bound under this device's secret key, so peers resolve the
+    /// identity to an address that answers and then does nothing. The app hit
+    /// exactly that — issue #72.
+    ///
+    /// [`shutdown`]: Node::shutdown
+    pub async fn close(&self) {
+        self.shutdown();
+        self.transport.close().await;
+    }
+
     /// Install what `voicecast show` and `voicecast quit` should do.
     ///
     /// Called by the app so the CLI can reach a window it cannot see — which

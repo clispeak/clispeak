@@ -39,6 +39,32 @@ pub struct NodeStatus {
     /// silent without saying what to do about it, and the sentence that
     /// names the fault was reaching only whoever sent a message.
     pub reason: Option<String>,
+    /// Whether the node is still coming up. Transient, and worth saying so.
+    pub starting: bool,
+    /// Why the node is not running at all.
+    ///
+    /// Distinct from [`reason`], which is about an engine inside a node that
+    /// *is* running. This one means there is no node: a locked keyring, an
+    /// unwritable config directory, or another node already holding the
+    /// socket. It used to go to stderr and the window said "starting…" until
+    /// it was closed. Issue #72.
+    ///
+    /// [`reason`]: NodeStatus::reason
+    pub failed: Option<String>,
+}
+
+impl Default for NodeStatus {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            device_id: String::new(),
+            engine: "unknown".into(),
+            fallback: true,
+            reason: None,
+            starting: false,
+            failed: None,
+        }
+    }
 }
 
 /// Where the command-line tool should live on the host.
@@ -449,9 +475,65 @@ pub struct AppState {
     node: Arc<Node>,
 }
 
+/// What became of the node this app wraps.
+///
+/// Managed before the node exists, so the interface can be told which of the
+/// three states it is in. [`AppState`] is registered only once a node is
+/// running, so every command that needs one fails with "state not managed"
+/// until then — which the interface could only read as "still starting", and
+/// so read for ever when the node had actually failed. Issue #72.
+enum Startup {
+    /// The node is still being built. Genuinely transient.
+    Starting,
+    /// It is up.
+    Running(Arc<Node>),
+    /// It is not, and this is why. A reason nobody can see is not a reason:
+    /// the failure went to stderr, which for an app launched from Finder is
+    /// nowhere at all.
+    Failed(String),
+}
+
+/// Holds [`Startup`] so the interface can ask what became of the node.
+pub struct StartupState(std::sync::Mutex<Startup>);
+
+impl StartupState {
+    fn set(&self, next: Startup) {
+        *self.0.lock().expect("startup lock") = next;
+    }
+}
+
 #[tauri::command]
-fn node_status(state: State<'_, AppState>) -> NodeStatus {
-    match state.node.status() {
+fn node_status(state: State<'_, StartupState>) -> NodeStatus {
+    status_of(&state.0.lock().expect("startup lock"))
+}
+
+/// Turn a startup state into what the interface should show.
+///
+/// Split from the command so the three branches can be tested; a
+/// `tauri::State` cannot be built outside a running app, which is part of why
+/// "starting for ever" was never caught.
+fn status_of(startup: &Startup) -> NodeStatus {
+    let node = match startup {
+        // Still the honest answer, and now it is an answer rather than the
+        // absence of one.
+        Startup::Starting => {
+            return NodeStatus {
+                starting: true,
+                ..NodeStatus::default()
+            };
+        }
+        Startup::Failed(why) => {
+            return NodeStatus {
+                engine: "unavailable".into(),
+                fallback: true,
+                failed: Some(why.clone()),
+                ..NodeStatus::default()
+            };
+        }
+        Startup::Running(node) => Arc::clone(node),
+    };
+
+    match node.status() {
         Response::Status {
             device_id,
             engine,
@@ -459,18 +541,19 @@ fn node_status(state: State<'_, AppState>) -> NodeStatus {
             engine_reason,
             ..
         } => NodeStatus {
-            name: state.node.name().to_string(),
+            name: node.name().to_string(),
             device_id,
             engine,
             fallback,
             reason: engine_reason,
+            ..NodeStatus::default()
         },
         _ => NodeStatus {
-            name: state.node.name().to_string(),
-            device_id: state.node.id(),
+            name: node.name().to_string(),
+            device_id: node.id(),
             engine: "unknown".into(),
             fallback: true,
-            reason: None,
+            ..NodeStatus::default()
         },
     }
 }
@@ -1155,6 +1238,20 @@ async fn start_node() -> anyhow::Result<Node> {
     // had bound no socket and explained nothing. Stderr is a poor channel for
     // an app launched from Finder, but `open -a` and a terminal launch both
     // show it, which is how anybody debugging this starts.
+    // Asked before the key store, and long before the transport. Reaching
+    // this point with another node already running used to mean a second
+    // endpoint online under the same secret key and a window that looked
+    // healthy — the failure only surfaced at `serve()`, by which time the
+    // damage was done. Desktop only: a phone has no socket and no CLI.
+    #[cfg(desktop)]
+    if voicecast_core::ipc::node_is_listening().await {
+        anyhow::bail!(
+            "another voicecast node is already running on this machine. \
+             Only one can hold this device's identity at a time — quit the \
+             other one, or use the window it already has"
+        );
+    }
+
     eprintln!("opening the key store…");
     let store = key_store()?;
     let identity = Identity::load_or_create(store.as_ref())?;
@@ -1231,6 +1328,10 @@ pub fn run() {
                 }
             }
 
+            // Registered before anything can fail, so the interface has
+            // somewhere to read an answer from even when there is no node.
+            app.manage(StartupState(std::sync::Mutex::new(Startup::Starting)));
+
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match start_node().await {
@@ -1240,6 +1341,9 @@ pub fn run() {
                         handle.manage(AppState {
                             node: Arc::clone(&node),
                         });
+                        handle
+                            .state::<StartupState>()
+                            .set(Startup::Running(Arc::clone(&node)));
 
                         // Give the CLI a way to reach a window it cannot see.
                         // This matters most where the tray icon is collapsed
@@ -1267,10 +1371,24 @@ pub fn run() {
                             node.serve().await
                         };
                         if let Err(e) = outcome {
-                            eprintln!("node stopped: {e:#}");
+                            let why = format!("{e:#}");
+                            eprintln!("node stopped: {why}");
+                            // Taken off the network, not merely reported. The
+                            // transport is already bound by this point, so a
+                            // node that cannot claim the socket was leaving a
+                            // second endpoint online under this device's
+                            // secret key — peers reaching whichever the relay
+                            // saw last, while the CLI reached the other one.
+                            // Issue #72.
+                            node.close().await;
+                            handle.state::<StartupState>().set(Startup::Failed(why));
                         }
                     }
-                    Err(e) => eprintln!("could not start node: {e:#}"),
+                    Err(e) => {
+                        let why = format!("{e:#}");
+                        eprintln!("could not start node: {why}");
+                        handle.state::<StartupState>().set(Startup::Failed(why));
+                    }
                 }
             });
             Ok(())
@@ -1326,8 +1444,19 @@ pub fn run() {
                 let _ = _window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running voicecast");
+        .build(tauri::generate_context!())
+        .expect("error while running voicecast")
+        .run(|_app, _event| {
+            // Closing the window hides it, so on macOS the app is still
+            // running with no window and clicking the Dock icon is the
+            // obvious way back. Without this the click does nothing at all:
+            // `Reopen` is delivered and was never handled, and the tray menu
+            // was the only route to a window the user had just asked for.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                reveal(_app);
+            }
+        });
 }
 
 /// A tray icon so the user can see the node is running, and stop it.
@@ -1525,5 +1654,40 @@ mod report_tests {
             detail: None,
         };
         assert!(spoken_or_why(&[row(Status::Muted), row(Status::Spoken)]).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    /// Issue #72. These three were indistinguishable to the interface,
+    /// because the only signal it had was whether `node_status` errored —
+    /// and it errored identically for "not registered yet" and "never will
+    /// be".
+    #[test]
+    fn the_three_states_are_distinguishable() {
+        let starting = status_of(&Startup::Starting);
+        assert!(starting.starting, "a node coming up says so");
+        assert!(starting.failed.is_none());
+
+        let failed = status_of(&Startup::Failed("the keychain is locked".into()));
+        assert!(!failed.starting, "a failure is not a transient state");
+        assert_eq!(failed.failed.as_deref(), Some("the keychain is locked"));
+    }
+
+    /// The reason has to survive to the interface verbatim, since it is the
+    /// only place it can be read: stderr is nowhere for an app opened from
+    /// Finder.
+    #[test]
+    fn the_reason_is_carried_not_summarised() {
+        let why = "another voicecast node is already running on this machine";
+        let status = status_of(&Startup::Failed(why.into()));
+        assert_eq!(status.failed.as_deref(), Some(why));
+        assert_eq!(
+            status.engine, "unavailable",
+            "a node that does not exist has no engine, and 'unknown' would \
+             read as a device that might still speak"
+        );
     }
 }

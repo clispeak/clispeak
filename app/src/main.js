@@ -247,6 +247,25 @@ async function refresh() {
   try {
     status = await invoke("node_status");
   } catch {
+    // The command itself being unreachable is a different thing from the
+    // node having failed, and is genuinely transient: it means the app is
+    // still registering its state.
+    $("ident").textContent = "starting…";
+    return;
+  }
+
+  // Asked first, because none of the rest of this means anything when there
+  // is no node. `starting` is transient and says so; `failed` is not, and
+  // used to be indistinguishable from it — the window said "starting…" for
+  // as long as it was open.
+  $("node-banner").hidden = !status.failed;
+  $("node-reason").textContent = status.failed ?? "";
+  if (status.failed) {
+    $("ident").textContent = "not running";
+    $("name").textContent = "voicecast";
+    return;
+  }
+  if (status.starting) {
     $("ident").textContent = "starting…";
     return;
   }

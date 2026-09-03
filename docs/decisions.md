@@ -1331,3 +1331,73 @@ catch it: it looks for `cfg(target_os)` and `cfg(target_family)`, and this is
 neither. That is a real gap and it is filed separately rather than papered
 over here, because the gate's whole value is that it says "3 crates clean" and
 means it.
+## 46. A node that cannot start is a state the interface can read
+
+Three failures in the app shell, all the same shape: something went wrong, the
+reason existed, and the only place it went was stderr — which the code's own
+comment already noted is "nowhere at all" for an app launched from Finder.
+Issue #72.
+
+**A second node no longer gets as far as the network.** `serve()` refused to
+bind a socket another node held, and the app printed that and carried on. By
+then `Transport::bind` had put a second iroh endpoint online *under this
+device's secret key*, presence checks were running, and every command worked
+against the same roster and history files. The window looked healthy and
+reached nobody.
+
+Reproduced on a Mac with a `voicecastd` already running: two live endpoints on
+different UDP ports sharing one `identity.key`. It needs no second copy of the
+app — the daemon and the app are different programs that both want the socket —
+which is why LaunchServices refusing a second instance of the same bundle does
+not make this moot.
+
+`ipc::node_is_listening` is now asked first, before the key store and long
+before the transport. Connecting is the test rather than the presence of a
+name, for the same reason `bind_ipc` connects: only a refused connection proves
+nothing is listening. Verified: zero UDP sockets bound, and the keychain never
+opened — a doomed launch no longer costs a prompt either.
+
+**Why the teardown is kept as well.** The check leaves a race — another node
+can claim the socket between the check and `serve()`. `Node::close` takes the
+endpoint off the network in that case, where `shutdown` only ended the speaking
+thread. iroh documents that the UDP socket itself survives until the last
+`Endpoint` clone drops, and the presence-check task holds one for the life of
+the process, so the socket lingers; the endpoint is closed, which is what
+decides whether a peer is directed to it.
+
+**"Starting…" for ever.** `AppState` is registered only once a node exists, so
+every command failed with "state not managed" until then. The interface could
+only read that as "still coming up", and read it that way for as long as the
+window was open. A locked keyring or an unwritable config directory looked
+exactly like a node two seconds from ready.
+
+`StartupState` is now registered before anything can fail and holds one of
+three answers — starting, running, failed with a reason. `status_of` is split
+from the command so those three can be tested, since a `tauri::State` cannot be
+built outside a running app, which is part of why this was never caught.
+
+**Cost.** One more managed state and one more field on the wire to the
+frontend. The failure banner is a second red panel on the home screen,
+deliberately distinct from the engine one: that says a running device cannot
+speak, this says there is no device.
+
+## 47. Clicking the Dock icon brings the window back
+
+Closing the window hides it, because the node has to keep running for peers and
+the CLI. On macOS that leaves an app with no window, and clicking its Dock icon
+is the obvious way back — it did nothing. `RunEvent::Reopen` is delivered
+(`applicationShouldHandleReopen`, macOS only in tauri 2.11.5) and the app called
+`.run(ctx)` with no event callback at all, so every runtime event was
+discarded. The tray menu was the only route back to a window someone had just
+asked for, on the platform where the tray is least likely to be where they look.
+
+`.build(ctx)?.run(|app, event| …)` now handles it by calling the same `reveal`
+that `voicecast show` uses.
+
+**Not runtime-verified, and that is worth saying.** The handler compiles against
+the variant and the variant is `#[cfg(target_os = "macos")]` in the crate we
+depend on, but nothing here clicked a Dock icon. Doing so needs either
+accessibility permission this environment does not have, or launching a second
+bundle sharing `com.voicecast.app` with the copy already installed and running.
+The second is exactly the phantom above, so it was not worth risking to confirm
+a five-line handler.
