@@ -1032,14 +1032,20 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
         err("Open the voicecast app, or start voicecastd, then try again.");
         return Ok(exit::NO_NODE);
     }
-    let response: Response = match read_frame(&mut stream).await {
-        Ok(r) => r,
-        Err(e) => {
-            err(&format!("error: the node stopped before answering: {e:#}"));
-            err("Open the voicecast app, or start voicecastd, then try again.");
-            return Ok(exit::NO_NODE);
-        }
-    };
+    let response: Response =
+        match tokio::time::timeout(patience(&request), read_frame(&mut stream)).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                err(&format!("error: the node stopped before answering: {e:#}"));
+                err("Open the voicecast app, or start voicecastd, then try again.");
+                return Ok(exit::NO_NODE);
+            }
+            Err(_) => {
+                err("error: the node accepted the request and never answered");
+                err("It may be wedged. Quit the voicecast app and open it again.");
+                return Ok(exit::NO_NODE);
+            }
+        };
 
     // Anything without a hand-written JSON shape is still answerable in JSON:
     // the node's reply serialises as it stands. `--json` was documented as
@@ -1339,6 +1345,38 @@ fn first_line(text: &str) -> String {
     format!("{cut}…")
 }
 
+/// How long to wait for the node to answer this particular request.
+///
+/// The CLI used to wait for ever. A node wedged with its socket still open
+/// therefore hung the caller with no output and no exit, which for an agent
+/// is the worst of the failure modes: it cannot retry, report, or give up
+/// (#63). Every command here is answered in milliseconds by a healthy node,
+/// so the only reason to wait is `--wait`, which is waiting on a person's
+/// device speaking rather than on the node.
+///
+/// A wait gets what it asked for plus a margin, because the node applies the
+/// same bound and should be the one to time out — it knows *why*, and can say
+/// "queued" or "speaking" instead of leaving the caller to guess.
+fn patience(request: &Request) -> std::time::Duration {
+    use std::time::Duration;
+    /// Long enough for a node busy synthesising to get round to answering,
+    /// short enough that an agent is not stuck behind it.
+    const ORDINARY: Duration = Duration::from_secs(10);
+    /// What the node itself caps a wait at, mirrored here.
+    const MAX_WAIT: u64 = 3600;
+    /// Room for the node's own timeout to fire first and be reported.
+    const MARGIN: Duration = Duration::from_secs(15);
+
+    match request {
+        Request::Speak {
+            wait: true,
+            timeout_secs,
+            ..
+        } => Duration::from_secs(timeout_secs.unwrap_or(MAX_WAIT).min(MAX_WAIT)) + MARGIN,
+        _ => ORDINARY,
+    }
+}
+
 /// Whether this reply already has a JSON shape written for it.
 ///
 /// Those three are promised in `docs/cli.md` with named fields, so they are
@@ -1572,6 +1610,46 @@ mod display_tests {
         };
         assert_eq!(super::exit_code_for(&future, true), super::exit::USAGE);
         assert_eq!(error_kind::NO_TARGET, "no-target");
+    }
+
+    #[test]
+    fn waiting_on_a_person_is_patient_and_everything_else_is_not() {
+        use std::time::Duration;
+        use voicecast_proto::{Priority, Request};
+
+        fn speak(wait: bool, timeout_secs: Option<u64>) -> Request {
+            Request::Speak {
+                text: "hello".into(),
+                to: None,
+                priority: Priority::Normal,
+                wait,
+                voice: None,
+                timeout_secs,
+            }
+        }
+
+        // A wedged node used to hang the caller for ever, which for an agent
+        // is worse than any error: it cannot retry, report, or give up (#63).
+        assert_eq!(
+            super::patience(&Request::Status),
+            Duration::from_secs(10),
+            "an ordinary request is answered in milliseconds"
+        );
+        assert_eq!(
+            super::patience(&speak(false, None)),
+            Duration::from_secs(10)
+        );
+
+        // A wait is waiting on a device speaking, not on the node, and the
+        // node should be the one to time out: it knows why, and can say
+        // "speaking" instead of leaving the caller to guess.
+        assert!(
+            super::patience(&speak(true, Some(30))) > Duration::from_secs(30),
+            "a wait gets what it asked for plus room for the node to answer"
+        );
+
+        // An absurd request is still bounded, and matches the node's own cap.
+        assert!(super::patience(&speak(true, Some(u64::MAX))) <= Duration::from_secs(3600 + 15));
     }
 
     #[test]
