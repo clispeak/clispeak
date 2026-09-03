@@ -533,9 +533,13 @@ impl Node {
                         .accept()
                         .await
                         .context("accepting CLI connection")?;
-                    if let Err(e) = handle_cli(&shared, &transport, stream).await {
-                        eprintln!("cli: {e:#}");
-                    }
+                    let shared = Arc::clone(&shared);
+                    let transport = Arc::clone(&transport);
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_cli(&shared, &transport, stream).await {
+                            eprintln!("cli: {e:#}");
+                        }
+                    });
                 }
             }
         };
