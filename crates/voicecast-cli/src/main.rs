@@ -1220,6 +1220,14 @@ fn label(status: &Status) -> &'static str {
 /// The exit code is what an agent branches on, so it has to distinguish
 /// "everything worked" from "some of it did" from "none of it did" — see the
 /// table in `docs/cli.md`.
+/// The leading bytes of an endpoint id, enough to tell two devices apart.
+///
+/// Sixteen, matching what `voicecast devices` prints, so a reader can compare
+/// a report against that listing without counting characters.
+fn short_id(id: &str) -> &str {
+    &id[..16.min(id.len())]
+}
+
 fn report(msg_id: &str, targets: &[voicecast_proto::TargetResult], json: bool) -> u8 {
     use voicecast_proto::Status;
 
@@ -1231,6 +1239,9 @@ fn report(msg_id: &str, targets: &[voicecast_proto::TargetResult], json: bool) -
             "id": msg_id,
             "targets": targets.iter().map(|t| serde_json::json!({
                 "device": t.device,
+                // Always, and in full. A label is not unique and an agent
+                // reading this needs something that is.
+                "endpoint_id": t.endpoint_id,
                 "status": t.status,
                 "took_ms": t.took_ms,
                 "detail": t.detail,
@@ -1242,11 +1253,33 @@ fn report(msg_id: &str, targets: &[voicecast_proto::TargetResult], json: bool) -
         // noise, so keep the bare id the shell can capture.
         out(msg_id);
     } else {
+        // The id column appears only when a label stops being enough — when
+        // two rows share a device name, the table otherwise says the same
+        // thing twice and means two different machines. On the overwhelmingly
+        // common report, where every name is distinct, it would be noise.
+        //
+        // All rows or none, never just the colliding ones: a column that
+        // appears on some rows is not a column, and the first version of this
+        // pushed `spoken` two positions right on exactly the rows a reader is
+        // trying to compare.
+        let ambiguous = targets.iter().any(|t| {
+            targets
+                .iter()
+                .filter(|o| o.device == t.device)
+                .nth(1)
+                .is_some()
+        });
         for t in targets {
             let took = t.took_ms.map(|ms| format!("{:.1}s", ms as f64 / 1000.0));
+            let which = if ambiguous {
+                format!("{:<19}", format!("[{}]", short_id(&t.endpoint_id)))
+            } else {
+                String::new()
+            };
             out(&format!(
-                "  {:<16} {:<12} {}{}",
+                "  {:<16} {}{:<12} {}{}",
                 t.device,
+                which,
                 label(&t.status),
                 took.unwrap_or_default(),
                 t.detail
