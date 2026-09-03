@@ -11,9 +11,9 @@ use voicecast_core::{Identity, Node, Transport};
 use voicecast_engine::{EngineError, PiperEngine, SpeechEngine};
 // The floor engine differs by platform, and only one of them exists per
 // build; importing both unconditionally is what broke Windows last time.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use voicecast_engine::EspeakEngine;
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 use voicecast_engine::SilentEngine;
 use voicecast_keystore::DesktopKeyStore;
 
@@ -32,33 +32,54 @@ fn engine() -> Result<Arc<dyn SpeechEngine>> {
     }
 }
 
-/// What speaks when Piper does not.
+/// What speaks when Piper does not, on Linux.
 ///
-/// espeak-ng is the Unix floor, and a device is never silent while it is
-/// there — see decision 17.
-#[cfg(unix)]
-fn fallback(_piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
-    Ok(Arc::new(EspeakEngine::new().context(
-        "espeak-ng is not available. On Arch: sudo pacman -S espeak-ng",
-    )?))
+/// espeak-ng is the *Linux* floor, and a device is never silent while it is
+/// there — decision 17, which says Linux and means it. This gate used to read
+/// `unix`, which handed macOS a floor it has never had: nothing on a Mac
+/// installs espeak-ng, so the branch only ever reached its own error path,
+/// and that error recommended an Arch package.
+///
+/// Both reasons travel. Piper is the engine this platform is meant to use, so
+/// why *it* failed is the actionable half; espeak's failure arrives as the
+/// cause. The package manager goes unnamed because this one binary runs on
+/// every distribution.
+#[cfg(target_os = "linux")]
+fn fallback(piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
+    Ok(Arc::new(EspeakEngine::new().with_context(|| {
+        format!(
+            // `reason()`, not the error itself: `Display` prepends "no
+            // speech engine available", and this sentence already says so.
+            // Formatting the whole error here made the message say it twice
+            // — the same doubling this change fixes on the other platforms.
+            "no speech engine is available. Piper: {}. \
+             espeak-ng is the floor here and is also missing — install it with \
+             your distribution's package manager",
+            piper.reason()
+        )
+    })?))
 }
 
-/// Windows has no floor engine, so it carries the reason instead.
+/// Everywhere else, the reason travels and the node still starts.
 ///
-/// This used to refuse to start — decision 22 — which was right while Windows
-/// had no engine at all: the only alternative then was a node that accepted
-/// messages, reported `queued`, and said nothing. Piper runs here now, so the
-/// choice is no longer between silence and refusal. Refusing would take a
-/// node off the network over an install that can be fixed, and the sender
-/// would learn no more from a daemon that is absent than from one that
-/// explains itself.
+/// Windows and macOS have no floor engine: Windows never had one, and the
+/// macOS bundle carries only Piper. This used to refuse to start on Windows —
+/// decision 22 — which was right while Windows had no engine at all: the only
+/// alternative then was a node that accepted messages, reported `queued`, and
+/// said nothing. Piper runs on both now, so the choice is no longer between
+/// silence and refusal. Refusing would take a node off the network over an
+/// install that can be fixed, and the sender would learn no more from a
+/// daemon that is absent than from one that explains itself.
+///
+/// macOS reached the Linux branch until now and so refused to start, which was
+/// never a decision anybody made — see decision 30.
 ///
 /// Piper's own error is what travels, because it is the part that names
 /// something a person can act on. A device that cannot speak still joins
 /// spaces and still answers for itself.
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 fn fallback(piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
-    Ok(Arc::new(SilentEngine::new(piper.to_string())))
+    Ok(Arc::new(SilentEngine::new(piper.reason())))
 }
 
 #[tokio::main]

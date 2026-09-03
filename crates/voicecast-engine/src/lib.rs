@@ -59,6 +59,20 @@ pub enum EngineError {
     Unavailable(String),
 }
 
+impl EngineError {
+    /// The explanation without the preamble the `Display` impl adds.
+    ///
+    /// Use this when handing one engine's failure to [`SilentEngine`], which
+    /// reports through the same variant: passing the formatted error would
+    /// say "no speech engine available" twice in one sentence, and the reader
+    /// is already having a bad enough day.
+    pub fn reason(&self) -> &str {
+        match self {
+            EngineError::Unavailable(reason) => reason,
+        }
+    }
+}
+
 /// Whether the active engine is the intended one or a fallback.
 ///
 /// Reported to other devices so a degraded receiver explains itself rather

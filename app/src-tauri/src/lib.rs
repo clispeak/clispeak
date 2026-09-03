@@ -982,18 +982,26 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
     #[cfg(all(unix, not(target_os = "android")))]
     {
         // Best available, in order. Piper is what this platform should sound
-        // like; espeak is the floor that guarantees a device is never silent.
-        match voicecast_engine::PiperEngine::discover() {
+        // like; espeak is a floor where the host happens to provide one, which
+        // on Linux is common and on macOS is essentially never.
+        let piper = match voicecast_engine::PiperEngine::discover() {
             Ok(engine) => return Arc::new(engine),
-            Err(e) => eprintln!("piper unavailable: {e}"),
-        }
+            Err(e) => e,
+        };
+        eprintln!("piper unavailable: {piper}");
         match voicecast_engine::EspeakEngine::new() {
             Ok(engine) => Arc::new(engine),
             Err(e) => {
                 eprintln!("espeak-ng unavailable: {e}");
-                Arc::new(voicecast_engine::SilentEngine::new(
-                    "no speech engine is installed on this device",
-                ))
+                // Piper's reason, not a stand-in — the same rule the Windows
+                // branch below already follows. This said "no speech engine is
+                // installed on this device", which is a lie on any Mac whose
+                // Piper is present and merely broken: a missing dylib, a
+                // signature the OS refuses, an Intel binary on arm64. It sent
+                // whoever read it to install what they already had, while the
+                // sentence that named the real fault went to stderr, which for
+                // an app launched from Finder is nowhere at all.
+                Arc::new(voicecast_engine::SilentEngine::new(piper.reason()))
             }
         }
     }
@@ -1019,7 +1027,7 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
             Ok(engine) => Arc::new(engine),
             Err(e) => {
                 eprintln!("piper unavailable: {e}");
-                Arc::new(voicecast_engine::SilentEngine::new(e.to_string()))
+                Arc::new(voicecast_engine::SilentEngine::new(e.reason()))
             }
         }
     }
