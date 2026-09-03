@@ -2053,6 +2053,16 @@ async fn do_join(
             if let Some(agreed) = agreed.as_deref() {
                 joined.adopt_id(agreed);
             }
+            // Rejoining a space we already hold is ordinary — a re-pair, or
+            // a second scan — but the roster that arrives carries no
+            // tombstones, so taking it wholesale forgot every revocation this
+            // device had made and let a removed peer sync itself back in
+            // (#76). Merging is add-only, so the arriving members land and
+            // our own revocations survive.
+            let joined_id = joined.space_id();
+            if let Some(existing) = spaces.get(&joined_id) {
+                joined.merge(existing);
+            }
             let count = joined.members().count();
 
             // A space holding only this device is one nobody ever joined —
@@ -2067,7 +2077,11 @@ async fn do_join(
             // the ticket, and only then a counter. Naming it `space-2` when
             // every hop carried "work" was issue #36: the person is told what
             // they are joining and then shown something else.
-            let name = pick_space_label(&spaces, [wanted, theirs.as_deref(), t.label.as_deref()]);
+            let name = pick_space_label(
+                &spaces,
+                Some(joined_id.as_str()),
+                [wanted, theirs.as_deref(), t.label.as_deref()],
+            );
             let id = if spaces.current_is_unshared(&me) {
                 // The empty space every node founds for itself is displaced
                 // rather than kept beside the one just joined. Its name goes
@@ -2400,6 +2414,7 @@ async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
 /// space does.
 fn pick_space_label<'a>(
     spaces: &Spaces,
+    own: Option<&str>,
     wanted: impl IntoIterator<Item = Option<&'a str>>,
 ) -> String {
     for candidate in wanted.into_iter().flatten() {
@@ -2407,8 +2422,14 @@ fn pick_space_label<'a>(
         if candidate.is_empty() || candidate.contains('/') || candidate.contains(',') {
             continue;
         }
-        if spaces.by_label(candidate).is_none() {
-            return candidate.to_string();
+        // A name is taken only if some *other* space has it. Counting the
+        // space's own current label as a clash is what renamed `work` to
+        // `work-2` when a device rejoined a space it already held — the
+        // collision was with itself (#76).
+        match spaces.by_label(candidate) {
+            None => return candidate.to_string(),
+            Some(holder) if Some(holder.as_str()) == own => return candidate.to_string(),
+            Some(_) => continue,
         }
     }
     next_space_label(spaces)
@@ -3167,7 +3188,7 @@ mod tests {
     fn a_joined_space_keeps_the_name_it_arrived_with() {
         let spaces = Spaces::default();
         assert_eq!(
-            pick_space_label(&spaces, [None, Some("work"), None]),
+            pick_space_label(&spaces, None, [None, Some("work"), None]),
             "work"
         );
     }
@@ -3180,7 +3201,7 @@ mod tests {
     fn the_joiner_gets_the_last_word_on_the_name() {
         let spaces = Spaces::default();
         assert_eq!(
-            pick_space_label(&spaces, [Some("theirs"), Some("ours"), None]),
+            pick_space_label(&spaces, None, [Some("theirs"), Some("ours"), None]),
             "theirs"
         );
     }
@@ -3198,7 +3219,7 @@ mod tests {
             "work",
         );
         assert_eq!(
-            pick_space_label(&spaces, [Some("work"), None, None]),
+            pick_space_label(&spaces, None, [Some("work"), None, None]),
             "space-2"
         );
     }
@@ -3210,7 +3231,33 @@ mod tests {
     #[test]
     fn nothing_to_go_on_falls_back_to_the_counter() {
         let spaces = Spaces::default();
-        assert_eq!(pick_space_label(&spaces, [None, None, None]), "space-2");
+        assert_eq!(
+            pick_space_label(&spaces, None, [None, None, None]),
+            "space-2"
+        );
+    }
+
+    /// A space rejoining under its own name keeps it.
+    ///
+    /// `by_label` answering "taken" for the space asking the question renamed
+    /// `work` to `work-2` every time a device re-paired into a space it
+    /// already held. The collision was with itself (#76).
+    #[test]
+    fn a_space_rejoining_under_its_own_name_keeps_it() {
+        let mut spaces = Spaces::default();
+        let secret = iroh_base::SecretKey::generate();
+        let id = spaces.insert(Roster::found(&secret, "me"), "work");
+
+        assert_eq!(
+            pick_space_label(&spaces, Some(id.as_str()), [Some("work"), None, None]),
+            "work",
+            "its own name is not taken from itself"
+        );
+        assert_eq!(
+            pick_space_label(&spaces, None, [Some("work"), None, None]),
+            "space-2",
+            "and it is still taken from anybody else"
+        );
     }
 
     /// A label carrying a separator is refused rather than stored.
@@ -3222,15 +3269,15 @@ mod tests {
     fn a_name_that_would_break_a_selector_is_not_taken() {
         let spaces = Spaces::default();
         assert_eq!(
-            pick_space_label(&spaces, [Some("a/b"), None, None]),
+            pick_space_label(&spaces, None, [Some("a/b"), None, None]),
             "space-2"
         );
         assert_eq!(
-            pick_space_label(&spaces, [Some("a,b"), None, None]),
+            pick_space_label(&spaces, None, [Some("a,b"), None, None]),
             "space-2"
         );
         assert_eq!(
-            pick_space_label(&spaces, [Some("   "), None, None]),
+            pick_space_label(&spaces, None, [Some("   "), None, None]),
             "space-2"
         );
     }
