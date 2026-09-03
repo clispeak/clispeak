@@ -55,7 +55,18 @@ async fn bind_ipc(socket: &str) -> Result<TokioListener> {
             // Nothing answering means the name outlived its node.
             Stream::connect(name()?).await.is_err()
         }
-        Err(e) => return Err(e).context("binding the local socket"),
+        Err(e) => {
+            // The `sun_path` limit is the one that actually bites — 104 bytes
+            // on macOS — and the platform's own message names the limit but
+            // not the string that exceeded it. That string is not the one the
+            // caller set, because a prefix is added, so without this they
+            // cannot tell how far over they are. Issue #43.
+            return Err(e).context(format!(
+                "binding the local socket named {socket:?} ({} bytes, before \
+                 the prefix this platform adds)",
+                socket.len()
+            ));
+        }
     };
 
     if !refused {
@@ -489,11 +500,19 @@ impl Node {
     pub async fn serve(&self) -> Result<()> {
         let listener = bind_ipc(&socket_name()).await?;
 
-        eprintln!(
-            "listening on {} and as {}",
-            socket_name(),
-            self.transport.id()
-        );
+        let socket = socket_name();
+        eprintln!("listening as {}", self.transport.id());
+        // Not "listening on <socket>": that reads as a path, and the previous
+        // wording sent people to `ls` a file that is at a different place on
+        // macOS and does not exist at all on Linux. Issue #43.
+        eprintln!("socket name: {socket:?} (a name, not a path)");
+        if crate::ipc::path_shaped(&socket) {
+            eprintln!(
+                "  note: that looks like a path, and it is used as a name — the \
+                 platform decides where it actually lives, so looking for a file \
+                 at that exact location will not find one"
+            );
+        }
 
         let ipc = {
             let shared = Arc::clone(&self.shared);
