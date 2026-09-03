@@ -48,9 +48,14 @@ fn engine() -> Result<Arc<dyn SpeechEngine>> {
 fn fallback(piper: EngineError) -> Result<Arc<dyn SpeechEngine>> {
     Ok(Arc::new(EspeakEngine::new().with_context(|| {
         format!(
-            "no speech engine is available. Piper: {piper}. \
+            // `reason()`, not the error itself: `Display` prepends "no
+            // speech engine available", and this sentence already says so.
+            // Formatting the whole error here made the message say it twice
+            // — the same doubling this change fixes on the other platforms.
+            "no speech engine is available. Piper: {}. \
              espeak-ng is the floor here and is also missing — install it with \
-             your distribution's package manager"
+             your distribution's package manager",
+            piper.reason()
         )
     })?))
 }
