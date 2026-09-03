@@ -47,6 +47,18 @@ fn main() -> anyhow::Result<()> {
 /// look identical in a scrollback — the same reasoning as the counts printed
 /// by `portability`.
 fn check() -> anyhow::Result<()> {
+    // Before anything cargo does, because every other gate's verdict is
+    // meaningless on a tree in this state and would be *reported* anyway.
+    // That is the severity: not that markers survive, but that a green
+    // result is returned about a file nobody has finished merging (#103).
+    eprintln!("== conflicts");
+    conflict_markers()?;
+    // Also ahead of cargo: it reads two workflow files and costs
+    // milliseconds, and a shell continuation that YAML ate is not something
+    // any Rust gate can see (#102).
+    eprintln!("== workflows");
+    workflow_run_steps()?;
+
     let steps: &[(&str, &[&str])] = &[
         ("fmt", &["fmt", "--all", "--check"]),
         (
@@ -396,6 +408,190 @@ const QUOTE: char = '"';
 const NEEDLE: &str = "\"com/voicecast/";
 
 /// Every `.rs` file under `dir`, recursively.
+/// Files allowed to contain what looks like a conflict marker.
+///
+/// **Empty, and that is the finding.** The plan was to exempt this file, which
+/// spells the markers out, and `docs/decisions.md`, which describes the gate.
+/// Neither needs it: matching only at the start of a line already separates a
+/// marker from prose about one, and both spellings here sit indented inside a
+/// `let`. Tested by putting a real conflict in `docs/decisions.md` and
+/// watching it be caught.
+///
+/// Which matters, because `docs/decisions.md` is the file that conflicts on
+/// *every* rebase — it is where all three of today's conflicts were. An
+/// exemption list arrived at by reasoning would have excused the one file
+/// most likely to carry a real marker, and the gate would have looked right.
+///
+/// Kept as a list rather than removed so that a document which genuinely
+/// needs to open a line with `>>>>>>>` can be named here and seen, the way
+/// the portability gate's exception is written where it is read.
+const MARKER_EXEMPT: &[&str] = &[];
+
+/// Fail if any tracked file carries an unresolved merge conflict.
+///
+/// `cargo xtask check` used to report `all gates passed` on a tree holding a
+/// live `<<<<<<< HEAD`, for every file that is not Rust. The numbering check
+/// reads `## N.` headings and markers do not disturb the sequence; `fmt`,
+/// `clippy` and `test` never open a `.md` file. So `docs/`, the workflows,
+/// the frontend, `.gitignore` and the Gradle scripts were all uncovered, and
+/// a `.rs` file was covered only incidentally by ceasing to compile (#103).
+///
+/// Found by running the gate on a rebase that had just said `Could not
+/// apply`, which is the way these are always found.
+fn conflict_markers() -> anyhow::Result<()> {
+    // Line-start forms only. Matching the bare strings anywhere would fire on
+    // this file, on prose describing a merge, and on any diff pasted into a
+    // document — a gate that cries wolf is a gate that gets worked around,
+    // and a gate that is worked around is not a gate.
+    let starts = ["<<<<<<< ", ">>>>>>> "];
+    let mut findings = Vec::new();
+
+    for file in tracked_files()? {
+        if MARKER_EXEMPT.iter().any(|e| file == Path::new(e)) {
+            continue;
+        }
+        // Not every tracked file is text; a PNG that happens to hold those
+        // bytes is not a conflict.
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        for (i, line) in text.lines().enumerate() {
+            if starts.iter().any(|m| line.starts_with(m)) || line == "=======" {
+                findings.push(format!("  {}:{}: {}", file.display(), i + 1, line));
+            }
+        }
+    }
+
+    if !findings.is_empty() {
+        eprintln!("unresolved conflict markers:");
+        for f in &findings {
+            eprintln!("{f}");
+        }
+        anyhow::bail!("finish the merge before running the gates");
+    }
+    println!("conflicts ok: no markers in tracked files");
+    Ok(())
+}
+
+/// Fail if a multi-line `run:` step is anything but a literal block scalar.
+///
+/// YAML folds both the plain form and `>` into a single line, so a shell line
+/// continuation survives as a literal backslash and the shell reads `\ ` as an
+/// escaped space. The next path becomes an argument with a leading space,
+/// naming a file that does not exist. In #97 that left `keystore.properties`
+/// on disk with three passwords in it while the step exited 0, because
+/// `rm -f` is silent by design (#102).
+///
+/// **The rule is `|`, not "a block scalar".** `>` folds exactly as the plain
+/// form does — checked against the same input rather than read off the spec —
+/// so a rule phrased against the plain form would certify the trap.
+///
+/// Lexical on purpose, and about the *form* rather than about backslashes.
+/// The file is correct YAML and correct shell separately; the meaning is lost
+/// in the handover, so the symptom is a bad thing to match on. It also has to
+/// stay a rule a person can apply by eye, which matters more than the
+/// automation does.
+fn workflow_run_steps() -> anyhow::Result<()> {
+    let mut findings = Vec::new();
+    let mut checked = 0usize;
+
+    for file in tracked_files()? {
+        if file.parent() != Some(Path::new(".github/workflows")) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)?;
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let Some((before, after)) = split_run_key(line) else {
+                continue;
+            };
+            checked += 1;
+            let indent = before.len();
+            let value = after.trim();
+            if value.is_empty() || value.starts_with('|') {
+                // A literal block scalar, or a key whose value is on the
+                // following lines — `run: |` is the only accepted spelling
+                // and an empty value cannot fold anything.
+                continue;
+            }
+            if value.starts_with('>') {
+                findings.push(format!(
+                    "  {}:{}: `run: >` folds newlines into spaces; use `run: |`",
+                    file.display(),
+                    i + 1
+                ));
+                continue;
+            }
+            // A plain scalar with its value on this line. It only folds if
+            // something follows it at a deeper indent — a one-line `run:` is
+            // fine and most of ours are.
+            let folds = lines[i + 1..]
+                .iter()
+                .find(|l| !l.trim().is_empty())
+                .is_some_and(|l| l.len() - l.trim_start().len() > indent);
+            if folds {
+                findings.push(format!(
+                    "  {}:{}: a `run:` spanning lines must use `|`; this one folds",
+                    file.display(),
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    if !findings.is_empty() {
+        eprintln!("workflow run steps that lose shell line continuations:");
+        for f in &findings {
+            eprintln!("{f}");
+        }
+        anyhow::bail!("a multi-line `run:` must use `|`");
+    }
+    println!("workflows ok: {checked} run steps, every multi-line one literal");
+    Ok(())
+}
+
+/// The indent before a `run:` key, and whatever follows it on the same line.
+///
+/// `None` for anything that is not the key — including `  # run: …` in a
+/// comment and a `run` that is part of a longer word.
+fn split_run_key(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len() - trimmed.len()];
+    // A step's first key carries the list dash; the rest do not.
+    let body = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+    let rest = body.strip_prefix("run:")?;
+    // `run:x` is not valid YAML for a mapping key, and `running:` must not
+    // match — the strip above already rules the second out, but a key with no
+    // space after the colon is worth ignoring rather than guessing about.
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        return None;
+    }
+    let consumed = line.len() - rest.len();
+    Some((indent, &line[consumed..]))
+}
+
+/// Every file git is tracking.
+///
+/// `git ls-files` rather than a directory walk, so generated output, build
+/// directories and anything ignored are all excluded for free — and so the
+/// gate's idea of "in the repository" is git's rather than a second one that
+/// can drift from it.
+fn tracked_files() -> anyhow::Result<Vec<PathBuf>> {
+    let out = std::process::Command::new("git")
+        .args(["ls-files", "-z"])
+        .output()
+        .context("running git ls-files")?;
+    if !out.status.success() {
+        anyhow::bail!("git ls-files failed");
+    }
+    Ok(out
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| PathBuf::from(String::from_utf8_lossy(s).into_owned()))
+        .collect())
+}
+
 fn rust_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     if !dir.exists() {

@@ -2080,3 +2080,59 @@ four Rust cross-builds, but a filter that wrongly decides *not* to build is
 invisible, and that is the failure shape this repository has paid for more
 than any other. A build that never ran reports nothing at all. The draft
 change gets most of the money with none of that risk (#101).
+
+## 64. Two gates that check the tree before the tree is checked
+
+**Chosen:** `cargo xtask check` runs two lexical gates before it runs cargo —
+unresolved conflict markers in any tracked file (#103), and a multi-line
+`run:` step that is not a literal block scalar (#102).
+
+**Order is the point of the first one.** The bug was not that markers survive;
+it is that a *green verdict is returned about a tree nobody has finished
+merging*. `all gates passed` printed while `docs/decisions.md` held a live
+marker, because the numbering check reads headings and markers do not disturb
+the sequence, and fmt, clippy and test never open a markdown file. Every other
+gate's answer is meaningless in that state, so this one runs first or it is
+decoration.
+
+**The second gate is about a form, not a symptom.** A `run:` written as a
+plain scalar or as `>` folds its newlines into spaces, so a shell line
+continuation survives as a literal backslash and the shell reads it as an
+escaped space — the next path becomes an argument with a leading space naming
+a file that does not exist. In #97 that left a properties file holding three
+passwords on disk while the step exited zero, because `rm -f` is silent by
+design.
+
+The rule is `|`, not "a block scalar": `>` folds exactly as the plain form
+does, checked against the same input rather than read off the spec, so a rule
+phrased against the plain form would certify the trap. And the check matches
+the *form* rather than hunting for backslashes on purpose. The file is correct
+YAML and correct shell separately; the meaning is lost in the handover. A
+backslash detector would be a check about the symptom, and would look like an
+improvement.
+
+**The exemption list is empty, which was not the plan.** Both gates were
+expected to need one: this file describes the markers, and the checker's own
+source spells them out. Neither does, because matching only at the start of a
+line already separates a marker from prose about one.
+
+That is worth more than the saved lines. `docs/decisions.md` is the file that
+conflicts on every rebase — all three of today's conflicts were in it — so an
+exemption arrived at by reasoning would have excused the single file most
+likely to carry a real marker, and the gate would have looked correct while
+being blind exactly where it was needed. Verified by putting a real conflict
+in that file and watching it be caught. The list is kept, empty, so a document
+that one day must open a line with a marker can be named where it is read.
+
+**Falsified before being trusted**, each against the real thing rather than a
+sketch: #97's removal step pasted back verbatim in the plain form, the same
+step rewritten as `>`, markers in a document and in a frontend source file at
+once, and a sentence quoting the markers inline — which correctly does not
+fire.
+
+**Costs.** Two more gates to run, both milliseconds. The workflow check is
+lexical, so a `run:` key inside a folded block of some other key's value would
+confuse it — no workflow does that, and a YAML dependency in `xtask` to rule
+it out would be a larger cost than the case is worth. And these catch a
+shape, not an outcome: a `run: |` step whose shell is wrong is still wrong,
+and a file with no markers can still be half-merged.
