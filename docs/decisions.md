@@ -2141,6 +2141,20 @@ which is the same latency as `cfg(unix)` sitting in a portable crate while the
 gate printed "3 crates clean". Fixed, then re-probed against six shapes rather
 than the four the first version was checked against.
 
+**The conflict gate reported everything three times, and only when it
+fired.** During a conflict the index holds three entries for a conflicted path
+— stages 1, 2 and 3 — and `git ls-files` prints all three, so the file was
+read and scanned once per stage. Nine lines where three belong, on the exact
+screen where someone is working out what to fix. It cannot happen outside a
+conflict, because a merged index has one entry per path, so the bug was
+invisible in every test either of us would write and certain in the only case
+the gate exists for. `tracked_files` now sorts and deduplicates, rather than
+using `--deduplicate`, which is a newer git flag than this has to run on.
+
+That is the sharpest instance of the day's shape: the thing only misbehaved
+when it fired, so no amount of testing it in the ordinary state would have
+found it.
+
 **And the answer is not always another gate.** Writing these, clippy caught
 `indent.len().max(0)` on an unsigned integer in the checker itself —
 unconditionally true, silently. Neither new gate would have seen it; `-D
