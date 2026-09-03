@@ -86,9 +86,18 @@ fn split_long(chunk: &str) -> Vec<String> {
 fn split_keeping(s: &str, seps: &[char]) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
-    for c in s.chars() {
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
         cur.push(c);
-        if seps.contains(&c) {
+        // A comma between two digits is part of a number, not a clause
+        // boundary. Breaking there turned "1,000,000" into three chunks
+        // spoken with a pause between each, so a long message said "one,
+        // then a gap, then zero zero zero" (#65).
+        let inside_number = c == ','
+            && i > 0
+            && chars[i - 1].is_ascii_digit()
+            && chars.get(i + 1).is_some_and(char::is_ascii_digit);
+        if seps.contains(&c) && !inside_number {
             out.push(std::mem::take(&mut cur));
         }
     }

@@ -40,7 +40,15 @@ same code path — long-form and short-form are not distinct modes.
 
 **Text is validated before sending.** Markdown and bare URLs are rejected with
 an explanation the agent can act on, rather than silently rewritten. `--strip`
-converts instead; `--raw` skips validation. See `text.md`.
+converts instead; `--raw` skips validation. See `text.md`. When stripping would
+not change anything — the text is not markup, it merely resembles it — the
+error says so rather than offering `--strip` as advice that cannot work.
+
+**Flags go before the text.** Speech legitimately starts with a hyphen, so the
+text argument takes everything after it, a real flag included:
+`voicecast hello --to Phone` speaks nothing and fails, because "--to" and
+"Phone" were read as words. The error names the flag and prints the corrected
+command, which can be run as printed.
 
 ### The subcommand collision
 

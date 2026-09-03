@@ -771,6 +771,71 @@ fn flaglike_token(tokens: &[String]) -> Option<String> {
         .cloned()
 }
 
+/// Every long flag this CLI has, and whether it takes a value.
+///
+/// Asked of clap rather than listed here, so it cannot fall out of step with
+/// the parser the way a hand-written list would.
+fn long_flags() -> Vec<(String, bool)> {
+    use clap::CommandFactory;
+    Cli::command()
+        .get_arguments()
+        .filter_map(|a| {
+            let long = a.get_long()?;
+            Some((format!("--{long}"), a.get_action().takes_values()))
+        })
+        .collect()
+}
+
+/// The same command with its flags moved in front of the text.
+///
+/// `allow_hyphen_values` makes the text positional greedy, so clap hands it
+/// every later token — including real flags. `voicecast hello --to Phone` put
+/// "--to" and "Phone" into the *text*, and the guard above then refused the
+/// whole thing as an unknown option, naming a flag that plainly exists. The
+/// old advice was to use `--`, which would have spoken the words "dash dash
+/// to Phone" aloud (#64).
+///
+/// Rewriting rather than reordering silently: which of two readings was meant
+/// is genuinely ambiguous in general, and this project's rule is that an
+/// error carries a fix that can be run verbatim.
+fn flags_first(argv: &[String]) -> Option<String> {
+    let known = long_flags();
+    let mut flags: Vec<String> = Vec::new();
+    let mut words: Vec<String> = Vec::new();
+    let mut moved = false;
+    let mut i = 0;
+    while i < argv.len() {
+        let token = &argv[i];
+        match known.iter().find(|(name, _)| name == token) {
+            Some((name, takes_value)) => {
+                // A flag seen after any text is one that was swallowed.
+                moved |= !words.is_empty();
+                flags.push(name.clone());
+                if *takes_value && i + 1 < argv.len() {
+                    flags.push(argv[i + 1].clone());
+                    i += 1;
+                }
+            }
+            None => words.push(token.clone()),
+        }
+        i += 1;
+    }
+    if !moved {
+        return None;
+    }
+    let text = words.join(" ");
+    let quoted = if text.contains(' ') {
+        format!("\"{text}\"")
+    } else {
+        text
+    };
+    Some(
+        format!("voicecast {} {quoted}", flags.join(" "))
+            .trim()
+            .to_string(),
+    )
+}
+
 /// Validate and wrap text, or print a rejection and return its exit code.
 fn build_speak(
     cli: &Cli,
@@ -778,10 +843,29 @@ fn build_speak(
     tokens: &[String],
 ) -> anyhow::Result<Result<Request, u8>> {
     if let Some(flag) = flaglike_token(tokens) {
-        err(&format!("error: unknown option '{flag}'"));
-        err("");
-        err("If you meant to speak it, use the -- separator:");
-        err(&format!("  voicecast -- {flag} ..."));
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        match flags_first(&argv) {
+            // A real flag, in the wrong place. Say which, and give the line
+            // that works — the old message suggested `--`, which would have
+            // spoken the flag out loud.
+            Some(fixed) => {
+                err(&format!(
+                    "error: '{flag}' is a flag, but it came after the text, so it was read \
+                     as words to speak"
+                ));
+                err("");
+                err("Flags go before the text. This does what you meant:");
+                err(&format!("  {fixed}"));
+            }
+            // Not a flag this CLI has, so almost certainly a typo. Speaking
+            // it would be the worse failure.
+            None => {
+                err(&format!("error: unknown option '{flag}'"));
+                err("");
+                err("If you meant to speak it, use the -- separator:");
+                err(&format!("  voicecast -- {flag} ..."));
+            }
+        }
         return Ok(Err(exit::USAGE));
     }
 
@@ -870,13 +954,21 @@ fn print_rejection(text: &str, rejection: &voicecast_text::Rejection) {
     ));
     err("");
 
+    // `--strip` is only worth offering when it would actually change
+    // something. Printing "pass --strip to convert automatically" for text
+    // that strips to itself sent the caller round a loop that could not
+    // terminate: the advice ran, changed nothing, and the same rejection came
+    // back (#65).
     let suggestion = voicecast_text::strip(text);
     if !suggestion.is_empty() && suggestion != text {
         err("Write text as it should be spoken:");
         err(&format!("  {suggestion:?}"));
         err("");
+        err("Or pass --strip to convert automatically.");
+    } else {
+        err("There is no automatic rewrite for this one — say it in words");
+        err("instead, or pass --raw to send it exactly as written.");
     }
-    err("Or pass --strip to convert automatically.");
 }
 
 /// Read all of stdin, refusing to hang on an interactive terminal.
@@ -1358,7 +1450,40 @@ use frame::{read_frame, write_frame};
 
 #[cfg(test)]
 mod display_tests {
-    use super::{first_line, plain, short_id};
+    use super::{first_line, flags_first, plain, short_id};
+
+    fn argv(line: &str) -> Vec<String> {
+        line.split(' ').map(str::to_string).collect()
+    }
+
+    #[test]
+    fn a_flag_after_the_text_is_rewritten_into_a_command_that_works() {
+        // The greedy text positional hands clap every later token, so these
+        // were read as words to speak and then refused as an unknown option
+        // — naming a flag that plainly exists, and suggesting `--`, which
+        // would have spoken it aloud (#64).
+        assert_eq!(
+            flags_first(&argv("hello --to Phone")).as_deref(),
+            Some("voicecast --to Phone hello")
+        );
+        assert_eq!(
+            flags_first(&argv("say hello there --to Phone")).as_deref(),
+            Some("voicecast --to Phone \"say hello there\"")
+        );
+        assert_eq!(
+            flags_first(&argv("hello --to Phone --wait")).as_deref(),
+            Some("voicecast --to Phone --wait hello")
+        );
+    }
+
+    #[test]
+    fn a_command_that_was_already_right_is_not_rewritten() {
+        // Nothing moved, so there is nothing to suggest, and the caller falls
+        // through to the unknown-option message instead.
+        assert_eq!(flags_first(&argv("--to Phone hello")), None);
+        assert_eq!(flags_first(&argv("hello there")), None);
+        assert_eq!(flags_first(&argv("hello --priorty high")), None);
+    }
 
     #[test]
     fn a_name_cannot_forge_a_line_of_its_own() {

@@ -236,3 +236,77 @@ fn chunking_always_terminates_on_awkward_punctuation() {
         let _ = chunk(input);
     }
 }
+
+// --- Things that look like markup and are not ---------------------------
+//
+// Every one of these was refused before, with a reason naming markdown the
+// writer never wrote. A false positive here is worse than a miss: the caller
+// is told to fix something that is already correct, and for the `www.` case
+// `strip` returned the input unchanged, so the suggested rewrite was the text
+// that had just been rejected. Issue #65.
+
+#[test]
+fn a_word_that_merely_contains_www_is_not_a_url() {
+    for text in ["Awww. Cute.", "swwwing", "Awww", "wwwww"] {
+        assert!(
+            voicecast_text::validate(text).is_ok(),
+            "{text:?} is not a URL"
+        );
+    }
+}
+
+#[test]
+fn a_real_bare_url_is_still_refused() {
+    for text in [
+        "www.example.com",
+        "Visit www.example.com now",
+        "See https://example.com/a?b=1",
+        "http://localhost:8080",
+    ] {
+        assert!(
+            voicecast_text::validate(text).is_err(),
+            "{text:?} is a URL and must be refused"
+        );
+    }
+}
+
+#[test]
+fn a_year_at_the_start_of_a_sentence_is_not_a_list() {
+    for text in [
+        "2024. was a good year",
+        "1999. Things were different.",
+        "100. degrees is hot",
+    ] {
+        assert!(
+            voicecast_text::validate(text).is_ok(),
+            "{text:?} is a number, not a list marker"
+        );
+    }
+}
+
+#[test]
+fn a_real_ordered_list_is_still_refused() {
+    for text in ["1. First item", "12. Twelfth item", "9. Nine"] {
+        assert!(
+            voicecast_text::validate(text).is_err(),
+            "{text:?} is a list marker"
+        );
+    }
+}
+
+#[test]
+fn a_number_is_not_split_across_chunks() {
+    // The comma-splitting fallback only runs past the chunk limit, so the
+    // number has to sit inside a sentence long enough to reach it. Spoken,
+    // the break turned "1,000,000" into "one, pause, zero zero zero".
+    let long = format!(
+        "{} and the total was 1,000,000 exactly.",
+        "words ".repeat(60)
+    );
+    let chunks = voicecast_text::chunk(&long);
+    assert!(chunks.len() > 1, "the text was long enough to be split");
+    assert!(
+        chunks.iter().any(|c| c.contains("1,000,000")),
+        "the number survived in one piece: {chunks:?}"
+    );
+}

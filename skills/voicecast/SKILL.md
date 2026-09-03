@@ -107,11 +107,11 @@ Branch on it. The codes are distinct precisely so you can.
 | Code | Meaning | What to do |
 |---|---|---|
 | `0` | Accepted, or spoken if you waited | Nothing |
-| `6` | Text rejected — markdown or a bare URL | **The error contains a rewrite. Send that, verbatim.** Do not paraphrase it yourself |
+| `6` | Text rejected — markdown or a bare URL | **The error usually contains a rewrite. Send that, verbatim.** Do not paraphrase it yourself. When it says there is no automatic rewrite, say the thing in words instead, or pass `--raw` |
 | `4` | No device spoke it | Read the reason before reacting — see below |
 | `3` | Some devices spoke, some did not | Say which ones did not. Do not resend to everyone |
 | `5` | No node running on this machine | Ask the user to open the voicecast app. Do not retry |
-| `1` | Usage error | Fix the command |
+| `1` | Usage error | Fix the command. If a flag ended up after the text, the error prints the corrected line — run that |
 
 **Exit 4 is usually not a failure.** Check the status:
 
@@ -140,6 +140,12 @@ A `rejected` *status* is different from exit 6: it comes from the receiving
 device, and its reason says which of two things happened — that device is not
 in the space you sent to, or the message was over 100,000 characters, which is
 the most it will speak in one go. Split a long one and send the parts.
+
+**Put flags before the text.** `voicecast --to Phone "hello"`, not
+`voicecast "hello" --to Phone`. Speech can legitimately start with a hyphen —
+"- item one", "-5 degrees" — so everything after the text is read as more
+text, including a real flag. Getting it wrong is not silent: the error names
+the flag and prints the corrected command, which you can run as given.
 
 When text is rejected you get the offending span and a suggested rewrite.
 **Send the suggestion unchanged** — it is what the tool will accept.

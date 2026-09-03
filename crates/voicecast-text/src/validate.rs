@@ -119,9 +119,16 @@ fn line_marker(t: &str) -> Option<&'static str> {
     if matches!(b.first(), Some(b'-' | b'*' | b'+')) && b.get(1) == Some(&b' ') {
         return Some("list marker");
     }
-    // Ordered list: digits, then `. `.
+    // Ordered list: one or two digits, then `. `.
+    //
+    // Capped at two because a longer run of digits is a number, not a
+    // position in a list: "2024. was a good year" is a sentence somebody
+    // means to have read aloud, and refusing it with "list marker" sent
+    // them looking for markdown that was never there (#65). Lists past
+    // ninety-nine items exist; they are not what anyone dictates.
     let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
-    if digits > 0 && b.get(digits) == Some(&b'.') && b.get(digits + 1) == Some(&b' ') {
+    if (1..=2).contains(&digits) && b.get(digits) == Some(&b'.') && b.get(digits + 1) == Some(&b' ')
+    {
         return Some("list marker");
     }
     None
@@ -206,7 +213,23 @@ fn find_link(b: &[u8]) -> Option<(usize, usize)> {
 fn detect_url(text: &str) -> Option<Rejection> {
     let b = text.as_bytes();
     for prefix in [&b"https://"[..], b"http://", b"www."] {
-        if let Some(start) = find_at(b, prefix, 0) {
+        let mut from = 0;
+        while let Some(start) = find_at(b, prefix, from) {
+            from = start + 1;
+            // `www.` has to begin a word and be followed by a host label.
+            // Matching it anywhere rejected "Awww. Cute." as a URL, and
+            // `strip` only removes a `www.` *prefix*, so the suggested
+            // rewrite came back identical to the input and the caller was
+            // told to fix something with no way to fix it (#65). The two
+            // scheme prefixes need neither test: nothing says "https://"
+            // by accident.
+            if prefix == b"www." {
+                let starts_word = start == 0 || !b[start - 1].is_ascii_alphanumeric();
+                let has_host = b.get(start + 4).is_some_and(u8::is_ascii_alphanumeric);
+                if !starts_word || !has_host {
+                    continue;
+                }
+            }
             let end = b[start..]
                 .iter()
                 .position(|c| matches!(c, b' ' | b'\n' | b'\t'))
