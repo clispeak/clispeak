@@ -47,7 +47,9 @@ sockets, or synthesize anything. It writes to a local IPC socket and exits.
 Invocation cost is single-digit milliseconds, which is what makes it usable
 as an agent's notification channel.
 
-If the node app isn't running, the CLI autostarts it.
+If the node app isn't running, the CLI does not start it: it exits `NO_NODE`
+and says `start one with: voicecastd`. Autostart is the intended mitigation
+for the CLI depending on the app (decision 5) and has not been built.
 
 ### `voicecast-node` — the Tauri v2 app
 
@@ -56,8 +58,9 @@ Holds the device identity, the iroh endpoint and its warm connections, the
 allowlist, the playback queue, and the TTS engine. Exposes a local IPC socket
 for the CLI on desktop.
 
-On desktop it lives in the tray and starts at login; the window is for
-configuration, not operation.
+On desktop it lives in the tray; the window is for configuration, not
+operation. Starting at login is intended and not yet implemented, so today
+something has to launch it.
 
 **Every install is both sender and receiver.** There is no separate
 "broadcaster" build. The CLI is desktop-only because that's where agents run,
@@ -332,18 +335,51 @@ toggle are mitigations, not afterthoughts.
 
 ## Platform matrix
 
+This table describes what is built, not what is planned. Where a row names
+something that does not exist yet, it says so.
+
 | Platform | TTS engine | Background listening |
 |---|---|---|
-| Linux | Piper (downloaded); espeak-ng fallback | Tray + autostart |
-| macOS | `AVSpeechSynthesizer` | Tray + autostart |
-| Windows | Piper (downloaded); no floor engine yet | Tray + autostart |
+| Linux | Piper, bundled in the Flatpak; espeak-ng floor only outside it | Tray |
+| macOS | Piper, bundled in the `.app`; espeak-ng floor only if installed | Tray |
+| Windows | Piper, placed by `cargo xtask piper`; no floor engine | Tray |
 | Android | `android.speech.tts.TextToSpeech` | Foreground service |
-| iOS | `AVSpeechSynthesizer` | **Foreground only** — OS restriction |
+| iOS | **None.** Builds, but reaches no engine — see below | **Foreground only** — OS restriction |
 
-Four of five platforms ship a usable native engine for free. **Linux is the
-gap** — there is no universal native engine, and espeak-ng sounds like 1994.
-Piper is bundled there instead: neural, CPU-only, no API key, ~20–60MB per
-voice model.
+**Every desktop speaks through Piper**, which is the point: a message sounds
+the same wherever it lands. Neural, CPU-only, no API key, ~20–60MB per voice
+model. There is no universal native engine on Linux and espeak-ng sounds like
+1994, so Piper started there and became the desktop answer everywhere.
+
+**The espeak-ng floor is thinner than it looks.** `speech_engine()` falls back
+to it on Unix, but nothing ships it: the GNOME runtime the Flatpak builds on
+has no espeak at all, and the macOS bundle carries only Piper. So the floor
+exists on a Linux host whose distribution happens to provide espeak-ng, and
+nowhere else.
+
+**The app and the daemon then disagree about what to do**, which is worth
+knowing before reading a `no_engine`. They pick engines in separate code:
+`speech_engine()` in `app/src-tauri/src/lib.rs` for the app, `fallback()` in
+`crates/voicecast-daemon/src/main.rs` for `voicecastd`.
+
+| | Piper missing, espeak present | Piper missing, espeak missing |
+|---|---|---|
+| `voicecastd`, Unix | speaks via espeak | **refuses to start** |
+| `voicecastd`, Windows | — | starts silent, carrying Piper's reason |
+| app, Unix | speaks via espeak | starts silent, generic reason |
+| app, Windows | — | starts silent, carrying Piper's reason |
+
+On macOS both Unix rows are reached with espeak absent, which is the ordinary
+case there. Issue #27 covers the two consequences: the daemon's refusal names
+an Arch package on a Mac, and the app's generic reason replaces whatever Piper
+actually said.
+
+**iOS reaches no engine at all.** It compiles — the five-target rule sees to
+that — but it falls into the Unix branch of `speech_engine()`, where both
+Piper and espeak-ng are spawned binaries that an iOS app cannot provide. The
+result is `SilentEngine`, which reports `no_engine` honestly. Wiring iOS to
+`AVSpeechSynthesizer` is the obvious way to fix that and is not yet written;
+issue #4 tracks iOS never having been run at all.
 
 **iOS cannot listen in the background.** This is an OS restriction, not a
 framework limitation — Tauri, Flutter, and React Native all hit the identical
