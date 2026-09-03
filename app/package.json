@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "The voicecast app's interface. Compiled CSS only \u2014 no bundler, no framework.",
   "scripts": {
+    "tauri": "tauri",
     "build:css": "tailwindcss -i src/input.css -o src/styles.css --minify",
     "watch:css": "tailwindcss -i src/input.css -o src/styles.css --watch",
     "test:ui": "node tests/harness.mjs"

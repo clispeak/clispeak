@@ -81,6 +81,38 @@ asserting cross-platform behaviour is executed on Linux and nowhere else, and
 trade — macOS runners bill at ten times Linux — but say "build-verified" when
 that is what happened.
 
+**And it is weaker again than that, because compiling is not linking.**
+An `rlib` never resolves its external symbols; only linking an executable
+does. The matrix links exactly one binary for iOS — `voicecast` — and that
+crate depends on `voicecast-proto` and `voicecast-text` and nothing else, by
+design, so it reaches no network code at all. `voicecast-app`, which pulls
+`voicecast-core` and therefore iroh, is **excluded** from the second Apple
+target.
+
+So an iOS build linked 28 undefined `_SCDynamicStore*` symbols the first time
+anyone tried it on a real machine — iroh's transitive dependencies read the
+system network configuration, and the Xcode project Tauri generates does not
+link `SystemConfiguration`. Every green iOS check had said nothing about it.
+The same run *did* catch a missing blake3 NEON symbol, which is the tell: the
+CLI links, so what the CLI touches is checked, and what only the app touches
+is not.
+
+Then it launched and panicked before its first frame, on `No rustls crypto
+provider is configured` — every other target resolves one through feature
+unification and iOS does not.
+
+**Three claims, and they are not the same claim:**
+
+| | |
+|---|---|
+| **compiled on five** | what a green matrix means |
+| **linked on four** | iOS links only a binary with no networking in it |
+| **launched on three** | Linux, Android and macOS have been started by a person |
+
+Say which one you mean. "It builds on iOS" was true for months and cost three
+bugs that no gate could have caught, because nobody had run the target the
+rule counts.
+
 ## Where things live
 
 | Crate | Holds | Must stay portable |
