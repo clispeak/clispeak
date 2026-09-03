@@ -5,6 +5,12 @@
 //! anything that cannot be expressed portably gets a trait here rather than a
 //! `#[cfg]` in the middle of business logic.
 
+// Gated with its only callers. `child` exists to wait on and kill a spawned
+// process, and both engines that spawn one are excluded from iOS below — so
+// on a phone build this compiled a helper nothing could reach. The compiler
+// said so, as two dead-code warnings on an `aarch64-apple-ios` check, which
+// is a warning nobody would ever have seen: CI runs clippy on Linux only.
+#[cfg(any(all(unix, not(target_os = "ios")), windows))]
 mod child;
 mod rediscovering;
 mod silent;
@@ -20,18 +26,24 @@ pub use rediscovering::Rediscovering;
 pub use silent::SilentEngine;
 
 // espeak-ng is a Unix binary; there is no such thing to spawn on a phone.
-#[cfg(unix)]
+// Not iOS. It is unix, so it was included by omission rather than by
+// decision — nobody wrote iOS support, the exclusion was simply phrased as
+// "unix, and not Android". espeak spawns a child process, which iOS does not
+// permit, so this compiled a speech engine into a phone build that could
+// never call it (#126).
+#[cfg(all(unix, not(target_os = "ios")))]
 mod espeak;
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "ios")))]
 pub use espeak::EspeakEngine;
 
 // Piper is a native binary we spawn, and Windows spawns processes just as
 // Unix does — so the same engine serves every desktop, which is what makes a
 // message sound the same wherever it lands. Kept as a gate rather than
 // dropped so this reads as a deliberate list of platforms, not an oversight.
-#[cfg(any(unix, windows))]
+// Same reasoning as espeak above: iOS is unix and cannot spawn a process.
+#[cfg(any(all(unix, not(target_os = "ios")), windows))]
 mod piper;
-#[cfg(any(unix, windows))]
+#[cfg(any(all(unix, not(target_os = "ios")), windows))]
 pub use piper::PiperEngine;
 
 /// A voice offered by an engine.

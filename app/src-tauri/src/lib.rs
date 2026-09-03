@@ -1307,7 +1307,29 @@ fn dns_resolver() -> Option<iroh::dns::DnsResolver> {
 /// renamed, and told about — and it reports `no_engine` honestly instead of
 /// swallowing messages.
 fn speech_engine() -> Arc<dyn SpeechEngine> {
-    #[cfg(all(unix, not(target_os = "android")))]
+    // iOS named rather than left to fall through. It is unix and it is not
+    // Android, so it took the arm below and would have called
+    // `PiperEngine::discover()` on a platform that cannot spawn a child
+    // process at all. Nobody wrote that; it was inherited from phrasing the
+    // exclusion as "unix, and not Android", so the code disagreed with a
+    // decision its owner had already made out loud (#126).
+    //
+    // The reason matters as much as the arm. "No speech engine is installed"
+    // sends a reader to install something; this platform has nothing to
+    // install yet, and saying so is the difference between a fixable fault
+    // and a missing feature. When there is an iOS build worth shipping this
+    // becomes `AVSpeechSynthesizer`, which is a real engine rather than a
+    // process to spawn.
+    #[cfg(target_os = "ios")]
+    {
+        return Arc::new(voicecast_engine::SilentEngine::new(
+            "voicecast has no speech engine on iOS yet — this device can join \
+             a space, receive messages and keep their history, but cannot \
+             speak them",
+        ));
+    }
+
+    #[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
     {
         // Best available, in order. Piper is what this platform should sound
         // like; espeak is a floor where the host happens to provide one, which
