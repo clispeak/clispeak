@@ -131,7 +131,11 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
             flatpak flatpak-builder
-          sudo flatpak remote-add --if-not-exists flathub \
+          # A *user* remote, because the build below is `--user`. Adding it
+          # with sudo puts it on the system installation, which a --user
+          # build does not consult — so `--install-deps-from=flathub` finds
+          # no such remote and the runtime never downloads.
+          flatpak remote-add --user --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
 
       - uses: actions/setup-node@v4
