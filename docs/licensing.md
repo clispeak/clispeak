@@ -60,6 +60,13 @@ This is cheap to fix now and expensive to fix after a download page exists.
 
 ## Blocker 2: we ship GPL-3.0 code, and that closes the Apple App Store
 
+**This half was already written down.** `docs/releasing.md` identified
+espeak-ng as GPL-3.0-or-later and said the archive "carries no licence text at
+all", then named the real gap: *"Nobody has read the terms."* What is new here
+is that somebody has — and the reading turned up the App Store consequence and
+the voice corpus above, neither of which was visible from knowing the licence
+name.
+
 **Measured.** `app/src-tauri/speech/piper/` contains `espeak-ng`,
 `libespeak-ng.so*` and `espeak-ng-data`. eSpeak NG is **GPL-3.0-or-later**
 (confirmed on the upstream repository). Piper itself is MIT and ONNX Runtime is

@@ -222,6 +222,20 @@ otherwise the code gains a capability while two documents go on denying it. That
 has already happened once here, one commit apart, and was caught by luck rather
 than process.
 
+**Delete the branch when the pull request merges.** `gh pr merge
+--delete-branch` does it; ten merged branches had accumulated before anyone
+looked, every one of them fully contained in `main`. They cost nothing and
+they hide the ones that matter, which is the whole reason to keep the list
+short.
+
+**The project is MIT OR Apache-2.0 (decision 74). The speech payload is
+not.** Piper, its phonemiser and ONNX Runtime are MIT; espeak-ng is
+GPL-3.0-or-later; and a voice model carries the terms of the corpus it was
+trained on, which are frequently not redistributable — the current default's
+are not. `cargo xtask piper` fetching that onto your own machine is fine.
+Putting it in something we hand to somebody else is a different question, and
+`docs/licensing.md` is the answer to it.
+
 **Docs are part of the change.** `docs/decisions.md` is numbered and
 append-only: a decision records what was chosen, *why*, and what it costs.
 `docs/build-plan.md` tracks milestones. If a change alters behaviour the docs

@@ -299,14 +299,16 @@ The release workflow packages four platforms on a `v*` tag and leaves the
 result as a **draft** on purpose. A private repository's releases are not
 public downloads, and more to the point, we redistribute Piper — which carries
 espeak-ng, ONNX Runtime, a phonemiser and a voice model, in an archive
-containing no licence text at all. Publishing before that is understood would
-be a decision made by accident.
+containing no licence text at all. That is now understood rather than assumed
+— see `docs/licensing.md` — and the answer is that two things change before
+anything is published: the default voice, whose corpus bars redistribution,
+and the bundling of the speech payload itself.
 
 None of this is engineering. Each item is a call only Patrick can make:
 
 | | |
 |---|---|
-| #24 | what we may redistribute, and under what licence the binaries go out |
+| ~~#24~~ | **settled**: MIT OR Apache-2.0, open source — decision 74, `docs/licensing.md`. Two changes still needed before publishing: the default voice, and unbundling the speech payload |
 | #23 | how a private repo serves public downloads |
 | #25 | a page offering the latest build per platform |
 | #29 | a macOS signing identity, so a rebuild stops prompting the keychain |
