@@ -5,6 +5,7 @@
 //! anything that cannot be expressed portably gets a trait here rather than a
 //! `#[cfg]` in the middle of business logic.
 
+mod child;
 mod silent;
 
 #[cfg(target_os = "android")]
@@ -57,6 +58,26 @@ pub enum EngineError {
     /// No usable engine — e.g. a voice model not yet downloaded.
     #[error("no speech engine available: {0}")]
     Unavailable(String),
+    /// An engine was present, ran, and failed. Nothing was heard.
+    ///
+    /// Distinct from [`Unavailable`] because the two need opposite responses:
+    /// a missing engine is installed, a failing one is diagnosed. Collapsing
+    /// them told someone whose audio device was gone to go and download a
+    /// voice model.
+    ///
+    /// [`Unavailable`]: EngineError::Unavailable
+    #[error("{command} failed with {code}{}", match .detail {
+        Some(d) => format!(": {d}"),
+        None => String::new(),
+    })]
+    Failed {
+        /// The command that failed, as a person would name it.
+        command: String,
+        /// `exit code 1`, or `a signal`.
+        code: String,
+        /// A bounded tail of what it wrote to stderr, when it wrote anything.
+        detail: Option<String>,
+    },
 }
 
 impl EngineError {
@@ -66,9 +87,12 @@ impl EngineError {
     /// reports through the same variant: passing the formatted error would
     /// say "no speech engine available" twice in one sentence, and the reader
     /// is already having a bad enough day.
-    pub fn reason(&self) -> &str {
+    pub fn reason(&self) -> std::borrow::Cow<'_, str> {
         match self {
-            EngineError::Unavailable(reason) => reason,
+            EngineError::Unavailable(reason) => reason.as_str().into(),
+            // Built rather than borrowed, because the useful sentence here is
+            // assembled from three fields and none of them is it.
+            EngineError::Failed { .. } => self.to_string().into(),
         }
     }
 }

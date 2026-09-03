@@ -18,9 +18,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
+use crate::child::Running;
 use crate::{EngineError, SpeechEngine, Tier, Voice};
 
 /// The Piper executable's file name.
@@ -153,8 +154,8 @@ fn scratch_wav() -> PathBuf {
 
 /// The processes currently producing sound, so `stop` can end them.
 struct Playing {
-    synth: Child,
-    player: Child,
+    synth: Arc<Running>,
+    player: Arc<Running>,
     /// A rendered file to delete once it has been played. Only a file-based
     /// player leaves one behind.
     scratch: Option<PathBuf>,
@@ -324,7 +325,7 @@ impl PiperEngine {
         player
             .args(self.player_args(sample_rate))
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         if on_stdin {
             player.stdin(Stdio::piped());
         } else {
@@ -377,7 +378,7 @@ impl PiperEngine {
         }
         let mut synth = command
             .stdin(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| EngineError::Unavailable(format!("could not start Piper: {e}")))?;
 
@@ -397,21 +398,38 @@ impl PiperEngine {
     }
 
     /// Wait for the utterance now playing, then clear it.
+    ///
+    /// The handles are lifted out from under the lock and waited on outside
+    /// it. Holding the lock across the wait is what made `stop` park until
+    /// playback had finished and then kill nothing — issue #58. The entry
+    /// stays in `current` while we wait, because that is how `stop` finds it.
     fn finish(&self) -> Result<(), EngineError> {
-        let mut guard = self.current.lock().expect("engine lock");
-        if let Some(playing) = guard.as_mut() {
-            let _ = playing.synth.wait();
-            // Waiting on the player, not the synthesiser, is what makes this
-            // return when the sound has actually finished.
-            playing
-                .player
-                .wait()
-                .map_err(|e| EngineError::Unavailable(format!("playback failed: {e}")))?;
-        }
-        if let Some(done) = guard.take() {
+        let waiting = self
+            .current
+            .lock()
+            .expect("engine lock")
+            .as_ref()
+            .map(|playing| (Arc::clone(&playing.synth), Arc::clone(&playing.player)));
+
+        let outcome = match waiting {
+            Some((synth, player)) => {
+                // Both are checked, and the player last, because waiting on
+                // the player is what makes this return when the sound has
+                // actually stopped. Piper exiting non-zero while the player
+                // reads a truncated stream and exits 0 is a real shape: the
+                // synthesiser's failure is the one worth reporting, so it is
+                // asked about first.
+                let synthesised = synth.wait();
+                let played = player.wait();
+                synthesised.and(played)
+            }
+            None => Ok(()),
+        };
+
+        if let Some(done) = self.current.lock().expect("engine lock").take() {
             done.clean_up();
         }
-        Ok(())
+        outcome
     }
 }
 
@@ -450,15 +468,15 @@ impl SpeechEngine for PiperEngine {
                     .args(self.player_args(sample_rate))
                     .stdin(Stdio::from(audio))
                     .stdout(Stdio::null())
-                    .stderr(Stdio::null())
+                    .stderr(Stdio::piped())
                     .spawn()
                     .map_err(|e| {
                         EngineError::Unavailable(format!("could not start {command}: {e}"))
                     })?;
 
                 *self.current.lock().expect("engine lock") = Some(Playing {
-                    synth,
-                    player,
+                    synth: Running::new("piper", synth),
+                    player: Running::new(command, player),
                     scratch: None,
                 });
             }
@@ -469,11 +487,18 @@ impl SpeechEngine for PiperEngine {
             // have cancelled sound that has not started.
             Player::File(command) | Player::FileOnStdin(command) => {
                 let scratch = scratch_wav();
-                let mut synth =
-                    self.synthesise(chunk, &voice, length_scale, &Sink::File(scratch.clone()))?;
-                synth
-                    .wait()
-                    .map_err(|e| EngineError::Unavailable(format!("Piper failed: {e}")))?;
+                let synth = Running::new(
+                    "piper",
+                    self.synthesise(chunk, &voice, length_scale, &Sink::File(scratch.clone()))?,
+                );
+                // Checked, not merely awaited. A Piper that exits non-zero
+                // here leaves an absent or truncated file, and playing it was
+                // reported as having spoken — issue #59. The status is
+                // remembered, so `finish` asking again gets this answer
+                // rather than a second `try_wait` on a reaped process.
+                synth.wait().inspect_err(|_| {
+                    let _ = std::fs::remove_file(&scratch);
+                })?;
 
                 let player = self
                     .play_file(command, sample_rate, &scratch)
@@ -483,7 +508,7 @@ impl SpeechEngine for PiperEngine {
 
                 *self.current.lock().expect("engine lock") = Some(Playing {
                     synth,
-                    player,
+                    player: Running::new(command, player),
                     scratch: Some(scratch),
                 });
             }
@@ -539,9 +564,15 @@ impl SpeechEngine for PiperEngine {
     }
 
     fn stop(&self) {
-        if let Some(mut playing) = self.current.lock().expect("engine lock").take() {
-            let _ = playing.synth.kill();
-            let _ = playing.player.kill();
+        // Taken out under the lock and killed outside it, so this returns in
+        // the time two kills take rather than the length of the utterance.
+        let playing = self.current.lock().expect("engine lock").take();
+        if let Some(playing) = playing {
+            // The player first: it is the one making noise, and killing the
+            // synthesiser first leaves the player draining a pipe that has
+            // already been filled.
+            playing.player.kill();
+            playing.synth.kill();
             playing.clean_up();
         }
     }
@@ -642,7 +673,7 @@ fn starts(binary: &Path) -> Result<(), EngineError> {
         .arg("--help")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .status();
 
     match outcome {
