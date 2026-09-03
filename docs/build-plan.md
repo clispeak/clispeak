@@ -10,6 +10,13 @@ wired up and a packaging story, and no change to a portable crate beyond
 [one bug the abstract-socket assumption had hidden](#m9--macos). Its runtime
 coverage is still a smoke test rather than the full pass Linux gets.
 
+Windows has since been exercised too, and bore it out again: a speech engine,
+an audio path, and no change to any portable crate at all. What it added to
+the pattern is that a platform can be *build-verified and installed correctly*
+and still not speak — Piper links a runtime Windows does not ship — so
+discovery now checks that the binary starts rather than only that it exists.
+Its packaging story is still open, and its runtime coverage is a smoke test.
+
 ---
 
 ## Available hardware

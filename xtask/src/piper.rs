@@ -59,6 +59,17 @@ fn piper_for_host() -> Result<(Pinned, Option<Pinned>)> {
             ),
             None,
         ),
+        // Self-contained, unlike the macOS release: the archive carries
+        // onnxruntime, piper_phonemize, espeak-ng and its data alongside the
+        // executable, so there is nothing to merge and no signature to
+        // repair. Checked by hand against the release on 2026-09-02.
+        ("windows", "x86_64") => (
+            (
+                "piper_windows_amd64.zip",
+                "f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea",
+            ),
+            None,
+        ),
         (os, arch) => bail!(
             "no verified Piper pin for {os}/{arch}. Add one to xtask/src/piper.rs \
              after checking the download by hand — an unverified binary is not \
@@ -188,34 +199,55 @@ fn download(cache: &Path, file: &Pinned) -> Result<PathBuf> {
 
 /// A file's SHA-256, as lowercase hex.
 ///
-/// Shelled out because the two platforms spell it differently and neither
-/// needs a crate to do it.
+/// Shelled out because the three platforms spell it differently and none of
+/// them needs a crate to do it.
 fn sha256(path: &Path) -> Result<String> {
-    let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
-        ("shasum", &["-a", "256"])
+    let mut command = Command::new(if cfg!(windows) {
+        "certutil"
+    } else if cfg!(target_os = "macos") {
+        "shasum"
     } else {
-        ("sha256sum", &[])
-    };
-    let out = Command::new(program)
-        .args(args)
-        .arg(path)
-        .output()
-        .with_context(|| format!("running {program}"))?;
-    if !out.status.success() {
-        bail!("{program} failed on {}", path.display());
+        "sha256sum"
+    });
+    if cfg!(target_os = "macos") {
+        command.args(["-a", "256"]);
     }
+    if cfg!(windows) {
+        command.arg("-hashfile");
+    }
+    command.arg(path);
+    // certutil names the algorithm after the file rather than before it.
+    if cfg!(windows) {
+        command.arg("SHA256");
+    }
+
+    let out = command.output().context("hashing the download")?;
+    if !out.status.success() {
+        bail!("could not hash {}", path.display());
+    }
+
+    // All three print the digest as a bare 64-character hex token, but not in
+    // the same place: sha256sum and shasum put it first, certutil puts it on
+    // its own line beneath a heading. Finding it by shape rather than by
+    // position is what lets one parser serve all three — and a parser that
+    // silently returned the wrong token would turn the checksum gate into
+    // theatre, which is worse than not having it.
     let text = String::from_utf8_lossy(&out.stdout);
-    Ok(text
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_string())
+    text.split_whitespace()
+        .find(|token| token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(str::to_ascii_lowercase)
+        .with_context(|| format!("no digest found in the output for {}", path.display()))
 }
 
-/// Unpack a tarball into `into`.
+/// Unpack an archive into `into`.
+///
+/// One command for both shapes: Windows 10 and later ship bsdtar as `tar`,
+/// which reads zip archives as happily as tarballs. The flags differ only in
+/// whether the archive is gzipped.
 fn extract(archive: &Path, into: &Path) -> Result<()> {
+    let gzipped = archive.extension().is_some_and(|e| e == "gz");
     let status = Command::new("tar")
-        .arg("xzf")
+        .arg(if gzipped { "xzf" } else { "xf" })
         .arg(archive)
         .arg("-C")
         .arg(into)
@@ -376,7 +408,17 @@ fn repair_macho(binary: &Path) -> Result<()> {
 }
 
 /// Where a developer's own Piper lives, matching the engine's first root.
+///
+/// Spelled out per platform rather than pulled from `directories`, which is
+/// what the engine uses: this crate depends on one thing and this is the only
+/// place it would be needed. The two must agree, so a change here belongs
+/// with a change to `install_roots`.
 pub fn user_root() -> Result<PathBuf> {
+    // Windows has no HOME, and the equivalent is not under one either.
+    if cfg!(windows) {
+        let local = std::env::var_os("LOCALAPPDATA").context("no LOCALAPPDATA")?;
+        return Ok(PathBuf::from(local).join("voicecast"));
+    }
     let home = std::env::var_os("HOME").context("no HOME")?;
     let home = PathBuf::from(home);
     Ok(if cfg!(target_os = "macos") {

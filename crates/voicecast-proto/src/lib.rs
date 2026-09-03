@@ -377,6 +377,13 @@ pub enum Response {
     },
     /// The space was replaced.
     Rotated {
+        /// Which space, by its local name.
+        ///
+        /// Carried because the reply could not otherwise tell "replaced work"
+        /// from "replaced home" — which is exactly what let a bug replacing
+        /// the wrong space go unnoticed.
+        #[serde(default)]
+        space: String,
         /// Devices that were in the old space, so they can be re-invited.
         devices: Vec<String>,
     },

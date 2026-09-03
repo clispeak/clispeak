@@ -7,8 +7,13 @@
 //! on stdout, which goes straight to the system player. That keeps synthesis
 //! streaming — speech starts before the whole chunk is rendered — and makes
 //! `stop` a matter of killing two children. Where no player reads raw audio
-//! on stdin, which is every stock Mac, a rendered file stands in; see
-//! [`Player`].
+//! on stdin, which is every stock Mac and every stock Windows machine, a
+//! rendered file stands in; see [`Player`].
+//!
+//! Windows costs one more thing than the others: Piper links the Microsoft
+//! Visual C++ runtime, which Windows does not ship. A machine without it has
+//! Piper installed, found, and dying before `main` — so discovery checks that
+//! the binary starts rather than only that it exists. See [`starts`].
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -18,6 +23,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{EngineError, SpeechEngine, Tier, Voice};
 
+/// The Piper executable's file name.
+///
+/// Windows will not run a file that has no executable extension, and the
+/// failure is a quiet one: every root is searched, nothing matches, and Piper
+/// is reported "not installed" while sitting exactly where it was put.
+const PIPER_BINARY: &str = if cfg!(windows) { "piper.exe" } else { "piper" };
+
 /// Where a locally installed Piper and its voices live.
 ///
 /// Under the user's data directory rather than a system path: this is
@@ -25,7 +37,9 @@ use crate::{EngineError, SpeechEngine, Tier, Voice};
 fn install_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     // A user-installed copy wins, so someone can drop in a better voice
-    // without rebuilding anything.
+    // without rebuilding anything. On Windows this is the only root there is:
+    // `%LOCALAPPDATA%\voicecast`, which is also where the installer puts
+    // Piper, and which needs no administrator to write.
     if let Some(dirs) = directories::BaseDirs::new() {
         roots.push(dirs.data_local_dir().join("voicecast"));
     }
@@ -35,8 +49,15 @@ fn install_roots() -> Vec<PathBuf> {
     roots.extend(bundled_root());
     // Shipped with the package. Inside a Flatpak this is the only copy, since
     // the sandbox has no access to a system-wide install.
-    roots.push(PathBuf::from("/app/share/voicecast"));
-    roots.push(PathBuf::from("/usr/share/voicecast"));
+    //
+    // Listed only where they could exist. These paths reach the user in the
+    // "not installed in any of" error, and naming a Unix directory on Windows
+    // sends whoever reads it hunting for somewhere that cannot be there.
+    #[cfg(unix)]
+    {
+        roots.push(PathBuf::from("/app/share/voicecast"));
+        roots.push(PathBuf::from("/usr/share/voicecast"));
+    }
     roots
 }
 
@@ -66,19 +87,33 @@ fn bundled_root() -> Option<PathBuf> {
 /// file and nothing else — so there the chunk is rendered to a temporary WAV
 /// and played afterwards. Slower to start, and it works on a Mac with
 /// nothing installed, which is what a normal app install has to assume.
+///
+/// Windows ships neither: no player that reads raw audio, and none that takes
+/// a bare path either. PowerShell can play a WAV and is on every Windows
+/// install, so it stands in — but the path has to reach it inside a script
+/// rather than as an argument, which is what [`Player::FileOnStdin`] exists
+/// for.
 #[derive(Clone, Copy)]
 enum Player {
     /// Reads raw PCM on stdin.
     Streaming(&'static str),
     /// Plays a finished file, named as its last argument.
     File(&'static str),
+    /// Plays a finished file whose path it reads on stdin.
+    ///
+    /// The path travels the same way chunk text already does, and for the
+    /// same reason: stdin has no quoting to get wrong. A rendered path can
+    /// contain a space, and the alternative here is threading it through a
+    /// PowerShell command line, which is two layers of quoting deep and
+    /// fails by playing nothing rather than by complaining.
+    FileOnStdin(&'static str),
 }
 
 impl Player {
     /// The command this player runs as.
     fn command(self) -> &'static str {
         match self {
-            Self::Streaming(c) | Self::File(c) => c,
+            Self::Streaming(c) | Self::File(c) | Self::FileOnStdin(c) => c,
         }
     }
 }
@@ -86,18 +121,24 @@ impl Player {
 /// Players that can play what Piper produces, best first.
 ///
 /// Streaming entries come first wherever they exist: they are what makes
-/// speech start promptly on a long chunk.
+/// speech start promptly on a long chunk. The list is shared across
+/// platforms and filtered by what is actually installed, so a Windows
+/// machine with sox on it gets streaming playback like any other.
 const PLAYERS: &[Player] = &[
     // PulseAudio, PipeWire and ALSA, in the order a Linux desktop is likely
     // to have them.
     Player::Streaming("paplay"),
     Player::Streaming("pw-play"),
     Player::Streaming("aplay"),
-    // sox, the one streaming player commonly installed on a Mac.
+    // sox, the one streaming player commonly installed on a Mac — and the
+    // only way a Windows machine gets streaming playback at all.
     Player::Streaming("play"),
     // Built into macOS. Last because it cannot stream, and therefore the one
     // chosen on any Mac without sox.
     Player::File("afplay"),
+    // Built into Windows. Last for the same reason, and the one chosen on
+    // any Windows machine without sox — which is nearly all of them.
+    Player::FileOnStdin("powershell"),
 ];
 
 /// A unique path for one utterance's rendered audio.
@@ -147,7 +188,7 @@ impl PiperEngine {
         let roots = install_roots();
         let binary = roots
             .iter()
-            .map(|r| r.join("piper/piper"))
+            .map(|r| r.join("piper").join(PIPER_BINARY))
             .find(|p| p.exists())
             .ok_or_else(|| {
                 EngineError::Unavailable(format!(
@@ -159,6 +200,10 @@ impl PiperEngine {
                         .join(", ")
                 ))
             })?;
+        // Before anything else: a file that exists is not the same as a
+        // binary that runs, and the gap between them is where the worst
+        // failure on this path lives.
+        starts(&binary)?;
 
         let available: Vec<PathBuf> = roots
             .iter()
@@ -243,10 +288,66 @@ impl PiperEngine {
                 "--format=s16le".into(),
                 "--channels=1".into(),
             ],
+            // PowerShell is handed a script that reads the path on stdin and
+            // blocks until the sound has finished. Waiting on this child
+            // therefore means waiting for the audio, which is the contract
+            // every other player here honours and the one `finish` relies on.
+            //
+            // `-NoProfile` is not only for start-up time: a profile is
+            // arbitrary code belonging to whoever is logged in, and running
+            // it to play a sound would be a surprising thing to do.
+            Player::FileOnStdin(_) => vec![
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                "$p = [Console]::In.ReadLine(); (New-Object Media.SoundPlayer $p).PlaySync()"
+                    .into(),
+            ],
             // A file player is handed a path, and works out the format from
             // the header itself.
             Player::File(_) => Vec::new(),
         }
+    }
+
+    /// Start a file-based player on a rendered chunk.
+    ///
+    /// The path reaches the player as its last argument or on its stdin,
+    /// depending on which kind it is. Nothing else about the two differs.
+    fn play_file(
+        &self,
+        command: &str,
+        sample_rate: u32,
+        scratch: &Path,
+    ) -> Result<Child, EngineError> {
+        let on_stdin = matches!(self.player, Player::FileOnStdin(_));
+        let mut player = Command::new(command);
+        player
+            .args(self.player_args(sample_rate))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if on_stdin {
+            player.stdin(Stdio::piped());
+        } else {
+            player.arg(scratch).stdin(Stdio::null());
+        }
+        let mut player = player
+            .spawn()
+            .map_err(|e| EngineError::Unavailable(format!("could not start {command}: {e}")))?;
+
+        if on_stdin {
+            let mut stdin = player
+                .stdin
+                .take()
+                .ok_or_else(|| EngineError::Unavailable(format!("no stdin on {command}")))?;
+            // The newline is what ends the player's read. Without it the
+            // script waits for input that never arrives, and the failure is
+            // silence rather than an error.
+            writeln!(stdin, "{}", scratch.display()).map_err(|e| {
+                EngineError::Unavailable(format!("handing the audio to {command}: {e}"))
+            })?;
+            drop(stdin);
+        }
+        Ok(player)
     }
 
     /// Start Piper on one chunk, with its text on stdin.
@@ -361,12 +462,12 @@ impl SpeechEngine for PiperEngine {
                     scratch: None,
                 });
             }
-            // Nothing on macOS reads raw audio on stdin, so the chunk is
-            // rendered in full and then played. Synthesis is not yet
+            // Nothing on macOS or Windows reads raw audio on stdin, so the
+            // chunk is rendered in full and then played. Synthesis is not yet
             // registered as playing, so a `stop` arriving during it is a
             // no-op — the wait is short, and the alternative is claiming to
             // have cancelled sound that has not started.
-            Player::File(command) => {
+            Player::File(command) | Player::FileOnStdin(command) => {
                 let scratch = scratch_wav();
                 let mut synth =
                     self.synthesise(chunk, &voice, length_scale, &Sink::File(scratch.clone()))?;
@@ -374,14 +475,10 @@ impl SpeechEngine for PiperEngine {
                     .wait()
                     .map_err(|e| EngineError::Unavailable(format!("Piper failed: {e}")))?;
 
-                let player = Command::new(command)
-                    .arg(&scratch)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .map_err(|e| {
+                let player = self
+                    .play_file(command, sample_rate, &scratch)
+                    .inspect_err(|_| {
                         let _ = std::fs::remove_file(&scratch);
-                        EngineError::Unavailable(format!("could not start {command}: {e}"))
                     })?;
 
                 *self.current.lock().expect("engine lock") = Some(Playing {
@@ -506,9 +603,93 @@ fn sample_rate_of(voice: &Path) -> Option<u32> {
         .map(|r| r as u32)
 }
 
+/// The exit code a process gets when the system could not load it at all.
+///
+/// On Windows this is `STATUS_DLL_NOT_FOUND`: the process is created, the
+/// loader cannot resolve a library the binary links against, and it dies
+/// before `main` having printed nothing. On Unix the dynamic loader does
+/// print its complaint, and exits 127.
+#[cfg(windows)]
+const LOADER_FAILED: i32 = 0xC000_0135u32 as i32;
+#[cfg(not(windows))]
+const LOADER_FAILED: i32 = 127;
+
+/// What a person can actually do about a Piper that will not load.
+#[cfg(windows)]
+const LOADER_ADVICE: &str = "is installed but will not start, because a library it needs is \
+     missing. Piper links the Microsoft Visual C++ runtime, which Windows does not ship and \
+     which voicecast therefore installs beside it. Reinstalling voicecast restores that copy \
+     — antivirus quarantine is the usual reason it goes missing.";
+#[cfg(not(windows))]
+const LOADER_ADVICE: &str = "is installed but will not start, because a library it needs is \
+     missing. Reinstalling voicecast, or running `cargo xtask piper`, restores it.";
+
+/// Check that Piper actually runs, rather than only that the file is there.
+///
+/// Discovery used to stop at "the binary exists", which is a different
+/// question from "the binary starts", and the difference is not academic: a
+/// Piper that cannot load its libraries is installed correctly, found
+/// correctly, and dies before `main`. Every message would be accepted and
+/// never spoken, with a bare exit code as the only clue — precisely the
+/// swallowing this project refuses everywhere else.
+///
+/// Deliberately narrow. Only the signature that means *the process never
+/// started* counts as failure, never a non-zero exit on its own. This runs on
+/// every platform, and a probe that guessed at what `--help` ought to return
+/// would break working installs in order to catch broken ones.
+fn starts(binary: &Path) -> Result<(), EngineError> {
+    let outcome = Command::new(binary)
+        .arg("--help")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    match outcome {
+        Err(e) => Err(EngineError::Unavailable(format!(
+            "{} could not be run: {e}",
+            binary.display()
+        ))),
+        Ok(status) if status.code() == Some(LOADER_FAILED) => Err(EngineError::Unavailable(
+            format!("{} {LOADER_ADVICE}", binary.display()),
+        )),
+        Ok(_) => Ok(()),
+    }
+}
+
 /// Whether a command exists on `PATH`.
+///
+/// Windows names executables with an extension from `PATHEXT`, so looking for
+/// the bare name finds nothing there — and the failure would be a player that
+/// is plainly installed being reported as missing, with the engine refusing
+/// to start on a machine that could have spoken perfectly well.
 fn which(command: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(command).is_file()))
-        .unwrap_or(false)
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|dir| {
+        let bare = dir.join(command);
+        bare.is_file()
+            || executable_extensions()
+                .iter()
+                .any(|ext| dir.join(format!("{command}{ext}")).is_file())
+    })
+}
+
+/// Extensions that make a file executable, on platforms that use them.
+///
+/// Empty everywhere but Windows, where the list comes from `PATHEXT` so a
+/// machine that has been configured differently is still searched correctly.
+/// The fallback is the stock value, used when the variable is missing rather
+/// than assuming the search can be skipped.
+fn executable_extensions() -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
 }

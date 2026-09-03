@@ -22,10 +22,13 @@ mod espeak;
 #[cfg(unix)]
 pub use espeak::EspeakEngine;
 
-// Piper is a native binary we spawn, so it belongs wherever espeak does.
-#[cfg(unix)]
+// Piper is a native binary we spawn, and Windows spawns processes just as
+// Unix does — so the same engine serves every desktop, which is what makes a
+// message sound the same wherever it lands. Kept as a gate rather than
+// dropped so this reads as a deliberate list of platforms, not an oversight.
+#[cfg(any(unix, windows))]
 mod piper;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use piper::PiperEngine;
 
 /// A voice offered by an engine.

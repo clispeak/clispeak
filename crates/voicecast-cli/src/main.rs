@@ -1010,8 +1010,8 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
             }
             exit::OK
         }
-        Response::Rotated { devices } => {
-            out("this space has been replaced");
+        Response::Rotated { space, devices } => {
+            out(&format!("{space} has been replaced"));
             if devices.is_empty() {
                 err("No other devices were in it.");
             } else {

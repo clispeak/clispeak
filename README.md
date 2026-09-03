@@ -25,9 +25,15 @@ an endpoint — pairing a Mac with another device has not been tested yet, and
 an Intel Mac has no verified Piper checksum, so it is refused rather than
 guessed at.
 
-Windows and iOS build on every commit but are not yet wired to a speech
-engine — the rule is that nothing merges unless it compiles for all five
-targets, so adding them later is a matter of testing rather than untangling.
+Windows now speaks with Piper, the same engine as Linux and macOS, so a
+message sounds the same wherever it lands. There is no installer yet: Piper
+has to be put in place with `cargo xtask piper`, and Windows also needs the
+Microsoft Visual C++ Redistributable, which it does not ship and which Piper
+links against.
+
+iOS builds on every commit but is not yet wired to a speech engine — the rule
+is that nothing merges unless it compiles for all five targets, so adding it
+later is a matter of testing rather than untangling.
 
 The riskiest assumption — that peer-to-peer connections survive carrier-grade
 NAT and network changes — was [measured on real hardware](docs/m0-results.md)
@@ -145,13 +151,15 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 | Linux | Piper, falling back to espeak-ng | tray app |
 | macOS | Piper | tray app |
 | Android | system text-to-speech | foreground service + battery exemption |
-| Windows | not yet wired | tray app |
+| Windows | Piper | tray app |
 | iOS | not yet wired | — |
 
 Piper streams raw audio to whatever player the system has — `paplay`,
 `pw-play`, `aplay`, or sox. macOS ships none that read raw audio on stdin, so
 there the chunk is rendered and played with the built-in `afplay`: speech
-starts a little later, and a stock Mac needs nothing installed.
+starts a little later, and a stock Mac needs nothing installed. Windows ships
+none either, and none that takes a bare path, so PowerShell plays the rendered
+file and is handed its path on stdin rather than on a command line.
 
 ## How it works
 
@@ -206,6 +214,7 @@ so it cannot quietly drift into describing a tool that has moved on.
 | [build-plan.md](docs/build-plan.md) | Milestones, repo layout, CI |
 | [m0-results.md](docs/m0-results.md) | Measured transport results on real devices |
 | [decisions.md](docs/decisions.md) | Every decision, with its rationale and cost |
+| [releasing.md](docs/releasing.md) | How binaries will be built and published, and what has to be settled first |
 
 Start with `decisions.md` if you want to know *why* rather than *what*.
 

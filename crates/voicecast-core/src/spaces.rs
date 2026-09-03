@@ -69,13 +69,38 @@ impl Spaces {
     /// Founding or rotating produces a roster with a different id, and
     /// leaving it under the old key would leave two entries for one space.
     pub fn replace_current(&mut self, roster: Roster) {
-        let old = self.default_id.clone();
-        let label = self.labels.remove(&old).unwrap_or_else(|| "main".into());
-        self.rosters.remove(&old);
-        let id = roster.space_id();
-        self.rosters.insert(id.clone(), roster);
-        self.labels.insert(id.clone(), label);
-        self.default_id = id;
+        let id = self.default_id.clone();
+        self.replace(&id, roster);
+    }
+
+    /// Replace one named space's roster, re-keying it and keeping its label.
+    ///
+    /// Named rather than assumed. `replace_current` reads `default_id`, which
+    /// was right while every caller meant the default — and then `rotate`
+    /// began resolving a space by name and still called it, so replacing
+    /// `work` destroyed `home` and left `work` untouched. The reply even
+    /// listed `work`'s devices, because that was the only thing the resolved
+    /// name was used for.
+    ///
+    /// The default only moves when the space being replaced *was* the
+    /// default. Rotating a space you are not currently pointing at should not
+    /// quietly repoint you at it.
+    ///
+    /// Returns whether the space was held at all.
+    pub fn replace(&mut self, id: &str, roster: Roster) -> bool {
+        if !self.rosters.contains_key(id) {
+            return false;
+        }
+        let label = self.labels.remove(id).unwrap_or_else(|| "main".into());
+        self.rosters.remove(id);
+
+        let new_id = roster.space_id();
+        self.rosters.insert(new_id.clone(), roster);
+        self.labels.insert(new_id.clone(), label);
+        if self.default_id == id {
+            self.default_id = new_id;
+        }
+        true
     }
 
     /// Whether the default space is one nobody else ever joined.
@@ -347,6 +372,49 @@ mod tests {
 
         // And it is not this device's own membership that makes it shared.
         assert!(!spaces.current_is_unshared("somebody-else"));
+    }
+
+    #[test]
+    fn replacing_a_named_space_leaves_every_other_one_alone() {
+        // The bug this guards was destructive and live: `rotate` resolved the
+        // space by name and then called `replace_current`, which reads
+        // `default_id` — so replacing `work` destroyed `home`, moved `home`'s
+        // label onto the fresh empty roster, and left `work` and all its keys
+        // exactly where they were. Every existing test only ever exercised
+        // the default, which is why it went unnoticed.
+        let mut spaces = Spaces::default();
+        let home = spaces.insert(a_space(1, "laptop"), "home");
+        let work = spaces.insert(a_space(2, "desk"), "work");
+        spaces.set_default(&home).expect("default");
+
+        assert!(spaces.replace(&work, a_space(3, "desk")));
+
+        assert!(spaces.get(&home).is_some(), "the default must be untouched");
+        assert_eq!(spaces.default_id(), home, "and must still be the default");
+        assert!(spaces.get(&work).is_none(), "the named space is replaced");
+        assert!(spaces.by_label("work").is_some(), "keeping its label");
+        assert_eq!(spaces.by_label("home"), Some(home.clone()));
+    }
+
+    #[test]
+    fn replacing_the_default_moves_the_default_with_it() {
+        let mut spaces = Spaces::default();
+        let home = spaces.insert(a_space(1, "laptop"), "home");
+        spaces.insert(a_space(2, "desk"), "work");
+        spaces.set_default(&home).expect("default");
+
+        spaces.replace(&home, a_space(3, "laptop"));
+
+        assert_ne!(spaces.default_id(), home);
+        assert_eq!(spaces.label(spaces.default_id()), "home");
+    }
+
+    #[test]
+    fn replacing_a_space_that_is_not_held_changes_nothing() {
+        let mut spaces = Spaces::default();
+        let home = spaces.insert(a_space(1, "laptop"), "home");
+        assert!(!spaces.replace("no-such-space", a_space(2, "desk")));
+        assert_eq!(spaces.ids(), vec![home]);
     }
 
     #[test]
