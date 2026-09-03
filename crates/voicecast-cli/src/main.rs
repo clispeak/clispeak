@@ -1308,6 +1308,12 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
                 out("paused");
             }
             match &speaking {
+                // "held", not "speaking", when paused. The queue reports a
+                // held message as what this device is playing, which is what
+                // Resume will continue — but printing `speaking` for it
+                // directly contradicts the `paused` line above, and an agent
+                // reading this would conclude audio was coming out (#109).
+                Some(id) if paused => out(&format!("held      {id}")),
                 Some(id) => out(&format!("speaking  {id}")),
                 None if !paused => out("nothing is being spoken"),
                 None => {}

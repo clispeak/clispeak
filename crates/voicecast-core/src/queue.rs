@@ -121,6 +121,22 @@ impl Inner {
         self.urgent.len() + usize::from(self.resume.is_some()) + self.normal.len()
     }
 
+    /// The message a pause is holding, if a pause is holding one.
+    ///
+    /// While paused, the message sits in `resume` and `speaking` is `None`,
+    /// because nothing is coming out of the speaker. That is literally true
+    /// and it is not what a person means by "what is playing" — they mean
+    /// the thing the Resume button will continue. The interface keyed its
+    /// playback controls off `speaking` and so hid its own Resume button the
+    /// moment it was needed (#109).
+    fn held(&self) -> Option<&Job> {
+        if self.paused {
+            self.resume.as_ref()
+        } else {
+            None
+        }
+    }
+
     /// Every waiting message, in the order it will be spoken.
     fn pending(&self) -> Vec<String> {
         self.urgent
@@ -228,6 +244,27 @@ impl Speaker {
 
     /// Abandon the current message and carry on with the queue.
     pub fn skip(&self) {
+        // While paused there is nothing in flight for a cut to interrupt:
+        // the message is held in `resume` and the thread is asleep. The cut
+        // would sit unread until the next message picked one up and threw it
+        // away, so Skip did nothing at all and the held message stayed held.
+        // Reachable now that a paused message is reported as playing and the
+        // controls stay on screen, which is the rest of #109.
+        let held = {
+            let mut inner = self.inner.0.lock().expect("queue lock");
+            if inner.paused {
+                inner.resume.take()
+            } else {
+                None
+            }
+        };
+        if let Some(job) = held {
+            // Told, rather than dropped in silence: something is waiting on
+            // this id, the same as every other way a message ends.
+            (self.on_finish)(&job.msg_id, Ended::plain(Status::Cancelled));
+            job.finish(Ended::plain(Status::Cancelled));
+            return;
+        }
         self.cut(Cut::Skip);
     }
 
@@ -275,6 +312,14 @@ impl Speaker {
         let abandoned: Vec<Job> = {
             let mut inner = lock.lock().expect("queue lock");
             inner.cut = Some(Cut::Clear);
+            // Stop ends a pause as well as the queue. Leaving it set meant
+            // stop emptied everything and left the device silently muted:
+            // later messages queued, the sender was told they were queued,
+            // and nothing ever came out. Stop is also the control a person
+            // reaches for when a pause has left them somewhere they did not
+            // mean to be, so it must be a way out rather than a deeper way
+            // in (#109).
+            inner.paused = false;
             let mut all: Vec<Job> = inner.urgent.drain(..).collect();
             all.extend(inner.resume.take());
             all.extend(inner.normal.drain(..));
@@ -353,9 +398,21 @@ impl Speaker {
     /// What is playing and what is waiting.
     pub fn snapshot(&self) -> Snapshot {
         let inner = self.inner.0.lock().expect("queue lock");
+        let speaking = inner
+            .speaking
+            .clone()
+            .or_else(|| inner.held().map(|j| j.msg_id.clone()));
+        // A held message is reported as what is playing, so it must not also
+        // be reported as waiting behind itself. `pending` reads `resume`,
+        // which is where a pause puts it.
+        let pending = inner
+            .pending()
+            .into_iter()
+            .filter(|id| Some(id) != speaking.as_ref())
+            .collect();
         Snapshot {
-            speaking: inner.speaking.clone(),
-            pending: inner.pending(),
+            speaking,
+            pending,
             paused: inner.paused,
         }
     }
@@ -524,9 +581,17 @@ mod tests {
     /// Speaking has to actually block for any of this to be testable: an
     /// interrupt that arrives between chunks exercises none of the machinery
     /// that matters.
+    /// `stopping` and `speaking` under one lock, because `stop` has to know
+    /// whether there is anything to stop.
+    #[derive(Default)]
+    struct EngineState {
+        stopping: bool,
+        speaking: bool,
+    }
+
     struct FakeEngine {
         spoken: Mutex<Vec<String>>,
-        stopping: Mutex<bool>,
+        state: Mutex<EngineState>,
         cv: Condvar,
         /// Returned instead of speaking, for the failure paths.
         fails_with: Option<EngineError>,
@@ -536,7 +601,7 @@ mod tests {
         fn new() -> Arc<Self> {
             Arc::new(Self {
                 spoken: Mutex::new(Vec::new()),
-                stopping: Mutex::new(false),
+                state: Mutex::new(EngineState::default()),
                 cv: Condvar::new(),
                 fails_with: None,
             })
@@ -547,7 +612,7 @@ mod tests {
         fn failing(error: EngineError) -> Arc<Self> {
             Arc::new(Self {
                 spoken: Mutex::new(Vec::new()),
-                stopping: Mutex::new(false),
+                state: Mutex::new(EngineState::default()),
                 cv: Condvar::new(),
                 fails_with: Some(error),
             })
@@ -564,13 +629,15 @@ mod tests {
             if let Some(e) = &self.fails_with {
                 return Err(e.clone());
             }
-            let stopping = self.stopping.lock().expect("stopping");
-            let (mut stopping, _) = self
+            let mut state = self.state.lock().expect("engine state");
+            state.speaking = true;
+            let (mut state, _) = self
                 .cv
-                .wait_timeout(stopping, Duration::from_millis(120))
+                .wait_timeout(state, Duration::from_millis(120))
                 .expect("wait");
-            if *stopping {
-                *stopping = false;
+            state.speaking = false;
+            if state.stopping {
+                state.stopping = false;
                 return Err(EngineError::Unavailable("stopped".into()));
             }
             Ok(())
@@ -581,8 +648,19 @@ mod tests {
         }
 
         fn stop(&self) {
-            *self.stopping.lock().expect("stopping") = true;
-            self.cv.notify_all();
+            let mut state = self.state.lock().expect("engine state");
+            // Only if there is something to stop. Latching it unconditionally
+            // made the *next* message fail with "stopped" instead — so a
+            // `stop` with nothing playing poisoned a message sent afterwards.
+            // No real engine does that: Android's reads its stop generation
+            // fresh on every `speak`, so a stop before one is simply not
+            // there. A double stricter than the thing it stands in for
+            // reports failures the product does not have, and this one was
+            // found while chasing a failure the product *does* (#109).
+            if state.speaking {
+                state.stopping = true;
+                self.cv.notify_all();
+            }
         }
 
         fn tier(&self) -> Tier {
@@ -901,6 +979,94 @@ mod tests {
         );
         assert!(engine.spoken().len() > while_paused);
         assert_eq!(engine.spoken().last().map(String::as_str), Some("two"));
+        speaker.shutdown();
+    }
+
+    #[tokio::test]
+    async fn skipping_while_paused_drops_the_held_message() {
+        let engine = FakeEngine::new();
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+
+        let (only, only_done) = job("m1", &["one", "two"]);
+        speaker.submit(only, false);
+        settle().await;
+        speaker.pause();
+        settle().await;
+
+        // Skip is offered while paused, because the held message is what the
+        // controls are about. Nothing was in flight for the cut to interrupt,
+        // so the button did nothing and the message stayed held (#109).
+        speaker.skip();
+        settle().await;
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), only_done)
+                .await
+                .expect("skip finishes the held message")
+                .expect("status")
+                .status,
+            Status::Cancelled
+        );
+        let snap = speaker.snapshot();
+        assert_eq!(snap.speaking, None, "nothing is held after skipping it");
+        // Still paused: skip means "not this one", not "start talking".
+        assert!(snap.paused);
+        speaker.shutdown();
+    }
+
+    #[tokio::test]
+    async fn stopping_while_paused_does_not_leave_the_device_mute() {
+        let engine = FakeEngine::new();
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+
+        speaker.submit(job("m1", &["one", "two"]).0, false);
+        settle().await;
+        speaker.pause();
+        settle().await;
+
+        // Stop is the control a person reaches for when pause has left them
+        // somewhere they did not mean to be. It emptied the queue and left
+        // the pause in place, so every later message queued and none of it
+        // was ever spoken — the device was mute with nothing saying why
+        // (#109).
+        speaker.clear();
+        settle().await;
+        assert!(!speaker.snapshot().paused, "stop should end a pause");
+
+        let (next, next_done) = job("m2", &["after"]);
+        speaker.submit(next, false);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), next_done)
+                .await
+                .expect("a message after stop is spoken")
+                .expect("status")
+                .status,
+            Status::Spoken
+        );
+        speaker.shutdown();
+    }
+
+    #[tokio::test]
+    async fn a_paused_queue_still_says_what_it_is_holding() {
+        let engine = FakeEngine::new();
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+
+        speaker.submit(job("m1", &["one", "two"]).0, false);
+        settle().await;
+        speaker.pause();
+        settle().await;
+
+        // The interface hid its own Resume button because it keys the
+        // playback controls off `speaking`, and a paused message is held in
+        // `resume` rather than spoken. Reporting the held message keeps the
+        // controls on screen and keeps the snapshot honest: something *is*
+        // owed here, and it is that message (#109).
+        let snap = speaker.snapshot();
+        assert!(snap.paused);
+        assert_eq!(
+            snap.speaking.as_deref(),
+            Some("m1"),
+            "a held message is still what this device is playing"
+        );
         speaker.shutdown();
     }
 
