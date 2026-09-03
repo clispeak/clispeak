@@ -591,12 +591,25 @@ fn split_run_key(line: &str) -> Option<(&str, &str)> {
     Some((indent, &line[consumed..]))
 }
 
-/// Every file git is tracking.
+/// Every file git is tracking, once each.
 ///
 /// `git ls-files` rather than a directory walk, so generated output, build
 /// directories and anything ignored are all excluded for free — and so the
 /// gate's idea of "in the repository" is git's rather than a second one that
 /// can drift from it.
+///
+/// **Deduplicated, and that is not tidiness.** During a conflict the index
+/// holds three entries for a conflicted path — stages 1, 2 and 3 — and
+/// `ls-files` prints all three, so the conflict gate read the same file three
+/// times and printed every marker three times. Nine lines where three belong,
+/// on the exact screen where someone is working out what to fix.
+///
+/// It cannot happen outside a conflict, because a merged index has one entry
+/// per path. So the bug was invisible in every test either of us would write
+/// and certain in the only case the gate exists for — the thing only
+/// misbehaved when it fired. Sorted and deduplicated here rather than with
+/// `--deduplicate`, which is a newer flag than the oldest git this has to run
+/// on, and the sort makes the findings order stable as well.
 fn tracked_files() -> anyhow::Result<Vec<PathBuf>> {
     let out = std::process::Command::new("git")
         .args(["ls-files", "-z"])
@@ -605,12 +618,15 @@ fn tracked_files() -> anyhow::Result<Vec<PathBuf>> {
     if !out.status.success() {
         anyhow::bail!("git ls-files failed");
     }
-    Ok(out
+    let mut files: Vec<PathBuf> = out
         .stdout
         .split(|b| *b == 0)
         .filter(|s| !s.is_empty())
         .map(|s| PathBuf::from(String::from_utf8_lossy(s).into_owned()))
-        .collect())
+        .collect();
+    files.sort();
+    files.dedup();
+    Ok(files)
 }
 
 fn rust_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
