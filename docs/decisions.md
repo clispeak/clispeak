@@ -1676,7 +1676,7 @@ that week while the README pins r29 for local builds. So nothing records which
 NDK built a shipped APK. That wants a decision about which to pin to rather
 than freezing today's by accident.
 
-## 56. The Android shell is compiled on every push, and says what it is holding
+## 56. Two Android bugs, and the shell that nothing compiles until a tag
 
 Two bugs in the Kotlin, and the reason neither was caught. Issues #60 and #61.
 
