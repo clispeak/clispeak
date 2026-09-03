@@ -468,9 +468,52 @@ pub enum Response {
     },
     /// The node could not do it.
     Error {
-        /// Why.
+        /// Why, for a person or an agent to read.
         message: String,
+        /// What sort of failure this is, when the caller has to branch.
+        ///
+        /// A string rather than an enum on purpose. An unknown enum variant
+        /// fails the whole decode, so a newer node teaching this field a new
+        /// value would break every older CLI — the same trap that makes
+        /// adding a `Response` variant unsafe. An unrecognised string simply
+        /// matches nothing, which is exactly the behaviour a reader wants
+        /// from a kind it has never heard of. Compare against the
+        /// [`error_kind`] constants. Defaulted, so an older node sends none.
+        #[serde(default)]
+        kind: Option<String>,
     },
+}
+
+/// Values [`Response::Error`]'s `kind` can take.
+///
+/// Constants rather than an enum — see the field's own note. Each exists
+/// because a caller does something different about it, which is the only
+/// reason to distinguish a failure at all.
+pub mod error_kind {
+    /// The selector named no device this node could reach.
+    ///
+    /// Distinct from a malformed command because the command was well formed:
+    /// `docs/cli.md` has promised exit code 2 for it since the table was
+    /// written, and the CLI returned 1 for everything (#66).
+    pub const NO_TARGET: &str = "no-target";
+}
+
+impl Response {
+    /// A failure with nothing more to say about it than why.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::Error {
+            message: message.into(),
+            kind: None,
+        }
+    }
+
+    /// A failure because the selector matched no device.
+    pub fn no_target(message: impl Into<String>) -> Self {
+        Self::Error {
+            message: message.into(),
+            kind: Some(error_kind::NO_TARGET.to_string()),
+        }
+    }
 }
 /// One device's membership of a space.
 #[derive(Debug, Clone, Serialize, Deserialize)]

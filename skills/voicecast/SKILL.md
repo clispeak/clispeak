@@ -110,7 +110,8 @@ Branch on it. The codes are distinct precisely so you can.
 | `6` | Text rejected — markdown or a bare URL | **The error usually contains a rewrite. Send that, verbatim.** Do not paraphrase it yourself. When it says there is no automatic rewrite, say the thing in words instead, or pass `--raw` |
 | `4` | No device spoke it | Read the reason before reacting — see below |
 | `3` | Some devices spoke, some did not | Say which ones did not. Do not resend to everyone |
-| `5` | No node running on this machine | Ask the user to open the voicecast app. Do not retry |
+| `2` | The selector matched no device | The command was fine, the name was not. Run `voicecast devices` and use one of those, or `here` |
+| `5` | No node running on this machine, or it stopped mid-request | Ask the user to open the voicecast app. Do not retry |
 | `1` | Usage error | Fix the command. If a flag ended up after the text, the error prints the corrected line — run that |
 
 **Exit 4 is usually not a failure.** Check the status:

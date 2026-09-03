@@ -34,6 +34,13 @@ mod exit {
     pub const ALL_FAILED: u8 = 4;
     /// Text rejected: markdown or a URL that will not read well aloud.
     pub const REJECTED: u8 = 6;
+    /// The selector was well formed and matched no device.
+    ///
+    /// Documented in `docs/cli.md` since that table was written and never
+    /// emitted: every node-side refusal arrived as a usage error, so an agent
+    /// told to "fix the command" could not tell a device that is not here
+    /// from a command that is wrong (#66).
+    pub const NO_TARGET: u8 = 2;
 }
 
 #[derive(Parser)]
@@ -381,6 +388,16 @@ fn out(s: &str) {
     if QUIET.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
+    let _ = writeln!(std::io::stdout(), "{s}");
+}
+
+/// Print something the caller asked for by name, whatever `--quiet` says.
+///
+/// `--quiet` means "do not narrate"; `--json` means "answer in JSON". Sending
+/// the JSON through `out` made the two cancel out, so `--quiet --json`
+/// printed nothing at all and looked like a node that had died (#66).
+fn out_json(s: &str) {
+    use std::io::Write;
     let _ = writeln!(std::io::stdout(), "{s}");
 }
 
@@ -1006,8 +1023,35 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
         }
     };
 
-    write_frame(&mut stream, &request).await?;
-    let response: Response = read_frame(&mut stream).await?;
+    // Once the socket is open, a failure is the node going away rather than
+    // anything the caller did. Mapping these through `anyhow` gave exit 1 and
+    // "reading frame length: early eof", so an agent told to fix its command
+    // for a code 1 went looking for a mistake it had not made (#66).
+    if let Err(e) = write_frame(&mut stream, &request).await {
+        err(&format!("error: the node stopped while listening: {e:#}"));
+        err("Open the voicecast app, or start voicecastd, then try again.");
+        return Ok(exit::NO_NODE);
+    }
+    let response: Response = match read_frame(&mut stream).await {
+        Ok(r) => r,
+        Err(e) => {
+            err(&format!("error: the node stopped before answering: {e:#}"));
+            err("Open the voicecast app, or start voicecastd, then try again.");
+            return Ok(exit::NO_NODE);
+        }
+    };
+
+    // Anything without a hand-written JSON shape is still answerable in JSON:
+    // the node's reply serialises as it stands. `--json` was documented as
+    // working everywhere and worked for three subcommands, so an agent asking
+    // `status --json` got a human table and had to scrape it (#66).
+    if json && !has_own_json(&response) {
+        out_json(
+            &serde_json::to_string_pretty(&response)
+                .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}")),
+        );
+        return Ok(exit_code_for(&response, was_speak));
+    }
 
     Ok(match response {
         Response::Accepted { msg_id } => {
@@ -1198,7 +1242,7 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
                 .filter(|e| !unheard_only || e.unheard)
                 .collect();
             if json {
-                out(&serde_json::to_string_pretty(&shown).unwrap_or_else(|_| "[]".into()));
+                out_json(&serde_json::to_string_pretty(&shown).unwrap_or_else(|_| "[]".into()));
             } else if shown.is_empty() {
                 err("nothing in the history");
             } else {
@@ -1241,7 +1285,7 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
         }
         Response::Targets { devices } => {
             if json {
-                out(&serde_json::to_string_pretty(&devices).unwrap_or_else(|_| "[]".into()));
+                out_json(&serde_json::to_string_pretty(&devices).unwrap_or_else(|_| "[]".into()));
             } else {
                 for d in &devices {
                     out(d);
@@ -1267,10 +1311,13 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
             }
             exit::OK
         }
-        Response::Error { message } => {
+        Response::Error { message, kind } => {
             // Carries a remote `JoinRefused` reason, so it is peer text.
             err(&format!("error: {}", plain(&message)));
-            exit::USAGE
+            match kind.as_deref() {
+                Some(voicecast_proto::error_kind::NO_TARGET) => exit::NO_TARGET,
+                _ => exit::USAGE,
+            }
         }
     })
 }
@@ -1290,6 +1337,35 @@ fn first_line(text: &str) -> String {
     }
     let cut: String = flat.chars().take(WIDTH).collect();
     format!("{cut}…")
+}
+
+/// Whether this reply already has a JSON shape written for it.
+///
+/// Those three are promised in `docs/cli.md` with named fields, so they are
+/// built by hand rather than derived; everything else is better served by the
+/// reply as it stands than by a table an agent has to parse.
+fn has_own_json(response: &Response) -> bool {
+    matches!(
+        response,
+        Response::Report { .. } | Response::History { .. } | Response::Targets { .. }
+    )
+}
+
+/// The exit code a reply implies, for the paths that do not print it.
+fn exit_code_for(response: &Response, was_speak: bool) -> u8 {
+    match response {
+        Response::Error { kind, .. }
+            if kind.as_deref() == Some(voicecast_proto::error_kind::NO_TARGET) =>
+        {
+            exit::NO_TARGET
+        }
+        Response::Error { .. } => exit::USAGE,
+        Response::Finished { status } if was_speak => match status {
+            Status::Spoken | Status::Queued | Status::Speaking => exit::OK,
+            _ => exit::ALL_FAILED,
+        },
+        _ => exit::OK,
+    }
 }
 
 /// Peer-supplied text, made safe to put in a terminal.
@@ -1380,7 +1456,7 @@ fn report(msg_id: &str, targets: &[voicecast_proto::TargetResult], json: bool) -
                 "detail": t.detail,
             })).collect::<Vec<_>>(),
         });
-        out(&serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into()));
+        out_json(&serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into()));
     } else if targets.len() == 1 && targets[0].detail.is_none() && targets[0].took_ms.is_none() {
         // The common case: one target, fire and forget. A table would be
         // noise, so keep the bare id the shell can capture.
@@ -1474,6 +1550,39 @@ mod display_tests {
             flags_first(&argv("hello --to Phone --wait")).as_deref(),
             Some("voicecast --to Phone --wait hello")
         );
+    }
+
+    #[test]
+    fn a_selector_that_matched_nothing_gets_its_own_exit_code() {
+        use voicecast_proto::{Response, error_kind};
+        // A well-formed command naming a device that is not here. Exit 1 told
+        // an agent to fix the command, which was already correct (#66).
+        let missing = Response::no_target("no device named 'desk' in this space");
+        assert_eq!(super::exit_code_for(&missing, true), super::exit::NO_TARGET);
+
+        // Anything else stays a usage error.
+        let other = Response::error("no space called 'work'");
+        assert_eq!(super::exit_code_for(&other, true), super::exit::USAGE);
+
+        // A kind from a newer node that this build has never heard of must
+        // read as "some error", not fail and not be mistaken for no-target.
+        let future = Response::Error {
+            message: "something new".into(),
+            kind: Some("invented-later".into()),
+        };
+        assert_eq!(super::exit_code_for(&future, true), super::exit::USAGE);
+        assert_eq!(error_kind::NO_TARGET, "no-target");
+    }
+
+    #[test]
+    fn every_reply_can_answer_in_json() {
+        use voicecast_proto::Response;
+        // Three shapes are written by hand because the docs name their
+        // fields; everything else was printing a human table to a caller
+        // that had asked for JSON (#66).
+        assert!(super::has_own_json(&Response::Targets { devices: vec![] }));
+        assert!(!super::has_own_json(&Response::error("x")));
+        assert!(!super::has_own_json(&Response::Done));
     }
 
     #[test]

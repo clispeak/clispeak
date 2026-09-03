@@ -389,7 +389,7 @@ async fn set_mute(
     space: Option<String>,
 ) -> Result<PolicyView, String> {
     match state.node.set_mute(muted, space.as_deref()).await {
-        Response::Error { message } => Err(message),
+        Response::Error { message, .. } => Err(message),
         other => Ok(other.into()),
     }
 }
@@ -408,7 +408,7 @@ async fn set_quiet(
         .set_quiet(from, to, high_breaks_through, space.as_deref())
         .await
     {
-        Response::Error { message } => Err(message),
+        Response::Error { message, .. } => Err(message),
         other => Ok(other.into()),
     }
 }
@@ -1043,7 +1043,7 @@ fn spoken_or_why(targets: &[voicecast_proto::TargetResult]) -> Result<(), String
 /// Turn an unexpected response into something worth showing a person.
 fn describe(r: Response) -> String {
     match r {
-        Response::Error { message } => message,
+        Response::Error { message, .. } => message,
         other => format!("unexpected response: {other:?}"),
     }
 }

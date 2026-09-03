@@ -255,7 +255,7 @@ it and send the parts.
 | `2` | No targets matched the selector |
 | `3` | Partial — at least one target succeeded, at least one didn't |
 | `4` | Every target failed |
-| `5` | Local node unavailable (could not reach or start it) |
+| `5` | Local node unavailable — unreachable, or it stopped mid-request |
 | `6` | Text rejected — markdown or a URL that won't read well aloud |
 
 ## Devices and membership

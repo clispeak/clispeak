@@ -608,7 +608,7 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
                     })
                     .collect(),
             },
-            Err(message) => Response::Error { message },
+            Err(message) => Response::no_target(message),
         },
         Request::Stop { to, msg_id } => {
             control(shared, transport, to, Control::Stop { msg_id }).await
@@ -642,9 +642,7 @@ async fn handle_cli(shared: &Arc<Shared>, transport: &Arc<Transport>, mut s: Str
                 hook();
                 Response::Done
             }
-            None => Response::Error {
-                message: "this node has no window".into(),
-            },
+            None => Response::error("this node has no window"),
         },
         Request::Quit => {
             let hook = shared.on_quit.lock().await.clone();
@@ -765,14 +763,16 @@ async fn speak(shared: &Arc<Shared>, transport: &Arc<Transport>, ask: SpeakReque
     } = ask;
     let chunks = chunk(&text);
     if chunks.is_empty() {
-        return Response::Error {
-            message: "nothing to say".into(),
-        };
+        return Response::error("nothing to say");
     }
 
     let targets = match resolve(shared, to.as_deref().unwrap_or("here")).await {
         Ok(targets) => targets,
-        Err(message) => return Response::Error { message },
+        // Every failure `resolve` reports is the selector matching nothing,
+        // which is a well-formed command naming a device that is not here —
+        // not the same as a malformed one, and promised its own exit code
+        // since `docs/cli.md` was written (#66).
+        Err(message) => return Response::no_target(message),
     };
 
     let outgoing = Outgoing {
@@ -1296,9 +1296,7 @@ fn enqueue_inner(
     // Refuse before accepting, so the sender is told rather than the failure
     // being buried in this device's log.
     if let Err(e) = shared.engine.ready() {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     shared.speaker.submit(
         Job {
@@ -1371,7 +1369,7 @@ async fn speak_here(
             space.as_deref(),
         ) {
             Response::Accepted { .. } => (Status::Queued, None, None),
-            Response::Error { message } => (settle(Status::NoEngine), None, Some(message)),
+            Response::Error { message, .. } => (settle(Status::NoEngine), None, Some(message)),
             // A policy refusal — muted, quiet hours, or dropped chatter. It
             // is a terminal answer, so it travels back to the sender as is.
             Response::Finished { status } => {
@@ -1393,7 +1391,7 @@ async fn speak_here(
         Some(tx),
     ) {
         Response::Accepted { .. } => {}
-        Response::Error { message } => return (settle(Status::NoEngine), None, Some(message)),
+        Response::Error { message, .. } => return (settle(Status::NoEngine), None, Some(message)),
         Response::Finished { status } => {
             let why = refusal_detail(&status);
             return (settle(status), None, why);
@@ -1439,7 +1437,11 @@ async fn control(
 ) -> Response {
     let targets = match resolve(shared, to.as_deref().unwrap_or("here")).await {
         Ok(targets) => targets,
-        Err(message) => return Response::Error { message },
+        // Every failure `resolve` reports is the selector matching nothing,
+        // which is a well-formed command naming a device that is not here —
+        // not the same as a malformed one, and promised its own exit code
+        // since `docs/cli.md` was written (#66).
+        Err(message) => return Response::no_target(message),
     };
 
     let mut set = tokio::task::JoinSet::new();
@@ -1626,7 +1628,7 @@ async fn policy_target(
 async fn set_mute(shared: &Arc<Shared>, muted: bool, space: Option<&str>) -> Response {
     let target = match policy_target(shared, space).await {
         Ok(target) => target,
-        Err(message) => return Response::Error { message },
+        Err(message) => return Response::error(message),
     };
     {
         let mut p = shared.policy.lock().expect("policy lock");
@@ -1639,9 +1641,7 @@ async fn set_mute(shared: &Arc<Shared>, muted: bool, space: Option<&str>) -> Res
             }
         }
         if let Err(e) = policy::save(&p) {
-            return Response::Error {
-                message: format!("could not save the policy: {e}"),
-            };
+            return Response::error(format!("could not save the policy: {e}"));
         }
     }
     if muted {
@@ -1660,14 +1660,12 @@ async fn set_quiet(
 ) -> Response {
     let target = match policy_target(shared, space).await {
         Ok(target) => target,
-        Err(message) => return Response::Error { message },
+        Err(message) => return Response::error(message),
     };
     let quiet = match (from, to) {
         (Some(f), Some(t)) => {
             let (Some(from), Some(to)) = (policy::parse_time(&f), policy::parse_time(&t)) else {
-                return Response::Error {
-                    message: format!("times must look like 22:00, got '{f}' and '{t}'"),
-                };
+                return Response::error(format!("times must look like 22:00, got '{f}' and '{t}'"));
             };
             Some(crate::QuietHours {
                 from,
@@ -1690,9 +1688,7 @@ async fn set_quiet(
             }
         }
         if let Err(e) = policy::save(&p) {
-            return Response::Error {
-                message: format!("could not save the policy: {e}"),
-            };
+            return Response::error(format!("could not save the policy: {e}"));
         }
     }
     policy_response(shared).await
@@ -1733,20 +1729,14 @@ fn replay(shared: &Arc<Shared>, msg_id: &str) -> Response {
         history.get(msg_id).cloned()
     };
     let Some(entry) = entry else {
-        return Response::Error {
-            message: format!("no message {msg_id} in the history"),
-        };
+        return Response::error(format!("no message {msg_id} in the history"));
     };
     if let Err(e) = shared.engine.ready() {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     let chunks = chunk(&entry.text);
     if chunks.is_empty() {
-        return Response::Error {
-            message: "that message has no text".into(),
-        };
+        return Response::error("that message has no text");
     }
     shared.speaker.submit(
         Job {
@@ -1936,7 +1926,7 @@ async fn send_to_peer(
 async fn invite(shared: &Arc<Shared>, space: Option<&str>) -> Response {
     let space = match space_named(shared, space).await {
         Ok(id) => id,
-        Err(message) => return Response::Error { message },
+        Err(message) => return Response::error(message),
     };
     // Recorded on the ticket rather than decided when the joiner arrives:
     // those are different questions, and the person pressing the button was
@@ -1948,9 +1938,7 @@ async fn invite(shared: &Arc<Shared>, space: Option<&str>) -> Response {
     let url = match ticket.to_url() {
         Ok(u) => u,
         Err(e) => {
-            return Response::Error {
-                message: e.to_string(),
-            };
+            return Response::error(e.to_string());
         }
     };
     let expires_in = ticket.remaining();
@@ -1971,9 +1959,7 @@ async fn join(
     let ticket = match Ticket::parse(raw) {
         Ok(t) => t,
         Err(e) => {
-            return Response::Error {
-                message: format!("{e:#}"),
-            };
+            return Response::error(format!("{e:#}"));
         }
     };
     match do_join(shared, transport, &ticket, label.as_deref()).await {
@@ -1981,9 +1967,7 @@ async fn join(
             members: count,
             space,
         },
-        Err(e) => Response::Error {
-            message: format!("{e:#}"),
-        },
+        Err(e) => Response::error(format!("{e:#}")),
     }
 }
 
@@ -2000,9 +1984,7 @@ fn preview(raw: &str) -> Response {
             expires_in: t.remaining(),
             endpoint_id: t.endpoint_id.clone(),
         },
-        Err(e) => Response::Error {
-            message: format!("{e:#}"),
-        },
+        Err(e) => Response::error(format!("{e:#}")),
     }
 }
 
@@ -2105,21 +2087,17 @@ async fn do_join(
 async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
     let name = name.trim();
     if name.is_empty() {
-        return Response::Error {
-            message: "a device name cannot be empty".into(),
-        };
+        return Response::error("a device name cannot be empty");
     }
     // The same rule spaces use, for the same reason: these names are what
     // `--to` parses, so a comma splits one device into two targets and a
     // slash reads as a space qualifier. `all` and `here` are decided before
     // any lookup happens, so a device wearing one can never be addressed.
     if let Some(message) = name_objection(name) {
-        return Response::Error { message };
+        return Response::error(message);
     }
     if let Err(e) = crate::set_device_name(name) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     // Before the rosters, so a sync racing this cannot write the old name
     // back: `merge_from_peer` reads this lock to restamp our own entry.
@@ -2136,9 +2114,7 @@ async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
         }
     }
     if let Err(e) = spaces.save(&shared.spaces_path) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     Response::Renamed {
         name: name.to_string(),
@@ -2154,7 +2130,7 @@ async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
 async fn revoke(shared: &Arc<Shared>, name: &str, space: Option<&str>) -> Response {
     let space = match space_named(shared, space).await {
         Ok(id) => id,
-        Err(message) => return Response::Error { message },
+        Err(message) => return Response::error(message),
     };
     let me = shared.identity.id().to_string();
     let mut spaces = shared.spaces.lock().await;
@@ -2164,23 +2140,17 @@ async fn revoke(shared: &Arc<Shared>, name: &str, space: Option<&str>) -> Respon
         .and_then(|r| r.by_name(name))
         .map(|m| m.endpoint_id.clone())
     else {
-        return Response::Error {
-            message: format!("no device named '{name}' in this space"),
-        };
+        return Response::error(format!("no device named '{name}' in this space"));
     };
     if target == me {
-        return Response::Error {
-            message: "that is this device — use `voicecast leave` instead".into(),
-        };
+        return Response::error("that is this device — use `voicecast leave` instead");
     }
 
     if let Some(roster) = spaces.get_mut(&space) {
         roster.revoke(&target);
     }
     if let Err(e) = spaces.save(&shared.spaces_path) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     Response::Renamed {
         name: format!("removed {name}"),
@@ -2199,7 +2169,7 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&
     cancel_open_invite(shared).await;
     let space = match space_named(shared, space).await {
         Ok(id) => id,
-        Err(message) => return Response::Error { message },
+        Err(message) => return Response::error(message),
     };
     let me = shared.identity.id().to_string();
 
@@ -2207,9 +2177,7 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&
     let (farewell, peers, label) = {
         let spaces = shared.spaces.lock().await;
         let Some(roster) = spaces.get(&space) else {
-            return Response::Error {
-                message: "that space is no longer held".into(),
-            };
+            return Response::error("that space is no longer held");
         };
         let label = spaces.label(&space).to_string();
         let mut goodbye = roster.clone();
@@ -2242,16 +2210,14 @@ async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&
     if refounded {
         spaces.replace_current(Roster::leave(shared.identity.secret(), &my_name(shared)));
     } else if let Err(message) = spaces.remove(&space) {
-        return Response::Error { message };
+        return Response::error(message);
     }
     // The id is gone either way — removed, or re-keyed by refounding. An
     // override left behind would apply again to whatever space is founded
     // with that id next, which is silence nobody asked for.
     forget_policy(shared, &space);
     if let Err(e) = spaces.save(&shared.spaces_path) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
 
     Response::Left {
@@ -2359,15 +2325,13 @@ async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
     cancel_open_invite(shared).await;
     let space = match space_named(shared, space).await {
         Ok(id) => id,
-        Err(message) => return Response::Error { message },
+        Err(message) => return Response::error(message),
     };
     let me = shared.identity.id().to_string();
     let mut spaces = shared.spaces.lock().await;
 
     let Some(roster) = spaces.get(&space) else {
-        return Response::Error {
-            message: "that space is no longer held".into(),
-        };
+        return Response::error("that space is no longer held");
     };
     let label = spaces.label(&space).to_string();
     let devices: Vec<String> = roster
@@ -2384,14 +2348,10 @@ async fn rotate(shared: &Arc<Shared>, space: Option<&str>) -> Response {
         &space,
         Roster::found(shared.identity.secret(), &my_name(shared)),
     ) {
-        return Response::Error {
-            message: "that space is no longer held".into(),
-        };
+        return Response::error("that space is no longer held");
     }
     if let Err(e) = spaces.save(&shared.spaces_path) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     // Rotating mints a space with a new id, so the old override names nothing.
     // Dropped rather than carried across: the new space has different members
@@ -2482,23 +2442,19 @@ async fn list_spaces(shared: &Arc<Shared>) -> Response {
 async fn new_space(shared: &Arc<Shared>, label: &str) -> Response {
     let mut spaces = shared.spaces.lock().await;
     if spaces.by_label(label).is_some() {
-        return Response::Error {
-            message: format!("there is already a space called '{label}'"),
-        };
+        return Response::error(format!("there is already a space called '{label}'"));
     }
     let roster = Roster::found(shared.identity.secret(), &my_name(shared));
     let id = roster.space_id();
     spaces.insert(roster, label);
     if let Err(e) = spaces.set_label(&id, label) {
-        return Response::Error { message: e };
+        return Response::error(e);
     }
     if let Err(e) = spaces.set_default(&id) {
-        return Response::Error { message: e };
+        return Response::error(e);
     }
     if let Err(e) = spaces.save(&shared.spaces_path) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     drop(spaces);
     list_spaces(shared).await
@@ -2512,18 +2468,14 @@ async fn leave_space(shared: &Arc<Shared>, label: &str) -> Response {
     cancel_open_invite(shared).await;
     let mut spaces = shared.spaces.lock().await;
     let Some(id) = spaces.by_label(label) else {
-        return Response::Error {
-            message: format!("no space called '{label}'"),
-        };
+        return Response::error(format!("no space called '{label}'"));
     };
     if let Err(message) = spaces.remove(&id) {
-        return Response::Error { message };
+        return Response::error(message);
     }
     forget_policy(shared, &id);
     if let Err(e) = spaces.save(&shared.spaces_path) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     drop(spaces);
     list_spaces(shared).await
@@ -2533,17 +2485,13 @@ async fn leave_space(shared: &Arc<Shared>, label: &str) -> Response {
 async fn default_space(shared: &Arc<Shared>, label: &str) -> Response {
     let mut spaces = shared.spaces.lock().await;
     let Some(id) = spaces.by_label(label) else {
-        return Response::Error {
-            message: format!("no space called '{label}'"),
-        };
+        return Response::error(format!("no space called '{label}'"));
     };
     if let Err(message) = spaces.set_default(&id) {
-        return Response::Error { message };
+        return Response::error(message);
     }
     if let Err(e) = spaces.save(&shared.spaces_path) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     drop(spaces);
     list_spaces(shared).await
@@ -2553,17 +2501,13 @@ async fn default_space(shared: &Arc<Shared>, label: &str) -> Response {
 async fn rename_space(shared: &Arc<Shared>, label: &str, to: &str) -> Response {
     let mut spaces = shared.spaces.lock().await;
     let Some(id) = spaces.by_label(label) else {
-        return Response::Error {
-            message: format!("no space called '{label}'"),
-        };
+        return Response::error(format!("no space called '{label}'"));
     };
     if let Err(message) = spaces.set_label(&id, to) {
-        return Response::Error { message };
+        return Response::error(message);
     }
     if let Err(e) = spaces.save(&shared.spaces_path) {
-        return Response::Error {
-            message: e.to_string(),
-        };
+        return Response::error(e.to_string());
     }
     drop(spaces);
     list_spaces(shared).await
