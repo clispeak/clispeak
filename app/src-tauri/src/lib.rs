@@ -16,7 +16,7 @@ use tauri::{Manager, State};
 #[cfg(desktop)]
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use voicecast_core::{Identity, Node, Transport};
 use voicecast_engine::SpeechEngine;
@@ -1515,7 +1515,25 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .icon(icon)
         .tooltip("voicecast")
         .menu(&menu)
+        // The menu belongs on the secondary button. A left click is how a
+        // person asks for the window, and with the menu moved off it and
+        // nothing put in its place, a left click did nothing at all — the
+        // window was reachable only through a menu you had to know to
+        // right-click for.
         .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                // On release, not on press: a click that is still down may
+                // yet become a drag, and acting on the press raises the
+                // window while the pointer is being moved away.
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                reveal(tray.app_handle());
+            }
+        })
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => reveal(app),
             "quit" => app.exit(0),
