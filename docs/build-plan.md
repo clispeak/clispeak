@@ -317,6 +317,32 @@ None of this is engineering. Each item is a call only Patrick can make:
 *Exit:* a person who has never seen this repository can install it on their own
 machine, from a link, and be spoken to.
 
+### M12 — Audit findings
+
+A full code and security review on 2026-09-02, five reviewers by area (core,
+proto/text/CLI, engine and Android, the app, CI and packaging), every finding
+verified against the code before it was filed. Thirty-seven issues, all
+carrying the `audit` label; the ones that must close before 1.0 are on the
+milestone.
+
+What it found, in one paragraph: the roster merge trusts any signed timestamp,
+so a member can make itself unrevokable (#48) and the panic button has a
+five-minute hole (#50); a departed space's messages fall into another space's
+roster (#51); a receiver speaks any size of chunk a member sends, and one long
+chunk deadlocks Piper (#53); the local socket is unauthenticated (#54); peer
+names reach the agent's terminal unescaped (#55); the engine's `stop` cannot
+interrupt anything (#58); `rename` reverts within a minute (#62); a flag after
+the text is a usage error (#64); and the release workflow has been building a
+debug APK all along (#68). Nothing was found in the webview: one `innerHTML`,
+correctly trusted, and an empty capability set.
+
+What it says about the process: every high finding sits at a boundary no test
+crosses (#80), and three of the worst are the same fact held in two places
+(#79). The fix for the crate is a seam, not a rewrite.
+
+*Exit:* every `security` issue closed, #80's harness exists, and the release
+APK is the release build.
+
 ---
 
 ## Testing strategy
