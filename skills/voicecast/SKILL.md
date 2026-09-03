@@ -197,9 +197,13 @@ ask for a fresh one.
 space; `voicecast history` on the receiving device, which records every
 message whether or not it was spoken.
 
-**Controlling playback.** `voicecast stop`, `skip`, `pause`, `resume` and
-`queue` all take `--to`, so a device talking in another room can be quieted
-from here.
+**Controlling playback.** `voicecast stop`, `skip`, `pause` and `resume` take
+`--to`, so a device talking in another room can be quieted from here.
+
+`queue` does **not** — it reports this device only, as do `status`, `history`,
+`mute` and `unmute`. Passing `--to` to any of those is refused rather than
+ignored: it used to be accepted in silence, so `voicecast --to Phone mute`
+muted the machine it ran on and reported success.
 
 ## Staying out of the way
 

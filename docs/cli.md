@@ -88,7 +88,7 @@ $ voicecast groups
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-t, --to <sel>` | config default | Target selector |
+| `-t, --to <sel>` | config default | Target selector. Speaking, `stop`, `skip`, `pause` and `resume` only — refused on anything that acts on this device alone |
 | `-p, --priority <lvl>` | `normal` | `low` \| `normal` \| `high` |
 | `-f, --file <path>` | — | Read text from a file |
 | `-v, --voice <name>` | receiver's | Request a voice, if the receiver has it |
@@ -129,7 +129,7 @@ $ voicecast stop --id m_8fk2p     # one specific message, wherever it is
 $ voicecast skip                  # abandon current, continue with the queue
 $ voicecast pause
 $ voicecast resume
-$ voicecast queue                 # what's pending, where
+$ voicecast queue                 # what's pending here. Local only: no --to
 ```
 
 Every send returns a message ID, which is what `--id` addresses.
