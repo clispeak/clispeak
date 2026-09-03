@@ -273,8 +273,9 @@ pub fn device_name() -> String {
 
 /// A name for a device whose hostname tells us nothing useful.
 ///
-/// Android has no `/etc/hostname`, and "this device" reads like a bug in a
-/// device list. Something plausible is better until the user renames it.
+/// A phone answers `gethostname` with "localhost", and "this device" reads
+/// like a bug in a device list. Something plausible is better until the user
+/// renames it.
 fn default_name() -> &'static str {
     if cfg!(target_os = "android") {
         "Android phone"
@@ -312,11 +313,31 @@ pub fn save_voice_settings(id: &str, rate: f32) -> Result<(), IdentityError> {
 }
 
 /// This machine's hostname, if it has a usable one.
+///
+/// Asked of the system rather than read from `/etc/hostname`, which is a
+/// Linux file: macOS and Windows have a perfectly good name and neither has
+/// that file, so both fell through to [`default_name`] and every device in
+/// the roster was called "this device" — including the remote ones, which
+/// made `--to <name>` pick one of them silently. See issue #38.
 fn hostname() -> Option<String> {
-    std::fs::read_to_string("/etc/hostname")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    usable_hostname(&gethostname::gethostname().to_string_lossy())
+}
+
+/// The part of a raw hostname worth showing a person, if any.
+///
+/// Split out from [`hostname`] because the system call is not testable and
+/// the trimming is where the decisions are.
+fn usable_hostname(raw: &str) -> Option<String> {
+    // The mDNS suffix every Mac carries. It says nothing that distinguishes
+    // one of your devices from another, which is the only job this name has.
+    let name = raw.trim().strip_suffix(".local").unwrap_or(raw.trim());
+    // A phone or a container answers with this. It is not a name, it is the
+    // absence of one, and it is the same on every device that gives it —
+    // which is worse than a placeholder, because it looks deliberate.
+    if name.is_empty() || name.eq_ignore_ascii_case("localhost") {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 /// Write bytes to a file only the owner can read.
@@ -414,5 +435,49 @@ mod migration_tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod hostname_tests {
+    use super::*;
+
+    #[test]
+    fn a_mac_hostname_loses_its_mdns_suffix() {
+        assert_eq!(
+            usable_hostname("Patricks-Mac-mini.local").as_deref(),
+            Some("Patricks-Mac-mini")
+        );
+    }
+
+    #[test]
+    fn a_plain_hostname_survives_untouched() {
+        assert_eq!(usable_hostname("laptop").as_deref(), Some("laptop"));
+        assert_eq!(
+            usable_hostname("  build-box\n").as_deref(),
+            Some("build-box")
+        );
+    }
+
+    #[test]
+    fn a_domain_that_is_not_mdns_is_left_alone() {
+        // Only the mDNS suffix is noise we can be sure about. Trimming every
+        // dotted part would turn two machines in different domains into the
+        // same name, which is the failure this whole change is about.
+        assert_eq!(
+            usable_hostname("host.corp.example.com").as_deref(),
+            Some("host.corp.example.com")
+        );
+    }
+
+    #[test]
+    fn a_name_that_is_not_one_is_refused() {
+        // So the caller falls back to something per-platform and plausible
+        // rather than naming every phone the same thing.
+        assert_eq!(usable_hostname(""), None);
+        assert_eq!(usable_hostname("   "), None);
+        assert_eq!(usable_hostname("localhost"), None);
+        assert_eq!(usable_hostname("LocalHost"), None);
+        assert_eq!(usable_hostname(".local"), None);
     }
 }
