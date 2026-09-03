@@ -2130,6 +2130,24 @@ step rewritten as `>`, markers in a document and in a frontend source file at
 once, and a sentence quoting the markers inline — which correctly does not
 fire.
 
+**The workflow gate shipped a false positive and was caught by review, not
+by itself.** `split_run_key` measured a step's indent before the list dash, so
+`- run:` was reported two columns to the left of where it is, and every
+sibling key of a *one-line* run step read as "deeper than the key" — the test
+for a folding plain scalar. Any step written dash-first with `name:` or `if:`
+after it would have been flagged for a fold that is not there. No workflow
+here is written that way, so the gate passed at 26 steps while being wrong,
+which is the same latency as `cfg(unix)` sitting in a portable crate while the
+gate printed "3 crates clean". Fixed, then re-probed against six shapes rather
+than the four the first version was checked against.
+
+**And the answer is not always another gate.** Writing these, clippy caught
+`indent.len().max(0)` on an unsigned integer in the checker itself —
+unconditionally true, silently. Neither new gate would have seen it; `-D
+warnings` did. That is #103's argument pointing the other way: the value is
+not in adding checks, it is in the ones already there continuing to run and
+continuing to be read.
+
 **Costs.** Two more gates to run, both milliseconds. The workflow check is
 lexical, so a `run:` key inside a folded block of some other key's value would
 confuse it — no workflow does that, and a YAML dependency in `xtask` to rule
