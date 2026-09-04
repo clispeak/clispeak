@@ -58,9 +58,23 @@ The socket row says *name*, not path, on purpose: it is a namespaced name, the
 platform decides where it lands, and on Linux there is no file anywhere (#43,
 decision 35). The budget is measured rather than documented — 83 bytes bound
 and 84 refused on a Mac, plus a `/tmp/` prefix confirmed with `lsof`, against a
-documented `sun_path` of 104. The missing 16 bytes are unexplained, probably
-headroom inside `interprocess`'s own check. Measure against 83; it is the
-number that decides whether a node starts.
+documented `sun_path` of 104. Measure against 83; it is the number that decides
+whether a node starts.
+
+**The 16 bytes that decision 35 called unexplained are not headroom, and the
+guess was the wrong shape.** Measured on a Mac on 3 September 2026 by binding
+at increasing lengths until refusal: a *namespaced name* clears at 83 and
+refuses at 84, and a *filesystem path* clears at **104** and refuses at 105 —
+the whole of `sun_path`. So there are two budgets, not one budget with a
+mystery in it. 83 is what a name costs once the library has reserved room for
+the prefix it adds; 104 is what a path costs, because nothing is added to it.
+Raw `AF_UNIX` through Python gives 103 and 104, one byte tighter, which is the
+terminator.
+
+The lesson is not the numbers. It is that "the missing 16 bytes are
+unexplained, probably headroom" sat in this file for weeks reading like a
+fact with a hedge on it, and the hedge was doing the work — nobody had asked
+the second question, so nobody had noticed it was a different question.
 
 A file path, a binary name, a separator, a length limit, a build flag, a
 relative path resolved against a directory you were not thinking about. None
