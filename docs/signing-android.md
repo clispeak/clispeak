@@ -35,7 +35,28 @@ every developer on earth, and anyone can sign an update to your app with it.
 
 So there is currently no way to hand someone an APK. That is what this closes.
 
-## Decide this first: Play, or a download link
+## Decided: a download link for 1.0, Play afterwards
+
+**Patrick, 4 September 2026.** 1.0 ships an APK from the landing page. Play
+comes later, once friends are installing and using a release and once
+Android, Linux and Windows are solid — which is where the users are.
+
+**So the reversibility argument below is not available**, and that changes the
+weight of everything in this document. Play App Signing would have made the
+key resettable; a direct download means the keystore **is** the app's identity
+to every device that installs it, permanently. The instruction at the top is
+now the whole instruction: make it, back it up in two places, never lose it.
+
+**One constraint on the later choice, recorded because it is easy to lose.**
+An APK distributed now is signed with some key K. When Play happens there are
+two paths: hand K to Play App Signing, so existing sideloaded installs can
+still be updated — or let Google generate a fresh key, in which case installs
+from the download page **cannot** be updated through Play and those users must
+uninstall and reinstall, losing their identity and pairings. The decision made
+then is constrained by the key made now.
+
+The original comparison follows, because the reasoning is what makes the
+decision reviewable later.
 
 Everything else follows from it, and it is not really a signing question.
 
