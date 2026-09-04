@@ -131,10 +131,23 @@ jobs:
   # A dependency compromised anywhere in the build cannot reach the
   # certificate, because the certificate is not in that job (#117).
   #
-  # `environment:` is the gate. Give `macos-signing` a required reviewer in
-  # the repository settings and the secrets below are not decrypted until a
-  # human approves the run — so the certificate is unreachable even to a
-  # workflow edited on a branch.
+  # `environment:` does two things here, and only one of them is available
+  # today. It scopes the secrets to this job rather than the whole
+  # repository, which works on any plan and is most of the value.
+  #
+  # **It is not yet a gate.** Required reviewers are a paid feature —
+  # measured, not assumed: creating the environment with a reviewer returns
+  # "Please ensure the billing plan supports the required reviewers
+  # protection rule" on a private repository on the free plan. So nothing
+  # currently stops a run that references this environment from reaching the
+  # certificate, including one from a branch.
+  #
+  # That is an accepted risk while the repository is private and two people
+  # can push to it. **It stops being acceptable the day the repository is
+  # public and takes pull requests**, because a contributor could then
+  # propose a workflow that names this environment. Add the reviewer before
+  # that happens; going public is also when branch protection becomes free,
+  # so the two land together (#5, #117).
   macos-sign:
     name: macos (sign and notarise)
     needs: macos
