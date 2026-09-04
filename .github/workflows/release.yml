@@ -346,8 +346,22 @@ jobs:
           esac
           # The question a downloader's Mac actually asks.
           spctl --assess --type exec --verbose=2 "$app"
-          xcrun stapler validate "$app"
           hdiutil detach check -quiet
+
+          # **The ticket is on the dmg, because that is what was stapled.**
+          # `stapler staple signed.dmg` attaches it to the disk image, and
+          # the app inside never had one of its own — so validating the app
+          # failed with "does not have a ticket stapled to it" on a build
+          # that was correctly signed and correctly notarised, which
+          # `spctl` had just said in the line above. The check was pointed
+          # at the wrong file, not the artefact at the wrong state.
+          #
+          # The dmg is what a person downloads, so the dmg is what has to
+          # carry a ticket. What this leaves is that an app dragged out of
+          # the image has no ticket of its own and is checked online at
+          # first launch; stapling the app as well would need it notarised
+          # separately, before the image is built.
+          xcrun stapler validate signed.dmg
 
       - name: Remove the keychain
         if: always()
