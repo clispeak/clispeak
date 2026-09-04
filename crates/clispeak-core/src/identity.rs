@@ -283,12 +283,20 @@ fn migrate_between(old: &Path, current: &Path) -> Result<Vec<String>, IdentityEr
     Ok(moved)
 }
 
-/// This device's local label.
+/// This device's local label, falling back to `fallback` when nothing names
+/// it.
 ///
 /// A convenience for humans, never an identity — it is deliberately excluded
-/// from a join record's signature so renaming costs nothing. Resolution order:
-/// an explicitly chosen name, then `CLISPEAK_NAME`, then the hostname.
-pub fn device_name() -> String {
+/// from a join record's signature so renaming costs nothing. Resolution
+/// order: an explicitly chosen name, then `CLISPEAK_NAME`, then the hostname,
+/// then whatever the caller offers.
+///
+/// **The fallback is the caller's because it is platform-shaped.** A phone
+/// answers `gethostname` with "localhost", and the plausible thing to call it
+/// instead is "Android phone" or "iPhone" — which is a `target_os` decision,
+/// and this crate does not get to make one. It made it anyway for months,
+/// through `cfg!`, which the portability gate could not see (#161).
+pub fn device_name_or(fallback: &str) -> String {
     if let Ok(dir) = config_dir()
         && let Ok(name) = std::fs::read_to_string(dir.join("name"))
     {
@@ -302,22 +310,16 @@ pub fn device_name() -> String {
     {
         return name.trim().to_string();
     }
-    hostname().unwrap_or_else(|| default_name().to_string())
+    hostname().unwrap_or_else(|| fallback.to_string())
 }
 
-/// A name for a device whose hostname tells us nothing useful.
+/// [`device_name_or`] with the one fallback this crate can honestly offer.
 ///
-/// A phone answers `gethostname` with "localhost", and "this device" reads
-/// like a bug in a device list. Something plausible is better until the user
-/// renames it.
-fn default_name() -> &'static str {
-    if cfg!(target_os = "android") {
-        "Android phone"
-    } else if cfg!(target_os = "ios") {
-        "iPhone"
-    } else {
-        "this device"
-    }
+/// "this device" reads like a bug in a device list, which is exactly why the
+/// platform-specific answers exist — and exactly why they belong to whoever
+/// knows the platform. A host that has something better to say passes it.
+pub fn device_name() -> String {
+    device_name_or("this device")
 }
 
 /// Choose this device's label, remembering it across restarts.

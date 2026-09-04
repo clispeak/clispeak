@@ -131,8 +131,21 @@ const CONDITIONALS: &[&str] = &[
 /// "x"))]` are the same claim wrapped differently and a prefix match sees
 /// neither. `unix` and `windows` need a word boundary or every line
 /// mentioning a `windows` field would trip.
+///
+/// **`cfg!` is one of the wrappings**, and it was missed for as long as this
+/// gate has existed. `cfg!(target_os = "android")` contains neither `cfg(`
+/// nor `cfg_attr(` — the `!` sits between the name and the paren — so the
+/// careful predicate matching below was never reached, and a `target_os`
+/// deciding a user-visible string sat in `clispeak-core` while the gate
+/// printed "3 crates clean" (#161).
+///
+/// That is the third time this gate has under-reported, after #88 and #103,
+/// and every time the same way: it answered honestly about something
+/// *adjacent* to the question asked. A `#[cfg]` is not a conditional. It is
+/// one spelling of one.
 fn is_platform_conditional(line: &str) -> bool {
-    if !line.contains("cfg(") && !line.contains("cfg_attr(") {
+    const SPELLINGS: &[&str] = &["cfg(", "cfg!(", "cfg_attr("];
+    if !SPELLINGS.iter().any(|s| line.contains(s)) {
         return false;
     }
     CONDITIONALS.iter().any(|needle| {
@@ -643,4 +656,67 @@ fn rust_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
         }
     }
     Ok(out)
+}
+
+/// Tests for the gate itself.
+///
+/// It has been wrong three times — #88, #103, #161 — and had none. Every one
+/// of those was a *false negative*: it reported clean and something was
+/// there. So these are mostly cases that must be caught, with a short list of
+/// things that must not be, because a gate that cries wolf gets switched off.
+#[cfg(test)]
+mod tests {
+    use super::is_platform_conditional;
+
+    #[test]
+    fn every_spelling_of_this_code_is_for_one_platform_is_caught() {
+        for line in [
+            "#[cfg(target_os = \"android\")]",
+            "    if cfg!(target_os = \"android\") {",
+            "#[cfg_attr(unix, path = \"unix.rs\")]",
+            "#[cfg(not(unix))]",
+            "#[cfg(all(unix, feature = \"x\"))]",
+            "#[cfg(any(target_os = \"ios\", target_os = \"macos\"))]",
+            "#[cfg(windows)]",
+            "#[cfg(target_family = \"wasm\")]",
+            "#[cfg(target_arch = \"aarch64\")]",
+            "#[cfg(target_env = \"msvc\")]",
+            "#[cfg(target_pointer_width = \"64\")]",
+            // The one that hid in `clispeak-core` for months: a `cfg!` in the
+            // middle of an expression, deciding a user-visible string.
+            "    } else if cfg!(target_os = \"ios\") {",
+        ] {
+            assert!(is_platform_conditional(line), "missed: {line}");
+        }
+    }
+
+    #[test]
+    fn ordinary_code_that_merely_says_the_words_is_not_caught() {
+        for line in [
+            // No `cfg` at all. `unix` and `windows` are ordinary words and a
+            // gate that tripped on them would be switched off within a day.
+            "    let unix = std::time::UNIX_EPOCH;",
+            "    // windows are drawn by the shell",
+            "    #[serde(rename = \"windows\")]",
+            "    let target_os = \"android\";",
+            // A `cfg` that is not a platform claim.
+            "#[cfg(test)]",
+            "#[cfg(feature = \"unixish\")]",
+            "#[cfg_attr(feature = \"serde\", derive(Serialize))]",
+        ] {
+            assert!(!is_platform_conditional(line), "false positive: {line}");
+        }
+    }
+
+    #[test]
+    fn a_word_boundary_is_required_on_both_sides() {
+        // `unix` inside a longer identifier is not a platform claim, and this
+        // is why the predicate looks at the characters either side rather
+        // than doing a substring match.
+        assert!(!is_platform_conditional(
+            "#[cfg(feature = \"unix_sockets\")]"
+        ));
+        assert!(!is_platform_conditional("#[cfg(feature = \"posix\")]"));
+        assert!(is_platform_conditional("#[cfg(unix)]"));
+    }
 }

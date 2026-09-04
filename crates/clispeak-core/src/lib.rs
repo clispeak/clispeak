@@ -21,8 +21,8 @@ pub mod transport;
 pub use clispeak_proto::Member;
 pub use history::{Entry, History};
 pub use identity::{
-    FileKeyStore, Identity, IdentityError, KeyStore, config_dir, device_name, load_voice_settings,
-    save_voice_settings, set_config_dir, set_device_name,
+    FileKeyStore, Identity, IdentityError, KeyStore, config_dir, device_name, device_name_or,
+    load_voice_settings, save_voice_settings, set_config_dir, set_device_name,
 };
 pub use identity::{migrate_from, migrate_from_previous_name};
 pub use node::{Node, WindowHook};

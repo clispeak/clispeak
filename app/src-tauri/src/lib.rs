@@ -1477,11 +1477,33 @@ async fn start_node() -> anyhow::Result<Node> {
     eprintln!("opening the key store…");
     let store = key_store()?;
     let identity = Identity::load_or_create(store.as_ref())?;
-    let name = clispeak_core::device_name();
+    let name = clispeak_core::device_name_or(platform_default_name());
 
     let engine = speech_engine();
     let transport = Transport::bind(identity.secret().clone(), dns_resolver()).await?;
     Node::new(engine, identity, transport, name).await
+}
+
+/// What to call a device whose hostname says nothing useful.
+///
+/// Lives here rather than in `clispeak-core` because it is a `target_os`
+/// decision and that crate has to compile identically for all five targets.
+/// It was in there, spelled `cfg!`, which the portability gate could not see
+/// (#161). A phone answers `gethostname` with "localhost", and "this device"
+/// reads like a bug in a device list.
+fn platform_default_name() -> &'static str {
+    #[cfg(target_os = "android")]
+    {
+        "Android phone"
+    }
+    #[cfg(target_os = "ios")]
+    {
+        "iPhone"
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        "this device"
+    }
 }
 
 /// iOS needs a rustls crypto provider chosen before anything builds an
