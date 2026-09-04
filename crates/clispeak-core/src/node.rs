@@ -3818,10 +3818,28 @@ mod peer_tests {
         }
     }
 
+    /// Held for the whole of any test that builds a node.
+    ///
+    /// `node_for` sets the process-wide config directory, and that is a
+    /// `OnceLock`: the first caller wins and every later one silently gets
+    /// the first one's directory back. So two of these running at once share
+    /// an identity, a roster and a pending invite, and one deletes the
+    /// directory while the other is still using it.
+    ///
+    /// That was invisible while there was exactly one test here. Adding a
+    /// second made it fail in the suite and pass on its own, which is the
+    /// least useful shape a failure has. A `tokio` mutex rather than a `std`
+    /// one because it is held across `await`.
+    static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// A node on a scratch directory, and the shared state `handle_peer` takes.
-    async fn node_for(label: &str) -> (Node, PathBuf) {
-        let dir =
-            std::env::temp_dir().join(format!("clispeak-peer-{}-{label}", std::process::id()));
+    ///
+    /// One directory per process, not per test, because the config directory
+    /// can only be set once: a per-test path would be accepted for the first
+    /// test and quietly ignored for the rest. The label is only for the
+    /// caller to read.
+    async fn node_for(_label: &str) -> (Node, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("clispeak-peer-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch directory");
         crate::identity::set_config_dir(dir.clone());
@@ -3838,6 +3856,114 @@ mod peer_tests {
         (node, dir)
     }
 
+    /// A real join, driven end to end on the receiving side.
+    ///
+    /// The accept path — ticket check, `invite`, the reply, and the roster
+    /// the joiner builds from it — had no test above the unit level (#80).
+    /// The roster tests sign and verify records they made themselves; this
+    /// takes the record the *host* hands out and runs the joiner's own
+    /// `adopt` over it, so a break between the two halves is a named failure
+    /// rather than an empty roster reported as a successful join.
+    ///
+    /// **It does not catch the break that made this worth writing**, and it
+    /// is worth saying so rather than letting the name imply otherwise. The
+    /// rename changed the domain separator in `Member::signed_payload`, and
+    /// both ends of this test call that same function — so it agrees with
+    /// itself whatever the constant says. Tried, with the constant put back
+    /// to `voicecast-join-v1`: this test still passes. Only a written down
+    /// expected value disagrees, which is
+    /// `signed_payload_tests::the_signed_payload_is_a_fixed_shape_that_past_signatures_depend_on`
+    /// in `clispeak-proto`, added beside this for exactly that reason.
+    ///
+    /// What this one does catch is the same-build half: a host that signs
+    /// with one thing and verifies with another, a name that arrives under a
+    /// different label than the joiner advertised, or a join that leaves one
+    /// side a member and the other not.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_join_produces_a_membership_that_verifies() {
+        // Poison-tolerant: one failing test must not turn the other into a
+        // second failure that says nothing about itself.
+        let _one_at_a_time = ONE_AT_A_TIME.lock().await;
+        let (node, dir) = node_for("accept").await;
+
+        // An invite has to be outstanding, which is the state `invite` puts
+        // the node in — driven rather than constructed, so a change to what
+        // a ticket holds is caught here too.
+        let ticket = match node.invite(None).await {
+            Response::Invite { url, .. } => Ticket::parse(&url).expect("a minted ticket"),
+            other => panic!("invite did not produce one: {other:?}"),
+        };
+
+        let (node_recv, mut test_send) = tokio::io::duplex(64 * 1024);
+        let (node_send, mut test_recv) = tokio::io::duplex(64 * 1024);
+        let joiner = iroh::SecretKey::generate().public();
+
+        write_msg(
+            &mut test_send,
+            &PeerMessage::JoinRequest {
+                endpoint_id: joiner.to_string(),
+                display_name: "Phone".into(),
+                token: ticket.token.clone(),
+            },
+        )
+        .await
+        .expect("writing the request");
+
+        let conn = OneExchange {
+            peer: joiner,
+            streams: std::sync::Mutex::new(Some((node_send, node_recv))),
+        };
+        handle_peer(&node.shared, conn).await.expect("handle_peer");
+
+        let (member, members) = match read_msg(&mut test_recv).await.expect("a reply") {
+            PeerMessage::JoinAccepted {
+                member, members, ..
+            } => (member, members),
+            other => panic!("a valid join was not accepted: {other:?}"),
+        };
+
+        // The joiner's side of it. `Roster::adopt` is what a real joiner
+        // runs, and it now says what it refused — so a signature the host
+        // produced and the joiner cannot check is a named failure here
+        // rather than an empty roster reported as a successful join.
+        let offered = members.len() + 1;
+        let (adopted, refused) = crate::Roster::adopt(
+            members
+                .into_iter()
+                .chain(std::iter::once(member.clone()))
+                .collect::<Vec<_>>(),
+        );
+        assert!(
+            refused.is_empty(),
+            "the host signed {} record(s) its own joiner cannot verify: {refused:?}",
+            refused.len()
+        );
+        assert!(
+            adopted.holds(&joiner.to_string()),
+            "a join has to leave the joiner a member of the space it joined"
+        );
+        assert_eq!(
+            adopted.name_of(&joiner.to_string()),
+            Some("Phone"),
+            "the name the joiner advertised is the name it is recorded under"
+        );
+        assert_eq!(adopted.members().count(), offered - 1, "host and joiner");
+
+        // And the host holds it too, so the membership is not one-sided.
+        assert!(
+            node.shared
+                .spaces
+                .lock()
+                .await
+                .current()
+                .holds(&joiner.to_string()),
+            "the inviting device has to record the member it just vouched for"
+        );
+
+        node.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Issue #52, driven rather than read.
     ///
     /// A join request is signed for whoever is on the other end of the
@@ -3847,6 +3973,7 @@ mod peer_tests {
     /// not remove. Until now the check compiled and nothing executed it.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_join_naming_another_device_is_refused() {
+        let _one_at_a_time = ONE_AT_A_TIME.lock().await;
         let (node, dir) = node_for("join").await;
 
         // Two pipes: one each way. `handle_peer` is handed the node's ends.
