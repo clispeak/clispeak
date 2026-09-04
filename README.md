@@ -39,9 +39,18 @@ does *not* sound identical everywhere any more. That uniformity was a
 consequence of Piper being the only thing that ran everywhere, not a goal —
 Android has always sounded like Android and nobody thought it a defect.
 
-There is no Windows installer yet, but what one has to do got much smaller: no
-Piper, no voice model, and no Microsoft Visual C++ Redistributable, which was
-needed only because Piper linked against it.
+**There is a Windows installer**, and moving to SAPI made most of it
+unnecessary: no Piper, no voice model, and no Microsoft Visual C++
+Redistributable, which was needed only because Piper linked against it. What is
+left is an NSIS installer that needs no administrator, and that puts the
+`clispeak` command on your PATH so an agent can call it — open a **new**
+terminal afterwards, since an existing one keeps the environment it started
+with. Uninstalling takes the entry back off.
+
+**Nobody has run it.** The installer is written, its logic is unit-tested on
+Linux, and it compiles for `x86_64-pc-windows-msvc` — which is three claims
+that all stop short of the one that matters. Until somebody double-clicks it,
+treat the paragraph above as an intention.
 
 The riskiest assumption — that peer-to-peer connections survive carrier-grade
 NAT and network changes — was [measured on real hardware](docs/m0-results.md)

@@ -812,6 +812,8 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "windows 0.62.2",
+ "winreg",
 ]
 
 [[package]]

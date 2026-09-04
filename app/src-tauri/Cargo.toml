@@ -37,5 +37,24 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 clispeak-keystore.workspace = true
 
-[lints]
-workspace = true
+# Putting the command-line tool on the PATH, which on Windows is a registry
+# value and a broadcast to every window on the desktop. `winreg` is a safe
+# wrapper and does the reading and writing; `windows` supplies the one call
+# that has to be `unsafe`, and is already in the tree by way of Tauri.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Not `workspace = true`: the workspace *forbids* unsafe, which cannot be
+# lifted locally, and telling the desktop its environment changed is a Win32
+# broadcast with no safe spelling. Denied rather than forbidden, so the one
+# module that needs it says so and everything else still cannot.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+todo = "allow"
