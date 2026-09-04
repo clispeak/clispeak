@@ -651,6 +651,29 @@ jobs:
           take 'artefacts/windows/*.exe'    clispeak-windows-setup.exe
           take 'artefacts/android/*.apk'    clispeak-android.apk
           take 'artefacts/linux/*.flatpak'  clispeak-linux.flatpak
+      # An unsigned APK is not a worse download, it is not a download at all:
+      # Android refuses to install one, with a message that says nothing about
+      # signing. The android job already refuses to *call* an unsigned build
+      # signed — it requires the artefact to be named `*unsigned*` when the
+      # secrets are absent (#31) — but nothing stopped that file being
+      # published, and #187 has just given it the name the website hands to
+      # people.
+      #
+      # Checked here rather than in the android job because this is the only
+      # job that publishes, and because it must be checked *after* the rename:
+      # the whole point of a stable name is that it no longer carries what the
+      # bundler called it.
+      - name: Refuse to publish an Android build nobody can install
+        run: |
+          apk=$(find artefacts -type f -path 'artefacts/android/*.apk')
+          case "$apk" in
+            *unsigned*)
+              echo "::error::$apk is unsigned, and Android will not install it."
+              echo "::error::The release cannot carry it. See #31 for the keystore."
+              exit 1
+              ;;
+          esac
+          echo "the APK is signed: $apk"
       # Nothing signs these yet (#29, #31), so a checksum is the only way a
       # person can tell what they downloaded from what this built. It matters
       # more, not less, now that clispeak.com serves them from somewhere
