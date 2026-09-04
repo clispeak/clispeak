@@ -1758,6 +1758,8 @@ fn clispeak_core_socket_name() -> String {
 // a filesystem socket and must have one. Mirrors the same split in the node.
 #[cfg(windows)]
 fn socket_target() -> std::io::Result<interprocess::local_socket::Name<'static>> {
+    use interprocess::local_socket::{GenericNamespaced, ToNsName};
+
     clispeak_core_socket_name().to_ns_name::<GenericNamespaced>()
 }
 
