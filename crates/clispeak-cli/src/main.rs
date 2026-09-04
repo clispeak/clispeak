@@ -11,10 +11,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use clispeak_proto::{Priority, Request, Response, Status};
 use clispeak_text::{plain, plain_lines};
-use interprocess::local_socket::{
-    GenericNamespaced, ToNsName,
-    tokio::{Stream, prelude::*},
-};
+use interprocess::local_socket::tokio::{Stream, prelude::*};
 
 mod exit {
     //! Exit codes, as specified in `docs/cli.md`.
@@ -1100,7 +1097,7 @@ async fn send_with(
     // Whether a non-spoken outcome counts as failure depends on what was
     // asked: `Cancelled` is the point of `stop`, but a failure for `speak`.
     let was_speak = matches!(request, Request::Speak { .. });
-    let name = clispeak_core_socket_name().to_ns_name::<GenericNamespaced>()?;
+    let name = socket_target()?;
 
     let mut stream = match Stream::connect(name).await {
         Ok(s) => s,
@@ -1743,6 +1740,41 @@ fn report(msg_id: &str, targets: &[clispeak_proto::TargetResult], json: bool) ->
 /// looked like two unrelated bugs.
 fn clispeak_core_socket_name() -> String {
     std::env::var("CLISPEAK_SOCKET").unwrap_or_else(|_| "clispeak.sock".to_string())
+}
+
+/// Where the node's socket is, mirroring `clispeak_core::ipc::socket_target`.
+///
+/// **The mirror that matters most in this file.** The other duplicated
+/// constants are numbers; get this one wrong and the CLI and the node are
+/// simply in different places, with the node running perfectly and every
+/// command reporting no node at all.
+///
+/// It does *not* mirror the node's directory checks — ownership, mode, not a
+/// symlink — because those are assertions the listener makes about where it
+/// is about to bind. A caller only has to look in the same place, and a
+/// caller that refused to look would be refusing to talk to a node that had
+/// already satisfied them.
+// portability-exception: Windows has a named pipe and no directory; Unix has
+// a filesystem socket and must have one. Mirrors the same split in the node.
+#[cfg(windows)]
+fn socket_target() -> std::io::Result<interprocess::local_socket::Name<'static>> {
+    use interprocess::local_socket::{GenericNamespaced, ToNsName};
+
+    clispeak_core_socket_name().to_ns_name::<GenericNamespaced>()
+}
+
+/// [`socket_target`], on Unix: inside this device's own private directory.
+// portability-exception: the other arm of the same rule
+#[cfg(not(windows))]
+fn socket_target() -> std::io::Result<interprocess::local_socket::Name<'static>> {
+    use interprocess::local_socket::{GenericFilePath, ToFsName};
+
+    let base = directories::BaseDirs::new()
+        .and_then(|d| d.runtime_dir().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("clispeak")
+        .join(clispeak_core_socket_name())
+        .to_fs_name::<GenericFilePath>()
 }
 
 mod config;

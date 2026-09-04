@@ -311,13 +311,23 @@ Two nodes on one machine: override `CLISPEAK_SOCKET` and
 forgetting the socket override makes every command talk to the first node,
 which looks like two unrelated bugs.
 
-**`CLISPEAK_SOCKET` is a name, not a path, and it must be short** — under
-about 83 bytes on macOS, where the platform then prepends `/tmp/`. Point it at
-a scratch directory and the node refuses to bind for a reason that names the
-limit and not the string. Scratchpad paths here are around 100 bytes on their
-own, so this is the default way to hit it, not an edge case. Use
-`CLISPEAK_SOCKET=vc-2.sock`, and put only `CLISPEAK_CONFIG_DIR` somewhere
-deep.
+**`CLISPEAK_SOCKET` is a name, not a path**, and since 4 September 2026 it
+names a socket *inside this device's own private directory* —
+`$XDG_RUNTIME_DIR/clispeak/` on Linux, the per-user temporary directory on
+macOS, both `0700` (#128, decision 103). A value containing a separator is
+now **refused**, where it used to be accepted and quietly reinterpreted.
+
+Use `CLISPEAK_SOCKET=vc-2.sock`, and put only `CLISPEAK_CONFIG_DIR` somewhere
+deep. That advice is unchanged and now matters more: the socket no longer
+follows the config directory anywhere, so a deep scratch path cannot push the
+socket past the length limit.
+
+**The budget is a path budget now, and it is 104 bytes rather than 83.**
+Measured on a Mac: a namespaced *name* clears at 83 and refuses at 84, and a
+filesystem *path* clears at 104 and refuses at 105 — two different questions,
+which decision 35 rolled into one and called the difference "unexplained"
+(decision 95). `$TMPDIR` there is 49 bytes and fixed-width, so the whole path
+is about 71 and clears by 33.
 
 Platform packages: `packaging/flatpak/` for Linux, `cargo xtask bundle` for a
 macOS `.app`, and `npx @tauri-apps/cli android build --apk` for Android.

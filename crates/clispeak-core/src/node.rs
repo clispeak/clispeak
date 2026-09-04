@@ -14,9 +14,7 @@ use clispeak_proto::{
 };
 use clispeak_text::chunk;
 use interprocess::local_socket::{
-    GenericNamespaced,
     ListenerOptions,
-    ToNsName,
     tokio::{Listener as TokioListener, Stream},
     // Anonymous: `connect` and `accept` are wanted, but the trait names
     // themselves would collide with the concrete types above.
@@ -48,7 +46,9 @@ use crate::{Identity, Roster, Ticket, Transport};
 /// displace a running one, which is the very thing the error exists to
 /// prevent.
 async fn bind_ipc(socket: &str) -> Result<TokioListener> {
-    let name = || socket.to_string().to_ns_name::<GenericNamespaced>();
+    // One place decides where the socket is; this used to spell it out and
+    // so did the CLI and the probe, which is three chances to disagree.
+    let name = || crate::ipc::socket_target(socket);
 
     let refused = match ListenerOptions::new().name(name()?).create_tokio() {
         Ok(listener) => return Ok(listener),
@@ -635,13 +635,15 @@ impl Node {
         // Not "listening on <socket>": that reads as a path, and the previous
         // wording sent people to `ls` a file that is at a different place on
         // macOS and does not exist at all on Linux. Issue #43.
-        eprintln!("socket name: {socket:?} (a name, not a path)");
-        if crate::ipc::path_shaped(&socket) {
-            eprintln!(
-                "  note: that looks like a path, and it is used as a name — the \
-                 platform decides where it actually lives, so looking for a file \
-                 at that exact location will not find one"
-            );
+        // The place, not just the name. This used to say "a name, not a
+        // path" and then warn if the value looked like one, because the
+        // platform decided where it landed and there was often no file
+        // anywhere (#43). Now the node owns the location, so it can simply
+        // say where it is — and a name with a separator is refused at bind
+        // rather than warned about, which is what made the note unreachable.
+        match crate::ipc::socket_dir() {
+            Some(dir) => eprintln!("socket: {}", dir.join(&socket).display()),
+            None => eprintln!("socket name: {socket:?} (a named pipe)"),
         }
 
         let ipc = {
@@ -3640,12 +3642,10 @@ mod tests {
         // never seen the token. A bare listener answers connections and can
         // produce no proof.
         let _squatter = ListenerOptions::new()
-            .name(
-                socket
-                    .clone()
-                    .to_ns_name::<GenericNamespaced>()
-                    .expect("name"),
-            )
+            // The same resolver the node uses, so the squatter takes
+            // the place a node would actually look rather than a name that
+            // merely resembles it.
+            .name(crate::ipc::socket_target(&socket).expect("name"))
             .create_tokio()
             .expect("taking the name first");
 

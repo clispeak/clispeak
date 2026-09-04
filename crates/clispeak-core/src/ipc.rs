@@ -10,6 +10,9 @@
 //! a newer node degrades rather than misparses.
 
 use anyhow::{Context, Result, bail};
+// portability-exception: a named pipe is a namespaced name and a Unix socket
+// is a path, so the two platforms cannot import the same resolver
+#[cfg(windows)]
 use interprocess::local_socket::{GenericNamespaced, ToNsName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -204,6 +207,161 @@ pub fn socket_name() -> String {
     std::env::var("CLISPEAK_SOCKET").unwrap_or_else(|_| "clispeak.sock".to_string())
 }
 
+/// The private directory this device's socket lives in.
+///
+/// `None` on Windows, where a named pipe is a namespaced name and has no
+/// directory to be private in — that platform needs a security descriptor on
+/// the listener instead, which is not written yet (#128).
+///
+/// **`$XDG_RUNTIME_DIR` first**, which is what it is for: per-user, `0700`,
+/// on tmpfs, and cleaned up at logout. Measured here as `/run/user/1000`,
+/// `drwx------`, giving a 37-byte socket path.
+///
+/// **Then the temporary directory**, which is the macOS answer: `$TMPDIR`
+/// there is per-user and `0700`, and `interprocess` deliberately does *not*
+/// consult it — its `tmpdir()` hardcodes `/tmp/` for every Unix except
+/// Android, in a function its own doc comment calls "the world-writable
+/// temporary directory". That is the whole reason the macOS socket is
+/// unprotected today.
+///
+/// **On Linux with no `$XDG_RUNTIME_DIR` that fallback is `/tmp`**, which is
+/// `drwxrwxrwt` — so this must never be trusted on the strength of where it
+/// came from. [`private_dir`] checks what it got and refuses rather than
+/// binding somewhere anyone can reach. A fix that quietly landed in `/tmp`
+/// would have protected nothing on exactly the machines least able to
+/// notice, while every document said otherwise.
+// portability-exception: a named pipe has no directory and a filesystem
+// socket must have one; there is no portable spelling of that difference
+#[cfg(windows)]
+pub fn socket_dir() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// [`socket_dir`], on the platforms that have one. See the Windows arm above
+/// for the reasoning; this is the same item.
+// portability-exception: the other arm of the same rule
+#[cfg(not(windows))]
+pub fn socket_dir() -> Option<std::path::PathBuf> {
+    let base = directories::BaseDirs::new()
+        .and_then(|d| d.runtime_dir().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(std::env::temp_dir);
+    Some(base.join("clispeak"))
+}
+
+/// The socket directory, created if absent and **checked before it is used**.
+///
+/// Creating it is not enough. `create_dir_private` sets `0700` on a
+/// directory it creates and returns `Ok` for one that already exists, so a
+/// directory somebody else made first is accepted with whatever mode they
+/// chose. On a machine where the base is `/tmp` — Linux with no
+/// `$XDG_RUNTIME_DIR`, which is a container or a session-less service —
+/// that is precisely the attack this issue is about, arriving through the
+/// fix for it.
+///
+/// So the result is verified: a real directory rather than a symlink to
+/// one, owned by us, and unreadable by group or other. Anything else is a
+/// refusal with the reason, because binding anyway would leave every
+/// document claiming a protection that is not there (#128).
+// portability-exception: ownership and mode have no portable spelling, and
+// the whole point of this function is asserting them
+#[cfg(unix)]
+fn private_dir() -> std::io::Result<std::path::PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+
+    let dir = socket_dir().expect("unix always has a socket directory");
+    crate::store::create_dir_private(&dir)?;
+
+    // `symlink_metadata`, not `metadata`: the second follows a link, so a
+    // symlink pointing at a directory somebody else owns would be reported
+    // with that directory's own perfectly respectable mode.
+    let meta = std::fs::symlink_metadata(&dir)?;
+    let refuse = |why: String| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "the socket directory {} {why}. It has to be a directory \
+                 owned by you that nobody else can enter, or another local \
+                 user could take the socket name before this node does. \
+                 Remove it, or set CLISPEAK_SOCKET's directory elsewhere",
+                dir.display()
+            ),
+        ))
+    };
+    if meta.file_type().is_symlink() {
+        return refuse("is a symlink".into());
+    }
+    if !meta.is_dir() {
+        return refuse("is not a directory".into());
+    }
+    // **Who "us" is, without asking the kernel.** `libc::getuid` needs an
+    // `unsafe` block and this crate *forbids* unsafe — which is worth more
+    // than the convenience. A file we have just created is ours by
+    // construction, so its owner is the answer, and comparing it to the
+    // directory's owner is the check.
+    //
+    // It doubles as a write test: a directory owned by somebody else and
+    // mode 0700 refuses the probe, which is a refusal either way.
+    let probe = dir.join(".owner-probe");
+    let _ = std::fs::remove_file(&probe);
+    let mine = match std::fs::File::create(&probe).and_then(|f| f.metadata()) {
+        Ok(m) => m.uid(),
+        Err(e) => return refuse(format!("cannot be written to ({e})")),
+    };
+    let _ = std::fs::remove_file(&probe);
+    if meta.uid() != mine {
+        return refuse(format!(
+            "is owned by uid {} and not by you (uid {mine})",
+            meta.uid()
+        ));
+    }
+    let mode = meta.mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return refuse(format!("is mode {mode:04o}, which lets others in"));
+    }
+    Ok(dir)
+}
+
+/// Where this device's socket is, as `interprocess` wants it.
+///
+/// **`CLISPEAK_SOCKET` is still a name and not a path** — Patrick's decision
+/// of 4 September 2026, so `CLAUDE.md`, `docs/cli.md` and the README stay
+/// true. What changed underneath is where that name is resolved: on Unix it
+/// names a socket *inside* a directory only you can enter, rather than a
+/// namespaced name with no owner at all.
+///
+/// A name with a separator in it is refused rather than nested. It was a
+/// warning while the value was a name the platform placed (#43); now it
+/// would silently create a directory somewhere nobody expects.
+// portability-exception: Windows has named pipes and no directory to put
+// them in; Unix has a filesystem socket and must have one
+#[cfg(windows)]
+pub fn socket_target(name: &str) -> std::io::Result<interprocess::local_socket::Name<'static>> {
+    // Unprotected, still: a named pipe needs a security descriptor on the
+    // listener, which `ListenerOptions` supports and nobody has written
+    // (#128). Named here so the gap is visible in the code rather than only
+    // in an issue.
+    name.to_string().to_ns_name::<GenericNamespaced>()
+}
+
+/// [`socket_target`], on Unix: a path inside a directory only you can enter.
+// portability-exception: the other arm of the same rule
+#[cfg(not(windows))]
+pub fn socket_target(name: &str) -> std::io::Result<interprocess::local_socket::Name<'static>> {
+    use interprocess::local_socket::{GenericFilePath, ToFsName};
+
+    if path_shaped(name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "CLISPEAK_SOCKET is a name, not a path, and {name:?} contains \
+                 a separator. It names a socket inside this device's own \
+                 private directory; use something like clispeak-2.sock"
+            ),
+        ));
+    }
+    private_dir()?.join(name).to_fs_name::<GenericFilePath>()
+}
+
 /// Whether a socket name has been given as though it were a path.
 ///
 /// Not an error: it binds, and both ends map it the same way. But every tool
@@ -259,7 +417,7 @@ pub enum Listening {
 pub async fn who_is_listening(socket: &str, config_dir: &std::path::Path) -> Listening {
     use interprocess::local_socket::traits::tokio::Stream as _;
 
-    let Ok(name) = socket.to_string().to_ns_name::<GenericNamespaced>() else {
+    let Ok(name) = socket_target(socket) else {
         return Listening::Nothing;
     };
     let Ok(mut stream) = interprocess::local_socket::tokio::Stream::connect(name).await else {

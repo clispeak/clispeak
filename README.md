@@ -139,8 +139,10 @@ steps: paste or scan, see which space it joins, then confirm. `join --name`
 picks what to call it here.
 
 Two nodes can share one machine for testing by overriding `CLISPEAK_SOCKET`
-and `CLISPEAK_CONFIG_DIR`. `CLISPEAK_SOCKET` is a *name*, not a path — the
-platform decides where it lives, and on Linux there is no file anywhere.
+and `CLISPEAK_CONFIG_DIR`. `CLISPEAK_SOCKET` is a *name*, not a path: it names
+a socket inside a directory only you can enter, which the node creates and
+then checks before binding — so another local user cannot take the name first.
+A value with a separator in it is refused rather than reinterpreted.
 
 ## What it does
 
