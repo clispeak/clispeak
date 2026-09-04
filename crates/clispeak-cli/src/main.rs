@@ -225,7 +225,17 @@ enum Command {
         ticket: String,
     },
     /// List devices in this space.
-    Devices,
+    Devices {
+        /// Also show revocations this device still holds.
+        ///
+        /// A revoked device is not a member, so it is not in the listing —
+        /// which is right until a space starts losing members and nothing
+        /// on screen can say why. Every device looked healthy the morning a
+        /// four-device space dissolved itself, because the state that
+        /// explained it was the state this command filters out (#166).
+        #[arg(long)]
+        all: bool,
+    },
     /// Bring the app window back into view.
     Show,
     /// Shut the local node down.
@@ -501,7 +511,7 @@ acts on this device."
         Some(Command::Invite { space }) => Request::Invite {
             space: space.clone(),
         },
-        Some(Command::Devices) => Request::Devices,
+        Some(Command::Devices { .. }) => Request::Devices,
         Some(Command::Show) => Request::Show,
         Some(Command::Revoke { name, space }) => Request::Revoke {
             name: name.clone(),
@@ -601,7 +611,8 @@ acts on this device."
     };
 
     let unheard_only = matches!(cli.command, Some(Command::History { unheard: true, .. }));
-    send_with(request, cli.json, unheard_only).await
+    let show_all = matches!(cli.command, Some(Command::Devices { all: true }));
+    send_with(request, cli.json, unheard_only, show_all).await
 }
 
 /// Print the skill, or write it somewhere an agent will find it.
@@ -878,7 +889,7 @@ fn ignores_to(command: &Option<Command>) -> Option<&'static str> {
         Some(Command::Invite { .. }) => Some("invite"),
         Some(Command::Join { .. }) => Some("join"),
         Some(Command::Preview { .. }) => Some("preview"),
-        Some(Command::Devices) => Some("devices"),
+        Some(Command::Devices { .. }) => Some("devices"),
         Some(Command::Revoke { .. }) => Some("revoke"),
         Some(Command::Leave { .. }) => Some("leave"),
         Some(Command::Space { .. }) => Some("space"),
@@ -1072,7 +1083,7 @@ fn read_stdin() -> anyhow::Result<String> {
 
 /// Send one request to the local node and report what came back.
 async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
-    send_with(request, json, false).await
+    send_with(request, json, false, false).await
 }
 
 /// Send one request to the local node and report what came back.
@@ -1080,7 +1091,12 @@ async fn send(request: Request, json: bool) -> anyhow::Result<u8> {
 /// `unheard_only` filters the history to messages that were never spoken.
 /// Threaded through rather than filtered by the node so `--unheard` stays a
 /// question about presentation, not about what the node stores.
-async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::Result<u8> {
+async fn send_with(
+    request: Request,
+    json: bool,
+    unheard_only: bool,
+    show_all: bool,
+) -> anyhow::Result<u8> {
     // Whether a non-spoken outcome counts as failure depends on what was
     // asked: `Cancelled` is the point of `stop`, but a failure for `speak`.
     let was_speak = matches!(request, Request::Speak { .. });
@@ -1266,7 +1282,7 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
             }
             exit::OK
         }
-        Response::Devices { devices } => {
+        Response::Devices { devices, revoked } => {
             for d in devices {
                 out(&format!(
                     "{:<16} {}{}{}",
@@ -1279,6 +1295,7 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
                     if d.is_self { "  (this device)" } else { "" }
                 ));
             }
+            show_revocations(&revoked, show_all);
             exit::OK
         }
         Response::Spaces { spaces } => {
@@ -1445,6 +1462,50 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
             }
         }
     })
+}
+
+/// Say what has been revoked, and say it even when it is not being listed.
+///
+/// A revoked device is not a member, so it does not belong in the listing.
+/// **But the listing being the whole truth is what cost a morning**: a space
+/// lost members one at a time while every device reported itself healthy,
+/// because the tombstones explaining it were the one thing `devices`
+/// filtered out. It was found by reading `spaces.cbor` on three machines
+/// (#166).
+///
+/// So the count is always shown and the rows only on request. A count is
+/// cheap, is never wrong, and turns "why has my phone gone" into a question
+/// with somewhere to look.
+fn show_revocations(revoked: &[clispeak_proto::RevokedInfo], show_all: bool) {
+    if revoked.is_empty() {
+        return;
+    }
+    if !show_all {
+        out(&format!(
+            "\n{} revoked here — clispeak devices --all",
+            revoked.len()
+        ));
+        return;
+    }
+    out("\nrevoked");
+    for r in revoked {
+        out(&format!(
+            "{:<16} {}{}{}",
+            "(revoked)",
+            short_id(&r.endpoint_id),
+            r.space
+                .as_deref()
+                .map(|s| format!("  [{}]", plain(s)))
+                .unwrap_or_default(),
+            // Never expected, always reported. This was true on three
+            // devices for three days and nothing could see it.
+            if r.still_a_member {
+                "  ALSO STILL A MEMBER — this is a bug, please report it"
+            } else {
+                ""
+            }
+        ));
+    }
 }
 
 /// A message shortened to something that fits one row.
@@ -1814,7 +1875,10 @@ mod display_tests {
         // Reporting commands answered about this device while naming another.
         assert_eq!(ignores_to(&Some(Command::Status)), Some("status"));
         assert_eq!(ignores_to(&Some(Command::Queue)), Some("queue"));
-        assert_eq!(ignores_to(&Some(Command::Devices)), Some("devices"));
+        assert_eq!(
+            ignores_to(&Some(Command::Devices { all: false })),
+            Some("devices")
+        );
     }
 
     #[test]

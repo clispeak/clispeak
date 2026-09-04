@@ -1165,7 +1165,12 @@ mod replies {
 
     pub(super) fn devices(r: Response) -> Result<Vec<DeviceInfo>, String> {
         match r {
-            Response::Devices { devices } => Ok(devices),
+            // `revoked` is deliberately dropped here. The app's device list
+            // is a list of devices, and a revoked one is not a device you
+            // have — surfacing it would need a place to put it and a way to
+            // say what it means. The CLI shows the count, which is what a
+            // diagnosis needs; the interface owes the same eventually (#166).
+            Response::Devices { devices, .. } => Ok(devices),
             other => Err(describe(other)),
         }
     }
