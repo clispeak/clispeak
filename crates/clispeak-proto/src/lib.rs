@@ -353,6 +353,20 @@ pub enum Response {
     Devices {
         /// One row per member.
         devices: Vec<DeviceInfo>,
+        /// One row per revocation this device still holds.
+        ///
+        /// Sent always and shown only when asked, because a revoked device
+        /// is not a member and a listing that mixed the two would be worse
+        /// than one that omits them. **Omitting them entirely is what cost a
+        /// morning**: every device looked healthy right up to the moment
+        /// members began vanishing, and the state that explained it was the
+        /// state this response filtered out (#166).
+        ///
+        /// Defaulted, so a node and a CLI of different vintages still
+        /// understand each other — an older node sends none and a newer one
+        /// sending them is ignored by an older CLI.
+        #[serde(default)]
+        revoked: Vec<RevokedInfo>,
     },
     /// Node health.
     Status {
@@ -838,6 +852,28 @@ pub struct SpacePolicy {
 }
 
 /// A device as shown by `clispeak devices`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevokedInfo {
+    /// The public key that was removed.
+    pub endpoint_id: String,
+    /// Unix seconds when the revocation was recorded.
+    pub revoked_at: u64,
+    /// Which space holds it, when this device belongs to more than one.
+    #[serde(default)]
+    pub space: Option<String>,
+    /// Whether a member record for this id is *also* present.
+    ///
+    /// Should always be false. It was true on three devices for three days
+    /// and nothing could see it: a rejoin did not clear the revocation, so a
+    /// device was a member and revoked at once, and `merge` copied the
+    /// contradiction onward until a refused sync turned it into a cascade
+    /// (#166, decisions 98 and 99). Reported rather than assumed away,
+    /// because "this cannot happen" is what made it invisible.
+    #[serde(default)]
+    pub still_a_member: bool,
+}
+
+/// A device in a space, as another device knows it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInfo {
     /// Local label.

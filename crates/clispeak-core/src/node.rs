@@ -2892,10 +2892,26 @@ async fn devices(shared: &Arc<Shared>) -> Response {
     ordered.extend(ids.into_iter().filter(|id| id != spaces.default_id()));
 
     let mut devices = Vec::new();
+    let mut revoked = Vec::new();
     for id in ordered {
         let Some(roster) = spaces.get(&id) else {
             continue;
         };
+        // Gathered alongside the members rather than instead of them. A
+        // revoked device is not a member and must not appear in a listing
+        // as though it were — but leaving it out of the *response* is what
+        // made a space dissolving itself invisible from every tool (#166).
+        for (endpoint_id, at) in roster.tombstones() {
+            revoked.push(clispeak_proto::RevokedInfo {
+                // A member record beside a tombstone is the contradiction
+                // that sat in three rosters for three days. It should be
+                // impossible now; it is reported rather than assumed away.
+                still_a_member: roster.holds(&endpoint_id),
+                endpoint_id,
+                revoked_at: at,
+                space: several.then(|| spaces.label(&id).to_string()),
+            });
+        }
         for m in roster.members() {
             devices.push(DeviceInfo {
                 last_seen_secs: if m.endpoint_id == me {
@@ -2911,7 +2927,7 @@ async fn devices(shared: &Arc<Shared>) -> Response {
             });
         }
     }
-    Response::Devices { devices }
+    Response::Devices { devices, revoked }
 }
 
 /// Serve one peer connection.
