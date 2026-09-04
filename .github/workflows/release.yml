@@ -62,59 +62,19 @@ jobs:
         # that morning with nothing recording which. The drift it hid is
         # exactly what should fail the run (#70).
         run: npm ci
-      # Signed only if all three secrets exist; an unsigned build otherwise,
-      # which is the state today and is not an error. The Tauri CLI does the
-      # keychain work itself given a certificate — create, unlock, import with
-      # `-T /usr/bin/codesign`, set the partition list, delete on the way out —
-      # so there is no keychain script here to get wrong. `xtask bundle` reads
-      # the same identity for the Piper binaries beside the app, so one
-      # variable covers the whole bundle. See docs/signing.md.
-      # `tauri-bundler` only ever hands `notarytool` a *path* to the App
-      # Store Connect key — it never passes the contents — so the file has to
-      # exist before the build and nothing places it for us. On a Mac the
-      # bundler would find it under `~/.appstoreconnect/private_keys`; a
-      # runner has no such directory, so we write it and say where.
+      # **No signing credentials here, deliberately.** This step runs
+      # `npm ci` and several hundred crates' build scripts, and a Developer
+      # ID certificate in its environment is readable by every one of them.
+      # The blast radius is what makes that different from the Android key:
+      # an Android keystore signs *this app* and nothing else, while a
+      # Developer ID signs anything at all as Patrick — malware included,
+      # trusted by every Mac because his name is on it (#117).
       #
-      # The secret is `APPLE_API_KEY_P8` and not `..._PATH` on purpose: it
-      # holds the file, and a secret named for a path would be a path to
-      # nothing. See docs/signing.md.
-      - name: Stage the notarisation key
-        id: notary
-        env:
-          P8: ${{ secrets.APPLE_API_KEY_P8 }}
-        run: |
-          if [ -z "$P8" ]; then
-            echo "no APPLE_API_KEY_P8; the app will not be notarised"
-            echo "notarising=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          mkdir -p private_keys
-          # `--decode`, not `-d`. This job runs on macOS, whose `base64`
-          # spells the short flag `-D`; the Android job's `-d` is correct
-          # only because it runs on Linux. The long form is the one both
-          # accept, and getting it wrong here would write an empty key and
-          # fail later, somewhere else.
-          printf '%s' "$P8" | base64 --decode > private_keys/AuthKey.p8
-          echo "notarising=true" >> "$GITHUB_OUTPUT"
-
+      # So the build produces an ad-hoc signed, un-notarised bundle, and the
+      # `macos-sign` job below turns it into a shippable one. That job runs
+      # `codesign`, `hdiutil` and `notarytool` and nothing else.
       - name: Build the bundle
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # Absent, the bundler logs a warning and produces a signed but
-          # un-notarised app. That is the quiet failure the step after this
-          # one exists to catch.
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: ${{ steps.notary.outputs.notarising == 'true' && format('{0}/private_keys/AuthKey.p8', github.workspace) || '' }}
         run: cargo run -p xtask -- bundle
-
-      # Before the checks below, so a failure there still takes the key with
-      # it. `always()` covers cancellation too.
-      - name: Remove the notarisation key
-        if: always()
-        run: rm -rf private_keys
 
       # Read back what was actually produced, rather than trusting that the
       # variables took effect.
@@ -127,8 +87,6 @@ jobs:
       # run prints the requirement either way, and fails only for the one
       # combination that is a lie — secrets present, artefact still ad-hoc.
       - name: Say how the bundle is signed
-        env:
-          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           app=target/release/bundle/macos/clispeak.app
           codesign -dv --verbose=2 "$app" 2>&1 || true
@@ -136,16 +94,8 @@ jobs:
           echo "designated requirement: $requirement"
           case "$requirement" in
             *cdhash*)
-              if [ -n "$IDENTITY" ]; then
-                echo "::error::APPLE_SIGNING_IDENTITY is set to '$IDENTITY'" \
-                     "but the app is still ad-hoc signed — its identity is a" \
-                     "build hash, so a keychain grant will not survive the" \
-                     "next build. The certificate did not reach codesign."
-                exit 1
-              fi
-              echo "::warning::Unsigned (ad-hoc). Gatekeeper will warn on" \
-                   "first open, and the keychain grant holding the device" \
-                   "identity is asked for again after every rebuild (#29)."
+              echo "Ad-hoc, as this job intends: no certificate is present" \
+                   "here. `macos-sign` signs and notarises what this built."
               ;;
             *"designated =>"*)
               echo "Signed with a certificate: the requirement names an" \
@@ -163,42 +113,171 @@ jobs:
               ;;
           esac
 
-      # Signing and notarisation are two things and Gatekeeper wants both. A
-      # Developer ID signature on its own is still refused, and the bundler
-      # only *warns* when notarisation credentials are missing — so a release
-      # can be correctly signed, cleanly built, and rejected on every machine
-      # that downloads it, with nothing in the run saying so.
-      #
-      # `stapler validate` asks the artefact rather than the log. It is the
-      # notarisation equivalent of reading the designated requirement back.
-      - name: Say whether it is notarised
-        env:
-          NOTARISING: ${{ steps.notary.outputs.notarising }}
-        run: |
-          app=target/release/bundle/macos/clispeak.app
-          if xcrun stapler validate "$app"; then
-            echo "Notarised, and the ticket is stapled: Gatekeeper is"
-            echo "satisfied offline, without asking Apple at open time."
-            exit 0
-          fi
-          if [ "$NOTARISING" = "true" ]; then
-            echo "::error::notarisation credentials were supplied but the" \
-                 "app carries no stapled ticket. It will be refused on any" \
-                 "Mac that downloads it."
-            exit 1
-          fi
-          echo "::warning::Not notarised, as configured. Gatekeeper will" \
-               "refuse this on a machine that downloads it — this artefact" \
-               "is for us, not for anyone else (#29)."
-
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: macos
+          name: macos-unsigned
           # The workspace target directory is at the repository root, not
           # under the Tauri crate — the bundler writes there like any other
           # cargo output. Getting this wrong built the bundle and then failed
           # the upload, which reads as a build failure.
           path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  # Everything that touches the Developer ID certificate, and nothing else.
+  #
+  # The whole point of this job is what is *absent* from it: no `npm ci`, no
+  # `cargo build`, no crate build scripts, no Gradle. It downloads a dmg that
+  # was already built, runs Apple's own tools over it, and uploads the result.
+  # A dependency compromised anywhere in the build cannot reach the
+  # certificate, because the certificate is not in that job (#117).
+  #
+  # `environment:` is the gate. Give `macos-signing` a required reviewer in
+  # the repository settings and the secrets below are not decrypted until a
+  # human approves the run — so the certificate is unreachable even to a
+  # workflow edited on a branch.
+  macos-sign:
+    name: macos (sign and notarise)
+    needs: macos
+    if: inputs.only == null || inputs.only == 'all' || inputs.only == 'macos'
+    environment: macos-signing
+    timeout-minutes: 60
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: macos-unsigned
+          path: unsigned
+
+      # Signing is all-or-nothing: Apple refuses to notarise anything that is
+      # not already signed with a Developer ID, so a certificate without a
+      # notarisation key, or the reverse, gets nobody anywhere. Checked once,
+      # here, rather than failing halfway through with a keychain to clean up.
+      - name: Are the credentials present
+        id: creds
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -n "$CERT" ] && [ -n "$IDENTITY" ] && [ -n "$P8" ]; then
+            echo "signing=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "signing=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::No signing credentials, so the release carries" \
+               "the unsigned dmg from the build job. Gatekeeper refuses that" \
+               "on any machine that downloads it (#29, #108)."
+
+      # A keychain of our own, deleted on the way out. Never the login
+      # keychain: this runner is disposable, but the habit is what stops the
+      # same script being run one day on a machine that is not.
+      - name: Import the certificate
+        if: steps.creds.outputs.signing == 'true'
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # `--decode`, not `-d`: this is macOS, where the short flag is
+          # `-D`. The Android job's `-d` is correct only because it runs on
+          # Linux, and getting it wrong here writes an empty file that fails
+          # later, somewhere else.
+          printf '%s' "$CERT" | base64 --decode > cert.p12
+          security create-keychain -p runner build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p runner build.keychain
+          security import cert.p12 -k build.keychain -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          # Without this, codesign prompts for keychain access and hangs a
+          # job that has nobody to answer it.
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k runner build.keychain
+          security list-keychains -d user -s build.keychain
+          rm -f cert.p12
+
+      # Signed *inside* Tauri's own dmg rather than rebuilt around the app.
+      # A dmg made here with `hdiutil create` would lose the window layout
+      # and background the bundler produces, so the download would look
+      # different for a reason that has nothing to do with signing. Convert
+      # to a writable image, sign in place, convert back.
+      - name: Sign the app inside the disk image
+        if: steps.creds.outputs.signing == 'true'
+        env:
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          dmg=$(ls unsigned/*.dmg)
+          echo "signing the app inside $dmg"
+          hdiutil convert "$dmg" -format UDRW -o rw.dmg
+          hdiutil attach rw.dmg -mountpoint mnt -nobrowse -quiet
+          app=$(ls -d mnt/*.app)
+          # Nested code first, then the bundle. `--deep` is Apple's own
+          # discouraged shortcut and signs things it should not; the sidecar
+          # command-line tool is the only nested binary here and it is worth
+          # naming rather than sweeping up.
+          find "$app/Contents/MacOS" -type f -perm +111 | while read -r bin; do
+            codesign --force --timestamp --options runtime \
+              --sign "$IDENTITY" "$bin"
+          done
+          codesign --force --timestamp --options runtime \
+            --sign "$IDENTITY" "$app"
+          codesign --verify --strict --verbose=2 "$app"
+          hdiutil detach mnt -quiet
+          hdiutil convert rw.dmg -format UDZO -o signed.dmg
+          codesign --force --timestamp --sign "$IDENTITY" signed.dmg
+
+      - name: Notarise and staple
+        if: steps.creds.outputs.signing == 'true'
+        env:
+          KEY_ID: ${{ secrets.APPLE_API_KEY }}
+          ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          printf '%s' "$P8" | base64 --decode > AuthKey.p8
+          # `--wait`, so the job's verdict is the notarisation's verdict
+          # rather than "submitted successfully", which is true of a
+          # submission Apple later rejects.
+          xcrun notarytool submit signed.dmg \
+            --key AuthKey.p8 --key-id "$KEY_ID" --issuer "$ISSUER" --wait
+          xcrun stapler staple signed.dmg
+          rm -f AuthKey.p8
+
+      # Ask the artefact, not the log. Every check here has cost this
+      # repository time by being taken on trust once already: a signature
+      # that is really ad-hoc, a notarisation that was configured and did not
+      # happen, a path that pointed at nothing and reported success anyway.
+      - name: Say what actually shipped
+        if: steps.creds.outputs.signing == 'true'
+        run: |
+          hdiutil attach signed.dmg -mountpoint check -nobrowse -quiet
+          app=$(ls -d check/*.app)
+          requirement=$(codesign -d -r- "$app" 2>&1 | tail -1)
+          echo "designated requirement: $requirement"
+          case "$requirement" in
+            *cdhash*)
+              echo "::error::still ad-hoc after signing — the certificate" \
+                   "did not reach codesign, and its identity is a build hash"
+              exit 1
+              ;;
+            *"designated =>"*) echo "signed with a certificate" ;;
+            *)
+              echo "::error::could not read a designated requirement: $requirement"
+              exit 1
+              ;;
+          esac
+          # The question a downloader's Mac actually asks.
+          spctl --assess --type exec --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          hdiutil detach check -quiet
+
+      - name: Remove the keychain
+        if: always()
+        run: |
+          security delete-keychain build.keychain || true
+          rm -f cert.p12 AuthKey.p8
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos
+          path: ${{ steps.creds.outputs.signing == 'true' && 'signed.dmg' || 'unsigned/*.dmg' }}
           if-no-files-found: error
 
   windows:
@@ -426,7 +505,12 @@ jobs:
 
   draft:
     name: draft release
-    needs: [macos, windows, android, flatpak]
+    # `macos-sign`, not `macos`: the build job now uploads
+    # `macos-unsigned`, and the artefact this release attaches is the one the
+    # signing job produces. Depending on the build would have let the draft
+    # be created from an artefact that does not exist yet — or, worse, from
+    # a stale one on a re-run.
+    needs: [macos-sign, windows, android, flatpak]
     timeout-minutes: 15
     runs-on: ubuntu-latest
     # The one job that publishes anything.
