@@ -246,6 +246,17 @@ jobs:
           dmg=$(ls unsigned/*.dmg)
           echo "signing the app inside $dmg"
           hdiutil convert "$dmg" -format UDRW -o rw.dmg
+          # **Room to sign in.** `convert` sizes the image to its contents
+          # with no slack, and a Developer ID signature is larger than the
+          # ad-hoc one it replaces — so the write runs out of space and
+          # `codesign` reports it as "internal error in Code Signing
+          # subsystem", which names neither the file nor the cause. The
+          # sidecar fit and the 30MB main binary did not.
+          #
+          # Grown before attaching, because a mounted image cannot be
+          # resized. The size is thrown away at the end: `UDZO` compresses
+          # back down to the contents, so the artefact is unaffected.
+          hdiutil resize -size 1g rw.dmg
           hdiutil attach rw.dmg -mountpoint mnt -nobrowse -quiet
           app=$(ls -d mnt/*.app)
           # Nested code first, then the bundle. `--deep` is Apple's own
