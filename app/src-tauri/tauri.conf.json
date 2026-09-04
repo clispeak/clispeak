@@ -39,6 +39,11 @@
         "SystemConfiguration",
         "AVFAudio"
       ]
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsh"
+      }
     }
   }
 }

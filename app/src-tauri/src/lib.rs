@@ -11,6 +11,8 @@
 use std::sync::Arc;
 
 use serde::Serialize;
+
+mod winpath;
 use tauri::{Manager, State};
 // Menus and trays are desktop-only in Tauri; a phone has neither.
 use clispeak_core::{Identity, Node, Transport};
@@ -69,7 +71,7 @@ impl Default for NodeStatus {
 
 /// Where the command-line tool should live on the host.
 ///
-/// `~/.local/bin` on every desktop: it needs no privileges, which is what
+/// `~/.local/bin` on Linux and macOS: it needs no privileges, which is what
 /// keeps installing the app a drag-and-drop rather than a password prompt.
 ///
 /// On Linux it is on the default PATH. On macOS it is **not** — the default
@@ -77,13 +79,56 @@ impl Default for NodeStatus {
 /// under a home directory. Writing to `/usr/local/bin` needs an administrator,
 /// so the app installs where it can and reports whether the result is
 /// actually reachable; see [`cli_on_path`].
+///
+/// **On Windows there is nowhere to copy it to.** `~/.local/bin` is a Unix
+/// convention that no Windows shell has ever looked in, so copying there would
+/// produce the macOS failure with no remedy: the file present, the directory
+/// unreachable, and `clispeak` reported as not found. What Windows has instead
+/// is a per-user PATH we may edit, so the tool stays where the installer put
+/// it — beside the app — and the *directory* is what moves. See [`winpath`].
 fn cli_destination() -> Option<std::path::PathBuf> {
+    if cfg!(windows) {
+        return bundled_cli();
+    }
     Some(
         directories::BaseDirs::new()?
             .home_dir()
             .join(".local/bin")
             .join(CLI_NAME),
     )
+}
+
+/// Add or remove the CLI's directory from the PATH, if asked to on the
+/// command line, and report whether this run was one of those.
+///
+/// Called by the NSIS installer and uninstaller — see
+/// `app/src-tauri/installer-hooks.nsh`. Returns the exit status to use, or
+/// `None` when this is an ordinary launch and the app should start normally.
+///
+/// **Failure is not fatal to the install.** A PATH that could not be written
+/// leaves an app that works and a `clispeak` command that is not found, which
+/// is worth saying out loud and is not worth rolling back a working
+/// installation for. The message goes to the installer's log either way.
+#[cfg(windows)]
+#[must_use]
+pub fn handle_path_flag() -> Option<i32> {
+    let flag = std::env::args().nth(1)?;
+    let dir = cli_destination()?.parent()?.to_path_buf();
+    let dir = dir.display().to_string();
+    let outcome = match flag.as_str() {
+        "--add-to-path" => winpath::add(&dir),
+        "--remove-from-path" => winpath::remove(&dir),
+        _ => return None,
+    };
+    match outcome {
+        Ok(true) => println!("clispeak: {flag} {dir}"),
+        Ok(false) => println!("clispeak: {dir} was already as {flag} wants it"),
+        Err(e) => {
+            eprintln!("clispeak: could not {flag} for {dir}: {e}");
+            return Some(1);
+        }
+    }
+    Some(0)
 }
 
 /// The command-line tool's file name, which carries an extension on Windows.
@@ -113,11 +158,21 @@ fn bundled_cli() -> Option<std::path::PathBuf> {
     if flatpak.exists() {
         return Some(flatpak);
     }
-    if cfg!(target_os = "macos") {
+    if cfg!(target_os = "macos") || cfg!(windows) {
         // `Contents/MacOS/clispeak-app` sits beside `Contents/MacOS/clispeak`,
-        // which is where Tauri puts a bundled sidecar binary.
+        // which is where Tauri puts a bundled sidecar binary. The Windows
+        // install directory has the same shape for the same reason:
+        // `clispeak-app.exe` beside `clispeak.exe`.
+        //
+        // The two names do not collide, and that is worth checking rather
+        // than assuming: Tauri names the app binary after the **cargo**
+        // binary unless `mainBinaryName` overrides it, so `productName`
+        // being "clispeak" does not make the app `clispeak.exe`. The
+        // `beside != exe` guard below is what makes this safe to be wrong
+        // about — if they ever do collide, this returns `None` rather than
+        // handing the app itself back as the command-line tool.
         let exe = std::env::current_exe().ok()?;
-        let beside = exe.parent()?.join("clispeak");
+        let beside = exe.parent()?.join(CLI_NAME);
         if beside.exists() && beside != exe {
             return Some(beside);
         }
@@ -290,6 +345,27 @@ fn install_cli_on_host() {
         }
     }
 
+    // Windows keeps its own PATH in the registry, and the installer already
+    // asked for this once. Repeating it on every launch is deliberate: it
+    // costs a registry read, it is idempotent by construction, and it is the
+    // only thing that repairs an install whose hook did not run — a repair,
+    // an antivirus that blocked the hooked process, or a copy someone
+    // unzipped rather than installed.
+    #[cfg(windows)]
+    if let Some(dir) = cli_destination()
+        .as_deref()
+        .and_then(std::path::Path::parent)
+    {
+        match winpath::add(&dir.display().to_string()) {
+            Ok(true) => eprintln!(
+                "added {} to the PATH; open a new terminal to pick it up",
+                dir.display()
+            ),
+            Ok(false) => {}
+            Err(e) => eprintln!("could not put {} on the PATH: {e}", dir.display()),
+        }
+    }
+
     // Separate from the copy above, and not conditional on it: the tool can
     // already be installed and up to date while still being unreachable,
     // which is what happens on every launch after the first.
@@ -325,6 +401,13 @@ fn install_cli() -> Result<String, String> {
     let source =
         bundled_cli().ok_or("this build does not carry a copy of the command-line tool")?;
     let dest = cli_destination().ok_or("no home directory")?;
+    // Windows installs nothing: the tool already sits where the installer put
+    // it, and what moved was the PATH. Copying here would be a file onto
+    // itself, which fails with an error describing a problem that does not
+    // exist.
+    if source == dest {
+        return Ok(dest.display().to_string());
+    }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
