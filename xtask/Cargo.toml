@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+yaml-rust2 = "0.12.0"
 
 [lints]
 workspace = true
