@@ -22,10 +22,9 @@ app and talk to each other over the open internet, including on cellular.
 platform synthesiser, rather than Piper — which also takes the GPL-3.0 speech
 payload out of the Mac build entirely and drops it from 208MB to 32MB.
 Installing from the built dmg with the `clispeak` command on the PATH was
-verified on an arm64 Mac while it still used Piper; **the new engine has been
-built but not yet heard**, and that is being checked on hardware. Its
-peer-to-peer side is exercised only as far as binding an endpoint — pairing a
-Mac with another device has not been tested yet.
+verified on an arm64 Mac while it still used Piper. **The new engine has been
+heard**, foreground and backgrounded, and the Mac has been paired with a
+laptop and an iOS device and spoken to across the network.
 
 iOS uses the same engine, and has been launched and heard on a real device.
 
