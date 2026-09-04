@@ -188,7 +188,7 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 | Linux | Piper, falling back to espeak-ng if the host has it | tray app |
 | macOS | Apple's own | tray app |
 | Android | system text-to-speech | foreground service + battery exemption |
-| Windows | Piper | tray app |
+| Windows | SAPI 5 — built, never run | tray app |
 | iOS | Apple's own | **foreground only** — see below |
 
 **iOS only speaks while the app is on screen**, and that is the platform
