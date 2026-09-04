@@ -2028,14 +2028,26 @@ async fn sync_roster(
         } => {
             merge_from_peer(shared, space, members, revoked).await?;
         }
-        // The peer no longer counts us as a member: it left, or removed us.
-        // Either way the relationship is over, so drop it rather than keep
-        // showing a device that will never answer. This is what makes the
-        // system self-heal when a departure announcement goes missing — the
-        // next check-in settles it.
+        // The peer answered as though we are not a member: it left, or it
+        // removed us. Either way there is no point showing a device that
+        // will never answer, so it is dropped **here and nowhere else**.
         //
-        // Safe by construction: a peer can only ever make us forget *itself*,
-        // which it could already do by leaving.
+        // It used to be revoked, and the comment here said that was "safe by
+        // construction: a peer can only ever make us forget *itself*". That
+        // is true of one message and false of the system. A revoke mints a
+        // tombstone, tombstones travel through `merge`, and they apply on
+        // every device that receives one — so a single refused sync removed
+        // that device from the whole space. When two devices refused each
+        // other in the same minute the space came apart in thirty seconds,
+        // taking the founder with it (#166).
+        //
+        // `forget` is the honest response to a *guess*. A real departure
+        // already announces itself: `leave` sends a roster carrying its own
+        // tombstone, which is a decision and is meant to propagate. This path
+        // exists only for the case where that announcement went missing, and
+        // it still heals it — the next sync with any other member brings the
+        // real tombstone. What it no longer does is act on one refusal as
+        // though it were a decision every device should adopt.
         PeerMessage::JoinRefused { .. } => {
             let peer = conn.remote_id().to_string();
             let mut spaces = shared.spaces.lock().await;
@@ -2046,10 +2058,15 @@ async fn sync_roster(
             // space was removed from the one it was still a member of (#51).
             if let Some(roster) = spaces.get_mut(space)
                 && roster.allows(&conn.remote_id())
+                && roster.forget(&peer)
             {
-                roster.revoke(&peer);
                 spaces.save(&shared.spaces_path)?;
-                eprintln!("{peer} no longer shares that space with us; removed");
+                eprintln!(
+                    "{peer} answered as though we are not in that space; \
+                     forgotten here only. It comes back on the next sync with \
+                     any other member, and if it really left, its own \
+                     tombstone arrives the same way"
+                );
             }
         }
         other => anyhow::bail!("unexpected reply to roster sync: {other:?}"),
