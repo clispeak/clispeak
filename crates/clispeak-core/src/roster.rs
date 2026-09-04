@@ -212,6 +212,18 @@ impl Roster {
             joined_at,
             renamed_at: joined_at,
         };
+        // The same rule as `admit`, on the path an *inviter* takes — and the
+        // one decision 98 missed. `accept_join` re-admits a device through
+        // here, not through `admit`, so a device that was revoked and then
+        // re-paired came back as a member with its revocation still standing
+        // beside it. That is precisely the half-state 98 was written to
+        // remove, reachable by the commonest route there is: pairing a
+        // device again after removing it.
+        //
+        // Unconditional because this record is signed `now`, and a tombstone
+        // cannot be later than that — `merge_at` clamps a future one to the
+        // moment it was heard.
+        self.revoked.remove(endpoint_id);
         self.members.insert(endpoint_id.to_string(), member.clone());
         member
     }
