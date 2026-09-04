@@ -328,7 +328,8 @@ mod tests {
                 })
                 .collect(),
             Vec::new(),
-        );
+        )
+        .0;
         let second = spaces.insert(second, "work");
         assert_ne!(first, second);
         assert_eq!(spaces.list("").len(), 2);
@@ -339,7 +340,7 @@ mod tests {
         let mut spaces = Spaces::default();
         let first = spaces.insert(a_space(1, "laptop"), "home");
         let mut other = a_space(2, "desk");
-        other = Roster::from_parts(other.members().cloned().collect(), Vec::new());
+        other = Roster::from_parts(other.members().cloned().collect(), Vec::new()).0;
         let second = spaces.insert(other, "work");
 
         assert!(spaces.set_label(&second, "home").is_err());
