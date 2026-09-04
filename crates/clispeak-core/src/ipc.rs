@@ -218,7 +218,84 @@ pub fn path_shaped(name: &str) -> bool {
     name.contains('/') || name.contains('\\')
 }
 
-/// Whether a node is already listening on this machine's socket.
+/// What is on the other end of this machine's socket, if anything.
+///
+/// Three answers, and the middle one used to be indistinguishable from the
+/// first. See [`who_is_listening`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum Listening {
+    /// Nothing answered. The name is free, or holds a dead node's leftovers.
+    Nothing,
+    /// A node that proved it holds this machine's token. Ours.
+    Node,
+    /// Something answered and could not prove the token. Not our node.
+    Stranger(String),
+}
+
+/// Ask what holds the socket, and make it prove it is a node.
+///
+/// **Connecting is not the test.** The socket name is unprotected — on Linux
+/// the abstract namespace has no owner at all, and on macOS `interprocess`
+/// puts it in what its own source calls "the world-writable temporary
+/// directory" — so any other local user can take it before the node does
+/// (#128). Something answering therefore proves only that *something* is
+/// there.
+///
+/// That mattered because both callers treated "answered" as "a node is
+/// running". A squatter made `bind_ipc` report *"another node is already
+/// running"*, which was false, and made the app decline to start its own —
+/// so the node was down and the reason on screen was about a different
+/// machine state entirely.
+///
+/// The handshake already exists and already answers this: a squatter cannot
+/// produce the node's proof, because it does not have the token. It was
+/// simply never asked. **This does not stop a squatter taking the name** —
+/// that needs the OS to enforce ownership, which is the rest of #128 — it
+/// stops us being wrong about what happened.
+///
+/// Takes both the socket name and the config directory rather than reading
+/// them, so it can be driven by a test. [`node_is_listening`] is the wrapper
+/// that reads the environment.
+pub async fn who_is_listening(socket: &str, config_dir: &std::path::Path) -> Listening {
+    use interprocess::local_socket::traits::tokio::Stream as _;
+
+    let Ok(name) = socket.to_string().to_ns_name::<GenericNamespaced>() else {
+        return Listening::Nothing;
+    };
+    let Ok(mut stream) = interprocess::local_socket::tokio::Stream::connect(name).await else {
+        return Listening::Nothing;
+    };
+
+    // No token on disk means no node has started here since boot, so nothing
+    // that answers can be ours. Said as a stranger rather than as nothing,
+    // because something *is* holding the name and a caller that treats this
+    // as free will fail to bind for a reason it has already been told.
+    let Ok(token) = read_token(config_dir) else {
+        return Listening::Stranger(
+            "something holds the socket and there is no local token to check it \
+             against, so it is not a node this user started"
+                .into(),
+        );
+    };
+
+    // Bounded well inside `HANDSHAKE_TIMEOUT`. This runs on the way to
+    // starting a node, and a node on the other end of a local socket answers
+    // in microseconds — so anything still silent after a second is not
+    // answering, and waiting the full handshake timeout would stall every app
+    // start that meets a squatter. Being too impatient is contained: the
+    // caller starts a node, and `bind_ipc` refuses if one really was there.
+    const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+    match tokio::time::timeout(PROBE_TIMEOUT, offer_handshake(&mut stream, &token)).await {
+        Ok(Ok(())) => Listening::Node,
+        Ok(Err(e)) => Listening::Stranger(format!("{e:#}")),
+        Err(_) => Listening::Stranger(
+            "it holds the socket and did not answer the handshake within a second".into(),
+        ),
+    }
+}
+
+/// Whether *our* node is already listening on this machine's socket.
 ///
 /// Asked *before* anything else is brought up. `Node::serve` already refuses
 /// to bind a name another node holds, but by then the transport is online: a
@@ -226,18 +303,15 @@ pub fn path_shaped(name: &str) -> bool {
 /// are running, and only the socket is missing. The app then had a window
 /// that looked healthy and a node that reached nobody — issue #72.
 ///
-/// Connecting is the test, not the presence of a file. A node that died
-/// leaves its name behind on some platforms, and only a refused connection
-/// proves nothing is listening — the same reasoning `bind_ipc` uses to tell
-/// a live node from a dead one's leftovers.
+/// **False when a stranger holds the name**, deliberately. The caller's next
+/// move is to start a node, which then fails to bind and says what is
+/// actually wrong — which is better than declining to start and reporting a
+/// second node that does not exist. See [`who_is_listening`].
 pub async fn node_is_listening() -> bool {
-    use interprocess::local_socket::traits::tokio::Stream as _;
-    let Ok(name) = socket_name().to_ns_name::<GenericNamespaced>() else {
+    let Ok(dir) = crate::identity::config_dir() else {
         return false;
     };
-    interprocess::local_socket::tokio::Stream::connect(name)
-        .await
-        .is_ok()
+    who_is_listening(&socket_name(), &dir).await == Listening::Node
 }
 
 /// Write one length-prefixed CBOR frame.

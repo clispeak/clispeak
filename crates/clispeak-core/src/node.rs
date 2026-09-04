@@ -71,7 +71,15 @@ async fn bind_ipc(socket: &str) -> Result<TokioListener> {
     };
 
     if !refused {
-        anyhow::bail!("another node is already running on {socket}");
+        // Reached only when something took the name between `serve`'s probe
+        // and this bind, or when `bind_ipc` is called without one. Both
+        // possibilities are named because from here they are genuinely
+        // indistinguishable — the token has been replaced by now, so nothing
+        // holding the name can be identified any more (#128).
+        anyhow::bail!(
+            "the socket named {socket} is already held — by another node that \
+             started a moment ago, or by another local process that took the name"
+        );
     }
 
     eprintln!("removing the socket a previous node left at {socket}");
@@ -583,9 +591,40 @@ impl Node {
 
     /// Run both loops until one of them fails.
     pub async fn serve(&self) -> Result<()> {
+        let config_dir = crate::identity::config_dir()?;
+
+        // Ask what holds the socket *before* writing a new token, because
+        // writing one destroys the only thing that could identify a node
+        // already running: `install_token` replaces the file, and the running
+        // node still holds the old secret. Probing afterwards can only ever
+        // report a stranger (#128).
+        match crate::ipc::who_is_listening(&socket_name(), &config_dir).await {
+            crate::ipc::Listening::Nothing => {}
+            crate::ipc::Listening::Node => {
+                anyhow::bail!(
+                    "another clispeak node is already running on {}. Only one can \
+                     hold this device's identity at a time — quit the other one",
+                    socket_name()
+                );
+            }
+            // Not "another node". It answered and could not prove it holds
+            // this machine's token, so it is not a node this user started —
+            // and saying so is the difference between looking for a second
+            // app to quit and looking for whatever has the name.
+            crate::ipc::Listening::Stranger(why) => {
+                anyhow::bail!(
+                    "something else on this machine holds the socket named {:?}, and \
+                     it is not a clispeak node this user started: {why}. The socket \
+                     name is unprotected on this platform, so any local process can \
+                     take it first — set CLISPEAK_SOCKET to a different name to work \
+                     around it. Nothing was sent to whatever holds it",
+                    socket_name()
+                );
+            }
+        }
+
         // Before the listener exists, so there is never a socket accepting
         // connections with no secret to check them against.
-        let config_dir = crate::identity::config_dir()?;
         let token =
             crate::ipc::install_token(&config_dir).context("writing the local socket token")?;
 
@@ -3538,6 +3577,56 @@ mod tests {
         format!("clispeak-test-{}-{label}.sock", std::process::id())
     }
 
+    /// A squatter is not a node, and is not reported as one.
+    ///
+    /// The half of #128 that needed no redesign. Any local user can take the
+    /// socket name — the abstract namespace has no owner on Linux, and on
+    /// macOS `interprocess` uses the world-writable temporary directory — and
+    /// both callers treated "something answered" as "a node is running". So a
+    /// squatter made the node refuse to start with *"another node is already
+    /// running"*, which was false, and made the app decline to start its own.
+    ///
+    /// The handshake could always tell them apart. It was never asked.
+    #[tokio::test]
+    async fn something_that_cannot_prove_the_token_is_not_our_node() {
+        use crate::ipc::{Listening, install_token, who_is_listening};
+
+        let socket = unique("squatter");
+        let dir = std::env::temp_dir().join(format!("clispeak-squat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        install_token(&dir).expect("a token to check against");
+
+        // Nothing is listening yet.
+        assert_eq!(
+            who_is_listening(&socket, &dir).await,
+            Listening::Nothing,
+            "an unheld name is free"
+        );
+
+        // Exactly what a squatter is: something holding the name that has
+        // never seen the token. A bare listener answers connections and can
+        // produce no proof.
+        let _squatter = ListenerOptions::new()
+            .name(
+                socket
+                    .clone()
+                    .to_ns_name::<GenericNamespaced>()
+                    .expect("name"),
+            )
+            .create_tokio()
+            .expect("taking the name first");
+
+        match who_is_listening(&socket, &dir).await {
+            Listening::Stranger(why) => assert!(
+                !why.is_empty(),
+                "a refusal has to carry the reason it refused"
+            ),
+            other => panic!("a squatter must not read as a node: {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A socket left behind by a node that died is reclaimed, not refused.
     ///
     /// The failure this covers is macOS-shaped but not macOS-only: anywhere
@@ -3570,7 +3659,16 @@ mod tests {
         let second = bind_ipc(&socket).await;
         assert!(second.is_err(), "a second node must not take the socket");
         let message = second.unwrap_err().to_string();
-        assert!(message.contains("already running"), "{message}");
+        assert!(message.contains("already held"), "{message}");
+        // And it no longer asserts *what* holds it. By the time `bind_ipc`
+        // runs, `serve` has replaced the token, so a node that started a
+        // moment ago and a local process that took the name are genuinely
+        // indistinguishable from here — `who_is_listening` is what tells
+        // them apart, before the token is replaced (#128).
+        assert!(
+            message.contains("another local process"),
+            "the message must not claim to know which: {message}"
+        );
     }
 
     /// The name travels; it should be used. Issue #36.
