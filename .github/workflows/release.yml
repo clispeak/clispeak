@@ -130,7 +130,7 @@ jobs:
         env:
           IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          app=target/release/bundle/macos/voicecast.app
+          app=target/release/bundle/macos/clispeak.app
           codesign -dv --verbose=2 "$app" 2>&1 || true
           requirement=$(codesign -d -r- "$app" 2>&1 | tail -1)
           echo "designated requirement: $requirement"
@@ -175,7 +175,7 @@ jobs:
         env:
           NOTARISING: ${{ steps.notary.outputs.notarising }}
         run: |
-          app=target/release/bundle/macos/voicecast.app
+          app=target/release/bundle/macos/clispeak.app
           if xcrun stapler validate "$app"; then
             echo "Notarised, and the ticket is stapled: Gatekeeper is"
             echo "satisfied offline, without asking Apple at open time."
@@ -399,7 +399,7 @@ jobs:
       # The manifest takes prebuilt binaries: flatpak-builder runs offline,
       # so a source build inside it would need vendored crates.
       - name: Build the binaries
-        run: cargo build --release -p voicecast-app -p voicecast-cli
+        run: cargo build --release -p clispeak-app -p clispeak-cli
 
       # The runtime is installed by name rather than left to
       # `--install-deps-from`, which resolves quietly and gives nothing to
@@ -415,13 +415,13 @@ jobs:
         run: |
           set -x
           flatpak-builder --user --repo=repo --force-clean \
-            build-dir org.voicecast.App.yml
-          flatpak build-bundle repo voicecast.flatpak org.voicecast.App
+            build-dir org.clispeak.app.yml
+          flatpak build-bundle repo clispeak.flatpak org.clispeak.app
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux
-          path: packaging/flatpak/voicecast.flatpak
+          path: packaging/flatpak/clispeak.flatpak
           if-no-files-found: error
 
   draft:

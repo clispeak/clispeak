@@ -58,8 +58,8 @@ pub fn bundle(root: &Path) -> Result<()> {
     // same reasoning as the Flatpak manifest, and doubly so on a Mac, which
     // has no system speech this project can reach.
     //
-    // `speech`, not `voicecast`: Tauri stages resources beside the built
-    // executable, and `target/release/voicecast` is already the command-line
+    // `speech`, not `clispeak`: Tauri stages resources beside the built
+    // executable, and `target/release/clispeak` is already the command-line
     // tool. A directory of the same name collides with that file and the
     // build dies with a bare "Not a directory".
     piper::fetch(&tauri.join("speech"))?;
@@ -96,7 +96,7 @@ pub fn bundle(root: &Path) -> Result<()> {
 fn stage_cli(root: &Path, tauri: &Path) -> Result<()> {
     println!("building the command-line tool");
     let status = Command::new("cargo")
-        .args(["build", "--release", "-p", "voicecast-cli"])
+        .args(["build", "--release", "-p", "clispeak-cli"])
         .current_dir(root)
         .status()
         .context("running cargo")?;
@@ -108,7 +108,7 @@ fn stage_cli(root: &Path, tauri: &Path) -> Result<()> {
     // rather than a conditional of our own, since it is exactly this question.
     let exe = std::env::consts::EXE_SUFFIX;
 
-    let built = root.join(format!("target/release/voicecast{exe}"));
+    let built = root.join(format!("target/release/clispeak{exe}"));
     if !built.exists() {
         bail!("{} was not produced", built.display());
     }
@@ -118,7 +118,7 @@ fn stage_cli(root: &Path, tauri: &Path) -> Result<()> {
     // Tauri looks for a sidecar named for the target triple, and keeps the
     // platform's executable suffix. Without it Windows stages a file nothing
     // will run, beside a `built` path that never existed to copy from.
-    let staged = binaries.join(format!("voicecast-{}{exe}", host_triple()?));
+    let staged = binaries.join(format!("clispeak-{}{exe}", host_triple()?));
     std::fs::copy(&built, &staged).with_context(|| format!("staging {}", staged.display()))?;
     println!("staged  {}", staged.display());
     Ok(())

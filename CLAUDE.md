@@ -1,4 +1,4 @@
-# Working on voicecast
+# Working on clispeak
 
 A command-line tool that speaks text aloud on your devices, peer to peer, with
 no server. Each install is a node — sender and receiver both. The CLI is a
@@ -19,16 +19,16 @@ about four of the five targets. Windows was broken for fifteen commits while
 local checks reported green every time — see issue #5. Check the CI run, not
 your terminal, before claiming a change is safe.
 
-`cargo run -p xtask -- portability` fails if `voicecast-proto`,
-`voicecast-text` or `voicecast-core` grows a platform conditional — any of
+`cargo run -p xtask -- portability` fails if `clispeak-proto`,
+`clispeak-text` or `clispeak-core` grows a platform conditional — any of
 `target_os`, `target_family`, `target_arch`, `target_env`,
 `target_pointer_width`, `unix` or `windows`, however it is wrapped. Platform
-divergence belongs in `voicecast-engine` or the Tauri shell. Anything that
+divergence belongs in `clispeak-engine` or the Tauri shell. Anything that
 cannot be expressed portably gets a trait, not a conditional in the middle of
 business logic.
 
 For a long time it checked only the first two of those, so `cfg(unix)` sat in
-`voicecast-core` while the gate printed "3 crates clean" (#88). Where there is
+`clispeak-core` while the gate printed "3 crates clean" (#88). Where there is
 genuinely no portable spelling — setting a file mode is the only case so far —
 say so on the line above and the gate counts it instead of failing:
 
@@ -48,7 +48,7 @@ compiled on all five targets and passed every gate:
 |---|---|
 | `/etc/hostname` | a Linux file, so macOS and Windows called every device "this device" (#38) |
 | `Command::new("npx")` | resolves `npx.cmd` on no Windows box |
-| `target/release/voicecast` | has no `.exe` |
+| `target/release/clispeak` | has no `.exe` |
 | `sun_path` | a socket *name* over ~83 bytes refuses to bind on macOS, and the platform prepends a prefix you did not write |
 | `isMinifyEnabled` | true only for release, so R8 deleted the Kotlin the engine calls (#41) |
 | `file("keystore.properties")` | resolves against the Gradle *module*, so a copy one directory up is read as absent and the APK ships unsigned (#31) |
@@ -83,10 +83,10 @@ that is what happened.
 
 **And it is weaker again than that, because compiling is not linking.**
 An `rlib` never resolves its external symbols; only linking an executable
-does. The matrix links exactly one binary for iOS — `voicecast` — and that
-crate depends on `voicecast-proto` and `voicecast-text` and nothing else, by
-design, so it reaches no network code at all. `voicecast-app`, which pulls
-`voicecast-core` and therefore iroh, is **excluded** from the second Apple
+does. The matrix links exactly one binary for iOS — `clispeak` — and that
+crate depends on `clispeak-proto` and `clispeak-text` and nothing else, by
+design, so it reaches no network code at all. `clispeak-app`, which pulls
+`clispeak-core` and therefore iroh, is **excluded** from the second Apple
 target.
 
 So an iOS build linked 28 undefined `_SCDynamicStore*` symbols the first time
@@ -117,19 +117,19 @@ rule counts.
 
 | Crate | Holds | Must stay portable |
 |---|---|---|
-| `voicecast-proto` | Wire and IPC types. Pure data, CBOR | yes |
-| `voicecast-text` | Validation, chunking. Pure functions | yes |
-| `voicecast-core` | Transport, roster, spaces, queue, policy, history | **yes** |
-| `voicecast-engine` | `SpeechEngine` trait and per-platform impls | no |
-| `voicecast-cli` | The `voicecast` binary. Depends only on proto + text | — |
-| `voicecast-daemon` | Headless node, for machines with no desktop | — |
-| `voicecast-keystore` | Platform keyring | — |
+| `clispeak-proto` | Wire and IPC types. Pure data, CBOR | yes |
+| `clispeak-text` | Validation, chunking. Pure functions | yes |
+| `clispeak-core` | Transport, roster, spaces, queue, policy, history | **yes** |
+| `clispeak-engine` | `SpeechEngine` trait and per-platform impls | no |
+| `clispeak-cli` | The `clispeak` binary. Depends only on proto + text | — |
+| `clispeak-daemon` | Headless node, for machines with no desktop | — |
+| `clispeak-keystore` | Platform keyring | — |
 | `app/src-tauri` | The app: owns a `Node`, adds a tray and a window | no |
 | `app/src` | Frontend. Plain HTML and JS, Tailwind build step | — |
 
-`voicecast-cli` depending on only two crates is deliberate — it keeps startup
+`clispeak-cli` depending on only two crates is deliberate — it keeps startup
 at ~3ms, which is the whole premise of the thin-client design. Do not reach
-for `voicecast-core` from it; duplicate the handful of bytes instead, as
+for `clispeak-core` from it; duplicate the handful of bytes instead, as
 `frame.rs` and the socket name already do, and keep them in step by hand.
 
 ## Checks
@@ -231,7 +231,7 @@ the eye fills in as "not yet".
 
 `app/src/styles.css` is generated and **not** committed. Tauri's
 `beforeBuildCommand` rebuilds it, so `tauri build` and `tauri android build`
-are covered — but a plain `cargo build -p voicecast-app`, which is how the
+are covered — but a plain `cargo build -p clispeak-app`, which is how the
 Flatpak is packaged, is not. Add a class in `index.html`, package it that way,
 and the class is inert with nothing to say so.
 
@@ -243,21 +243,21 @@ debuginfo for the same reason.
 ## Running it
 
 ```bash
-cargo run -p voicecast-daemon          # a node
-cargo run -p voicecast-cli -- status
+cargo run -p clispeak-daemon          # a node
+cargo run -p clispeak-cli -- status
 ```
 
-Two nodes on one machine: override `VOICECAST_SOCKET` and
-`VOICECAST_CONFIG_DIR`. Both are read by the CLI *and* the node, and
+Two nodes on one machine: override `CLISPEAK_SOCKET` and
+`CLISPEAK_CONFIG_DIR`. Both are read by the CLI *and* the node, and
 forgetting the socket override makes every command talk to the first node,
 which looks like two unrelated bugs.
 
-**`VOICECAST_SOCKET` is a name, not a path, and it must be short** — under
+**`CLISPEAK_SOCKET` is a name, not a path, and it must be short** — under
 about 83 bytes on macOS, where the platform then prepends `/tmp/`. Point it at
 a scratch directory and the node refuses to bind for a reason that names the
 limit and not the string. Scratchpad paths here are around 100 bytes on their
 own, so this is the default way to hit it, not an edge case. Use
-`VOICECAST_SOCKET=vc-2.sock`, and put only `VOICECAST_CONFIG_DIR` somewhere
+`CLISPEAK_SOCKET=vc-2.sock`, and put only `CLISPEAK_CONFIG_DIR` somewhere
 deep.
 
 Platform packages: `packaging/flatpak/` for Linux, `cargo xtask bundle` for a

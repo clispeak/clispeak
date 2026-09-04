@@ -29,7 +29,7 @@ stream per peer.
 
 That single choice resolves three problems that would otherwise need designing:
 
-**Cancellation** is a stream reset. `voicecast stop --id m_8fk2p` resets that
+**Cancellation** is a stream reset. `clispeak stop --id m_8fk2p` resets that
 stream — no cancel message, no race between a cancel and chunk 40, no
 ambiguity about how much was spoken.
 
@@ -39,7 +39,7 @@ notification are separate streams with separate flow control. The long one
 
 **Backpressure** is free. A receiver that reads only as fast as it synthesizes
 stalls the sender through QUIC's own flow control. `cat war-and-peace.txt |
-voicecast --to phone` cannot exhaust the phone's memory.
+clispeak --to phone` cannot exhaust the phone's memory.
 
 ## Messages
 

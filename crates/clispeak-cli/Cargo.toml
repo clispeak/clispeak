@@ -1,0 +1,40 @@
+[package]
+name = "clispeak-cli"
+description = "The clispeak binary. A thin client to the local node."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "clispeak"
+path = "src/main.rs"
+
+[dependencies]
+# `no_neon` because blake3's NEON path does not link on iOS: the C object
+# `blake3_neon.o` leaves `_blake3_hash4_neon` undefined for arm64, and the
+# five-target matrix caught it — `cargo build` for aarch64-apple-ios failed
+# at link with everything green on Linux. blake3's build script compiles that
+# C on any little-endian aarch64 unless this is set, so it also applies to
+# Android and Apple silicon; the portable Rust fallback is correct and the
+# inputs here are fifty bytes. Features are additive, so this holds for every
+# blake3 in the tree.
+blake3 = { version = "1.8", features = ["no_neon"] }
+rand = "0.10.2"
+
+clispeak-proto.workspace = true
+clispeak-text.workspace = true
+anyhow.workspace = true
+interprocess = { version = "2.4.3", features = ["tokio"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-util"] }
+ciborium = "0.2.2"
+clap = { version = "4.6.6", features = ["derive"] }
+serde.workspace = true
+serde_json = "1.0.151"
+# Groups and defaults live in config.toml, as documented in docs/cli.md.
+toml = "0.9.9"
+directories = "6.0.0"
+
+[lints]
+workspace = true

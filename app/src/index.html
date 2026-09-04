@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>voicecast</title>
+<title>clispeak</title>
 <link rel="stylesheet" href="styles.css" />
 <!-- Before the stylesheet is applied to anything visible, so a device set to
      light does not flash the dark theme on every launch. Inline and tiny for
@@ -12,7 +12,7 @@
      throw from reading it — lands on the OS setting rather than nothing. -->
 <script>
   try {
-    var t = localStorage.getItem("voicecast-theme");
+    var t = localStorage.getItem("clispeak-theme");
     if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
   } catch (e) {}
 </script>
@@ -25,7 +25,7 @@
                dark:border-neutral-800 dark:bg-neutral-950/90">
   <div class="mx-auto flex w-full max-w-md items-center justify-between gap-3">
     <div class="min-w-0">
-      <h1 id="name" class="truncate text-lg font-semibold tracking-tight">voicecast</h1>
+      <h1 id="name" class="truncate text-lg font-semibold tracking-tight">clispeak</h1>
       <p id="ident" class="truncate font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
         starting…
       </p>
@@ -66,7 +66,7 @@
       class="rounded-xl border border-red-300 bg-red-50 p-4
              dark:border-red-500/40 dark:bg-red-950/40">
       <p class="text-sm font-medium text-red-800 dark:text-red-200">
-        voicecast is not running on this device.
+        clispeak is not running on this device.
       </p>
       <p id="node-reason"
         class="mt-1 break-words text-xs text-red-700 dark:text-red-300"></p>
@@ -658,7 +658,7 @@
       </p>
       <label for="join-input" class="sr-only">Invite code</label>
       <textarea id="join-input" rows="3" autocomplete="off" spellcheck="false"
-        placeholder="voicecast://join/..."
+        placeholder="clispeak://join/..."
         class="mt-3 w-full resize-none rounded-lg border border-neutral-300 bg-white px-3 py-2
                font-mono text-xs placeholder:font-sans placeholder:text-sm
                placeholder:text-neutral-500 dark:placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none

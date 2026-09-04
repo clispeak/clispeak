@@ -24,15 +24,15 @@ device and no "original" device with special rights. The founder is simply the
 first member; once a second device joins, the two are interchangeable.
 
 **Every device can do it from its GUI.** All five platforms run the same app,
-so the invite screen exists everywhere. On desktop you also get `voicecast invite` —
+so the invite screen exists everywhere. On desktop you also get `clispeak invite` —
 the CLI and the GUI button do the identical thing, mint the identical ticket,
 and honor the identical five-minute expiry. The CLI draws the QR in unicode
 blocks; the app draws a real one.
 
 | Device | Can invite from | Can join by |
 |---|---|---|
-| Desktop / laptop | `voicecast invite`, or the app window | pasting a ticket (CLI or app); camera if it has one |
-| Phone / tablet | the app | scanning a QR, or tapping a `voicecast://join/` link |
+| Desktop / laptop | `clispeak invite`, or the app window | pasting a ticket (CLI or app); camera if it has one |
+| Phone / tablet | the app | scanning a QR, or tapping a `clispeak://join/` link |
 
 Two consequences worth stating plainly:
 
@@ -49,14 +49,14 @@ needs to change, it's a per-space toggle rather than a redesign.
 ## 1. Desktop — install and create the space
 
 ```
-$ brew install voicecast        # or: paru -S voicecast, winget install voicecast
+$ brew install clispeak        # or: paru -S clispeak, winget install clispeak
 
-$ voicecast init
+$ clispeak init
   Generated identity for this device.
   Device name [desk]:
 
   Created a new space.
-  desk is now ready. Add another device with:  voicecast invite
+  desk is now ready. Add another device with:  clispeak invite
 ```
 
 `init` generates the ed25519 keypair, stores it in the system keyring, and
@@ -66,7 +66,7 @@ listening.
 The desktop can already talk to itself:
 
 ```
-$ voicecast "hello world"
+$ clispeak "hello world"
 ```
 
 ## 2. Android — join by scanning
@@ -74,7 +74,7 @@ $ voicecast "hello world"
 On the desktop:
 
 ```
-$ voicecast invite
+$ clispeak invite
 
   █▀▀▀▀▀█ ▀▄█▀▄ █▀▀▀▀▀█
   █ ███ █ ▀█ ▄▀ █ ███ █
@@ -83,7 +83,7 @@ $ voicecast invite
   ...
 
   Or paste this on the other device:
-    voicecast://join/AXQm9Rk2...vB7z
+    clispeak://join/AXQm9Rk2...vB7z
 
   Expires in 5:00.  Waiting...
 ```
@@ -120,15 +120,15 @@ The MacBook has a camera, but aiming a laptop at another screen is awkward. So
 paste instead — same payload, different presentation:
 
 ```
-$ voicecast invite --print-only
-  voicecast://join/BXn4Tp8...kQ2m
+$ clispeak invite --print-only
+  clispeak://join/BXn4Tp8...kQ2m
   Expires in 5:00.  Waiting...
 ```
 
 On the laptop, after installing:
 
 ```
-$ voicecast join voicecast://join/BXn4Tp8...kQ2m
+$ clispeak join clispeak://join/BXn4Tp8...kQ2m
   Device name [laptop]:
   Safety code: 7734-2216  — confirm this matches the inviting device.
   Joined. 3 devices in this space.
@@ -157,7 +157,7 @@ admitted without the desktop ever having seen it. (See *Membership* in
 ## 5. Everything sees everything
 
 ```
-$ voicecast devices
+$ clispeak devices
 
   NAME     PLATFORM   STATUS      VOICE            LAST SEEN
   desk     linux      online      espeak (!)fallback  now
@@ -173,11 +173,11 @@ Three joins. Four devices. No pairwise setup, no server, no accounts.
 ## 6. First real use
 
 ```
-$ voicecast --to all "setup complete"
+$ clispeak --to all "setup complete"
 
-$ voicecast --to pixel,iphone "build finished"
+$ clispeak --to pixel,iphone "build finished"
 
-$ cat CHANGELOG.md | voicecast --strip --to laptop
+$ cat CHANGELOG.md | clispeak --strip --to laptop
 ```
 
 ---
@@ -202,7 +202,7 @@ see *Feedback* in `cli.md`.
 Same one step, from any device:
 
 ```
-$ voicecast invite
+$ clispeak invite
 ```
 
 N devices requires N-1 joins. It does not grow quadratically.
@@ -210,7 +210,7 @@ N devices requires N-1 joins. It does not grow quadratically.
 ## Removing a device
 
 ```
-$ voicecast revoke pixel
+$ clispeak revoke pixel
   pixel removed from the space. Revocation gossiped to 3 devices.
 ```
 
@@ -227,10 +227,10 @@ both work and home, while the work laptop hears only work.
 From the phone (or any device already in a space):
 
 ```
-$ voicecast space new home
+$ clispeak space new home
   Created 'home'. This device is a member of 2 spaces.
 
-$ voicecast space list
+$ clispeak space list
   NAME    DEVICES   ROLE      DEFAULT
   work    3         member    *
   home    1         founder
@@ -239,7 +239,7 @@ $ voicecast space list
 Then invite into it exactly as before — invites are per-space:
 
 ```
-$ voicecast invite --space home
+$ clispeak invite --space home
 ```
 
 The two spaces never learn about each other. Devices in `work` cannot see or
@@ -249,7 +249,7 @@ and volume on every device that belongs to both.
 To detach a device entirely rather than adding:
 
 ```
-$ voicecast space leave work
+$ clispeak space leave work
   Left 'work'. Roster removed locally; 2 remaining members notified.
 ```
 

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.clispeak.app</id>
+  <name>clispeak</name>
+  <summary>Speak text aloud on any of your devices</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>
+      Send text from one device and hear it spoken on another. Devices connect
+      peer to peer, with no server to run and no account to create.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.clispeak.app.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+</component>

@@ -5,7 +5,7 @@
       "speech/**/*"
     ],
     "externalBin": [
-      "binaries/voicecast"
+      "binaries/clispeak"
     ]
   }
 }

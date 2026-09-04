@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">"voicecast"</string>
-    <string name="main_activity_title">"voicecast"</string>
+    <string name="app_name">"clispeak"</string>
+    <string name="main_activity_title">"clispeak"</string>
 </resources>

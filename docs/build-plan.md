@@ -56,27 +56,27 @@ tries to build for iOS.
 
 Concretely:
 
-- `voicecast-proto`, `voicecast-text`, and `voicecast-core` contain **no** `#[cfg(target_os)]`.
-- All platform divergence lives in `voicecast-engine` and the Tauri shell.
-- Anything that can't be expressed portably gets a trait in `voicecast-core` and an
-  implementation in `voicecast-engine`, not a conditional compile in the middle of
+- `clispeak-proto`, `clispeak-text`, and `clispeak-core` contain **no** `#[cfg(target_os)]`.
+- All platform divergence lives in `clispeak-engine` and the Tauri shell.
+- Anything that can't be expressed portably gets a trait in `clispeak-core` and an
+  implementation in `clispeak-engine`, not a conditional compile in the middle of
   business logic.
 
 ## Repo layout
 
 ```
-voicecast/
+clispeak/
 ├── Cargo.toml                  workspace
 ├── crates/
-│   ├── voicecast-proto/        CBOR wire types + IPC types. Pure data.
-│   ├── voicecast-daemon/       the node process. Desktop only.
-│   ├── voicecast-text/         validation, protection, chunking. Pure fns.
-│   ├── voicecast-engine/       SpeechEngine trait + per-platform impls.
-│   ├── voicecast-core/         iroh transport, roster, queue, playback.
-│   └── voicecast-cli/          the `voicecast` binary. Thin: proto + text.
+│   ├── clispeak-proto/        CBOR wire types + IPC types. Pure data.
+│   ├── clispeak-daemon/       the node process. Desktop only.
+│   ├── clispeak-text/         validation, protection, chunking. Pure fns.
+│   ├── clispeak-engine/       SpeechEngine trait + per-platform impls.
+│   ├── clispeak-core/         iroh transport, roster, queue, playback.
+│   └── clispeak-cli/          the `clispeak` binary. Thin: proto + text.
 ├── app/
 │   ├── src/                    Tauri frontend
-│   └── src-tauri/              Tauri shell, depends on voicecast-core
+│   └── src-tauri/              Tauri shell, depends on clispeak-core
 ├── xtask/                      build automation
 └── docs/
 ```
@@ -85,13 +85,13 @@ Each crate has an obvious test story, which is the reason for the split:
 
 | Crate | Testable how |
 |---|---|
-| `voicecast-proto` | Round-trip encode/decode, version-skew cases |
-| `voicecast-text` | Table-driven unit tests. Every ugly case in `text.md` is a row. |
-| `voicecast-engine` | Per-platform smoke tests; trait conformance |
-| `voicecast-core` | Two nodes in one process over an in-memory transport |
-| `voicecast-cli` | Golden-file tests on stdout/stderr and exit codes |
+| `clispeak-proto` | Round-trip encode/decode, version-skew cases |
+| `clispeak-text` | Table-driven unit tests. Every ugly case in `text.md` is a row. |
+| `clispeak-engine` | Per-platform smoke tests; trait conformance |
+| `clispeak-core` | Two nodes in one process over an in-memory transport |
+| `clispeak-cli` | Golden-file tests on stdout/stderr and exit codes |
 
-`voicecast-cli` depending only on `voicecast-proto` and `voicecast-text` is deliberate — it keeps
+`clispeak-cli` depending only on `clispeak-proto` and `clispeak-text` is deliberate — it keeps
 the binary small and its startup instant, which is the whole premise of the
 thin-client design.
 
@@ -165,7 +165,7 @@ Nothing functional.
 
 *Exit:* an empty workspace builds green for all five targets.
 
-### M2 — `voicecast-text`  ✅ DONE
+### M2 — `clispeak-text`  ✅ DONE
 
 Validation and chunking. Pure functions, no I/O, no async. Every ugly case in
 `text.md` becomes a test row.
@@ -179,18 +179,18 @@ protection-pass splitting handles `10.0.0.1`, `src/main.rs:42`, `Dr.`,
 
 ### M3 — Speak locally  ✅ DONE
 
-CLI → unix socket → node → `voicecast-engine` → sound. No network, no identity, no
+CLI → unix socket → node → `clispeak-engine` → sound. No network, no identity, no
 roster.
 
 Requires `espeak-ng` installed (`pacman -S espeak-ng`) — a runtime
 dependency, not a build one.
 
-*Exit:* `voicecast "hello world"` speaks on the same Linux machine through
-espeak-ng. `echo x | voicecast` works. Exit codes correct. **First demoable thing.**
+*Exit:* `clispeak "hello world"` speaks on the same Linux machine through
+espeak-ng. `echo x | clispeak` works. Exit codes correct. **First demoable thing.**
 
 ### M4 — Identity and a space of one  ✅ DONE
 
-Keypair generation, keyring storage, `voicecast init`, `voicecast status`.
+Keypair generation, keyring storage, `clispeak init`, `clispeak status`.
 
 *Exit:* identity survives a restart; the keyring is used, not a bare file.
 
@@ -244,13 +244,13 @@ Piper on a Mac, a bundled `.app` that installs by dragging, and the CLI put
 somewhere a shell — and therefore an agent — will actually find it.
 
 Confirms what the compile-for-five rule was for: the portable crates needed no
-platform conditionals. The one real defect it surfaced was in `voicecast-core`
+platform conditionals. The one real defect it surfaced was in `clispeak-core`
 and had been latent on every platform, hidden because Linux's abstract sockets
 disappear with the process that held them — a node killed anywhere else left a
 socket file that stopped every later node from starting.
 
 *Exit:* installing the dmg on a Mac with nothing else installed gives a device
-that speaks, and `voicecast` on the PATH. **Done, apart from signing.**
+that speaks, and `clispeak` on the PATH. **Done, apart from signing.**
 
 A Mac has since joined a space and been spoken to from the laptop, so both
 legs are proven. The earlier timeouts were that machine being offline — and
@@ -276,7 +276,7 @@ without it `piper.exe` installs correctly, is found correctly, and exits
 beside it removes the failure rather than reporting it.
 
 *Exit:* a double-click on a clean Windows machine gives a device that speaks
-and a `voicecast` a **new** shell can find, with no terminal step and no admin
+and a `clispeak` a **new** shell can find, with no terminal step and no admin
 prompt at any point.
 
 **Where it stands.** The engine half is done — Piper runs on Windows and is
@@ -349,10 +349,10 @@ APK is the release build.
 
 ## Testing strategy
 
-**Unit** — heaviest in `voicecast-text` and `voicecast-proto`. Roster CRDT merge is a good
+**Unit** — heaviest in `clispeak-text` and `clispeak-proto`. Roster CRDT merge is a good
 property-test target: merge must be commutative, associative, idempotent.
 
-**Integration** — two `voicecast-core` nodes in one process over an in-memory
+**Integration** — two `clispeak-core` nodes in one process over an in-memory
 transport. Covers roster convergence, queue behavior, and cancellation without
 touching a network.
 

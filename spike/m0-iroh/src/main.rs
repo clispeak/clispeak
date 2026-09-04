@@ -14,7 +14,7 @@ use iroh::{
     endpoint::{TransportAddrUsage, presets},
 };
 
-const ALPN: &[u8] = b"voicecast/m0-spike/1";
+const ALPN: &[u8] = b"clispeak/m0-spike/1";
 
 #[derive(Parser)]
 #[command(about = "M0 spike: measure iroh connectivity between two devices")]

@@ -136,10 +136,10 @@ jobs:
         run: cargo install cargo-ndk --locked
 
       # xtask is host-only tooling and is never cross-compiled;
-      # voicecast-daemon links a desktop keyring and is superseded on a phone
+      # clispeak-daemon links a desktop keyring and is superseded on a phone
       # by the app itself.
       #
-      # voicecast-app is *included*, unlike before. Excluding it meant the
+      # clispeak-app is *included*, unlike before. Excluding it meant the
       # Android job compiled the libraries and skipped the one crate that
       # actually ships on a phone — so a desktop-only call added to its
       # `cfg(target_os = "android")` paths passed every job and failed on a
@@ -149,22 +149,22 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           cargo ndk -t arm64-v8a build --workspace \
-            --exclude xtask --exclude voicecast-daemon \
-            --exclude voicecast-keystore
+            --exclude xtask --exclude clispeak-daemon \
+            --exclude clispeak-keystore
 
-      # voicecast-daemon is desktop-only: it links platform keyrings and is
+      # clispeak-daemon is desktop-only: it links platform keyrings and is
       # superseded by the Tauri app at M6.
       - name: Build
         if: '!matrix.android'
         run: cargo build --workspace --exclude xtask --target ${{ matrix.target }}
 
-      # iOS, on the same runner. voicecast-daemon and voicecast-keystore are
-      # desktop-only, and voicecast-app is built by Tauri's own mobile
+      # iOS, on the same runner. clispeak-daemon and clispeak-keystore are
+      # desktop-only, and clispeak-app is built by Tauri's own mobile
       # tooling rather than by cargo.
       - name: Build (second Apple target)
         if: matrix.also
         run: |
           cargo build --workspace \
-            --exclude xtask --exclude voicecast-daemon \
-            --exclude voicecast-keystore --exclude voicecast-app \
+            --exclude xtask --exclude clispeak-daemon \
+            --exclude clispeak-keystore --exclude clispeak-app \
             --target ${{ matrix.also }}

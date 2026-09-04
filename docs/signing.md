@@ -32,10 +32,10 @@ written down than deleted.
 
 On macOS 26.5, with a self-signed Code Signing certificate:
 
-- `codesign` used it without complaint — `Authority=voicecast dev`, and
+- `codesign` used it without complaint — `Authority=clispeak dev`, and
   `--verify --deep` reported `satisfies its Designated Requirement`.
 - The designated requirement changed from `cdhash H"…"` to
-  `identifier "com.voicecast.app" and certificate leaf = H"…"`, which is the
+  `identifier "org.clispeak.app" and certificate leaf = H"…"`, which is the
   stable shape this file said was the point.
 - **The keychain still prompted on every rebuild anyway.** Three builds, each
   with a genuinely different `CDHash`, each answered with *Always Allow*, each
@@ -56,7 +56,7 @@ The bundle is *ad-hoc* signed, which means it has no certificate and its
 identity is its own hash. The consequence is visible in one command:
 
 ```console
-$ codesign -d -r- /Applications/voicecast.app
+$ codesign -d -r- /Applications/clispeak.app
 # designated => cdhash H"24a1051019672ae35fecd1b28ff085f7ca6edbff"
 
 $ codesign -d -r- /Applications/Safari.app
@@ -68,11 +68,11 @@ program is the same program as last time. Safari's names an identifier and an
 issuer, so any build Apple signs satisfies it. Ours names one specific build.
 
 A keychain grant stores that requirement. So **Always Allow** on the
-`voicecast / device-identity` item names a hash, and the next `cargo xtask
+`clispeak / device-identity` item names a hash, and the next `cargo xtask
 bundle` produces a different hash, so the grant no longer matches and the
 password is asked for again. The node reads that item *before* it binds its
 socket, so while the dialog is up the app looks launched, the process is
-alive, and `voicecast status` reports no node running and sends you off to
+alive, and `clispeak status` reports no node running and sends you off to
 start a second one (#19, #29).
 
 A certificate changes the requirement to a name and an issuer. The grant then
@@ -87,7 +87,7 @@ Keychain Access → *Certificate Assistant* → **Create a Certificate…**
 
 | Field | Value |
 |---|---|
-| Name | `voicecast dev` |
+| Name | `clispeak dev` |
 | Identity Type | Self Signed Root |
 | Certificate Type | **Code Signing** |
 | Let me override defaults | not needed |
@@ -128,12 +128,12 @@ and that is expected, not a fault to fix.
 So the check that actually answers the question is to sign something:
 
 ```console
-$ codesign --force --sign "voicecast dev" /tmp/probe
+$ codesign --force --sign "clispeak dev" /tmp/probe
 $ codesign -dv --verbose=2 /tmp/probe 2>&1 | grep Authority
-Authority=voicecast dev
+Authority=clispeak dev
 ```
 
-If that says `Authority=voicecast dev`, it is working. If it says
+If that says `Authority=clispeak dev`, it is working. If it says
 `Signature=adhoc`, the identity never reached `codesign`. And if
 `find-identity` with no flags reports zero, *then* the certificate type was
 not Code Signing — that is the one field the dialog defaults wrong.
@@ -150,7 +150,7 @@ One variable covers the whole bundle: Tauri signs the app with it, and
 one.
 
 ```bash
-export APPLE_SIGNING_IDENTITY="voicecast dev"
+export APPLE_SIGNING_IDENTITY="clispeak dev"
 cargo run -p xtask -- bundle
 ```
 
@@ -158,14 +158,14 @@ Put that `export` in `~/.zprofile` so it is not a thing to remember, then
 confirm the requirement changed shape:
 
 ```console
-$ codesign -d -r- target/release/bundle/macos/voicecast.app
-designated => identifier "com.voicecast.app" and certificate leaf H"…"
+$ codesign -d -r- target/release/bundle/macos/clispeak.app
+designated => identifier "org.clispeak.app" and certificate leaf H"…"
 ```
 
 Install it, answer the keychain dialog **once** with Always Allow, then
 rebuild and reinstall. The second launch should not ask. If it does, the
 certificate is not being picked up — check `codesign -dv` says
-`Authority=voicecast dev` rather than `Signature=adhoc`.
+`Authority=clispeak dev` rather than `Signature=adhoc`.
 
 ## What a self-signed certificate does not do
 
@@ -208,7 +208,7 @@ Keychain Access → the certificate → right-click → **Export…** → Person
 Information Exchange (.p12), with a password. Then:
 
 ```bash
-base64 -i voicecast.p12 | pbcopy    # paste into the APPLE_CERTIFICATE secret
+base64 -i clispeak.p12 | pbcopy    # paste into the APPLE_CERTIFICATE secret
 ```
 
 **Do not put the self-signed certificate here.** It would buy a downloader
@@ -298,7 +298,7 @@ one keychain:
 
 ```console
 $ security find-identity
-  1) A494CDD8744573039B35C14E2FE6953AEEE8DA26 "voicecast dev" (CSSMERR_TP_NOT_TRUSTED)
+  1) A494CDD8744573039B35C14E2FE6953AEEE8DA26 "clispeak dev" (CSSMERR_TP_NOT_TRUSTED)
   2) 8C73BFFFE78B52E605D15CA1F1CE20428EE5B434 "Developer ID Application: Patrick Hogg (KC7NLB7CX8)"
      2 identities found
 ```
@@ -402,7 +402,7 @@ nothing.
 `stapler` will tell you, and it works on a `.dmg`:
 
 ```bash
-xcrun stapler validate voicecast_0.1.0_aarch64.dmg
+xcrun stapler validate clispeak_0.1.0_aarch64.dmg
 # → "does not have a ticket stapled to it"
 ```
 
@@ -438,7 +438,7 @@ The last is named `_P8` rather than `_PATH` deliberately: it holds the file's
 `APPLE_API_KEY_PATH` holding a path would be a path to nothing.
 
 ```bash
-base64 -i voicecast.p12 | pbcopy              # APPLE_CERTIFICATE
+base64 -i clispeak.p12 | pbcopy              # APPLE_CERTIFICATE
 base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy      # APPLE_API_KEY_P8
 ```
 
@@ -455,9 +455,9 @@ written, used, removed.
 On the artefact, not on the build log.
 
 ```bash
-codesign -dv --verbose=4 voicecast.app 2>&1 | grep -E 'Authority|TeamIdentifier'
-xcrun stapler validate voicecast.app
-spctl -a -vvv -t exec voicecast.app
+codesign -dv --verbose=4 clispeak.app 2>&1 | grep -E 'Authority|TeamIdentifier'
+xcrun stapler validate clispeak.app
+spctl -a -vvv -t exec clispeak.app
 ```
 
 - `Authority=Developer ID Application: …` — signed with the right kind of
@@ -471,7 +471,7 @@ spctl -a -vvv -t exec voicecast.app
 bundle today it says:
 
 ```
-voicecast.app: code has no resources but signature indicates they must be present
+clispeak.app: code has no resources but signature indicates they must be present
 ```
 
 That is neither `accepted` nor `rejected`. It means the signature could not be
@@ -481,8 +481,8 @@ about Gatekeeper's opinion of it — the tool is not broken.
 On the disk image, ask the question a downloader's Finder asks:
 
 ```bash
-spctl -a -vvv -t open --context context:primary-signature voicecast_0.1.0_aarch64.dmg
-xcrun stapler validate voicecast_0.1.0_aarch64.dmg
+spctl -a -vvv -t open --context context:primary-signature clispeak_0.1.0_aarch64.dmg
+xcrun stapler validate clispeak_0.1.0_aarch64.dmg
 ```
 
 **This page previously said `-t exec` on a `.dmg` gives an answer that does

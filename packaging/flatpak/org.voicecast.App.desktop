@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=voicecast
-Comment=Speak text aloud on any of your devices
-Exec=voicecast-app
-Icon=org.voicecast.App
-Categories=Utility;
-Terminal=false
-StartupNotify=true

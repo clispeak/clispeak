@@ -88,7 +88,7 @@ MIT; espeak-ng is the copyleft one, and `libpiper_phonemize` links it.
 Two separate consequences, and they are often confused.
 
 **Our own licence is not forced to GPL.** Piper is spawned as a *separate
-process* — `voicecast-engine/src/piper.rs` opens with "Driven as processes
+process* — `clispeak-engine/src/piper.rs` opens with "Driven as processes
 rather than through a library", and `espeak.rs` does the same. Arm's-length
 process invocation is the standard basis for treating two programs as
 aggregated rather than combined. So MIT/Apache-2.0 for our code stands.
@@ -143,7 +143,7 @@ apply here specifically:
 
 Not AGPL: it is aimed at network services, and this project has no server.
 Not GPL: it would trade the App Store for a protection this project does not
-need — nobody can take voicecast proprietary in a way that hurts us, because
+need — nobody can take clispeak proprietary in a way that hurts us, because
 the value is the network of your own devices, not the code.
 
 **Action:** every one of our nine crates has no `license` field —
@@ -252,14 +252,14 @@ What is genuinely worth writing, and is not a legal document:
   no paperwork, and asking hobby contributors to sign a CLA for a project with
   no commercial arm is friction with nothing behind it.
 - **A trademark note.** The *name* is not covered by the code licence. If you
-  want to stop a fork shipping a confusingly-similar "Voicecast" in the app
+  want to stop a fork shipping a confusingly-similar "Clispeak" in the app
   stores, that is trademark, not copyright, and it is a separate decision.
 
 ## Things only Patrick can settle
 
 1. **The name.** I found no obvious conflicting product, but that is a web
    search and not a clearance search. Before a store listing, check the USPTO
-   database and both app stores directly. "Voicecast" is descriptive, which
+   database and both app stores directly. "Clispeak" is descriptive, which
    cuts both ways: harder to protect, less likely to infringe.
 2. **Copyright holder.** "Patrick Hogg" or an entity. It goes in every licence
    header and changing it later means asking every contributor.

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=clispeak
+Comment=Speak text aloud on any of your devices
+Exec=clispeak-app
+Icon=org.clispeak.app
+Categories=Utility;
+Terminal=false
+StartupNotify=true

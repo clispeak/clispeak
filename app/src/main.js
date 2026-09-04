@@ -1,5 +1,5 @@
 // Thin UI over the node running in this app's Rust side. No framework and no
-// bundler: the interesting behaviour lives in voicecast-core, shared with the
+// bundler: the interesting behaviour lives in clispeak-core, shared with the
 // CLI, and this file only moves values between it and the DOM.
 import { openModal } from "./modal.js";
 
@@ -386,7 +386,7 @@ async function refresh() {
   $("node-reason").textContent = status.failed ?? "";
   if (status.failed) {
     $("ident").textContent = "not running";
-    $("name").textContent = "voicecast";
+    $("name").textContent = "clispeak";
     return;
   }
   if (status.starting) {
@@ -733,7 +733,7 @@ async function refreshSkill() {
   // Said plainly rather than discovered by a failed install: inside a
   // sandbox the app genuinely cannot write outside the default location.
   $("skill-hint").textContent = skill.sandboxed
-    ? "This app is sandboxed. For anywhere else, run: voicecast skill --install --path <dir>/SKILL.md"
+    ? "This app is sandboxed. For anywhere else, run: clispeak skill --install --path <dir>/SKILL.md"
     : "Any path. Agents that keep skills elsewhere can be pointed at their own directory.";
   $("skill-install").textContent =
     skill.state === "absent" ? "Install the skill" : "Reinstall";
@@ -1552,7 +1552,7 @@ function applyTheme(choice) {
   // with the page rather than with a default.
   let saved = "system";
   try {
-    saved = localStorage.getItem("voicecast-theme") ?? "system";
+    saved = localStorage.getItem("clispeak-theme") ?? "system";
   } catch {
     // Storage can be unavailable outright — a webview with site data off, or
     // a private context. Following the system is the right answer then, and
@@ -1567,7 +1567,7 @@ function applyTheme(choice) {
       try {
         // "system" is stored rather than removed, so a later default change
         // cannot silently move a device that had chosen to follow the OS.
-        localStorage.setItem("voicecast-theme", choice);
+        localStorage.setItem("clispeak-theme", choice);
       } catch {
         say("this device will not remember that until it is restarted", "error");
       }

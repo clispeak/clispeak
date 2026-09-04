@@ -169,7 +169,7 @@ pub fn fetch(root: &Path) -> Result<()> {
 ///
 /// Under the user's own directory rather than the shared temp directory. Every
 /// file here is pinned by SHA-256 and checked, but the check and the use are
-/// two separate reads of the same path: `/tmp/voicecast-piper-downloads` can
+/// two separate reads of the same path: `/tmp/clispeak-piper-downloads` can
 /// be created in advance by another local user, who can then swap the archive
 /// between the two. `curl --output` would also write straight through a
 /// planted symlink. What comes out is installed as `piper`, a binary this
@@ -512,13 +512,13 @@ pub fn user_root() -> Result<PathBuf> {
     // Windows has no HOME, and the equivalent is not under one either.
     if cfg!(windows) {
         let local = std::env::var_os("LOCALAPPDATA").context("no LOCALAPPDATA")?;
-        return Ok(PathBuf::from(local).join("voicecast"));
+        return Ok(PathBuf::from(local).join("clispeak"));
     }
     let home = std::env::var_os("HOME").context("no HOME")?;
     let home = PathBuf::from(home);
     Ok(if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/voicecast")
+        home.join("Library/Application Support/clispeak")
     } else {
-        home.join(".local/share/voicecast")
+        home.join(".local/share/clispeak")
     })
 }

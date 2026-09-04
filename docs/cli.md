@@ -1,6 +1,6 @@
 # CLI surface
 
-> Status: draft. The `voicecast` binary is a thin client to the local node — it
+> Status: draft. The `clispeak` binary is a thin client to the local node — it
 > writes to an IPC socket and exits. See `architecture.md`.
 
 ## Design principles
@@ -21,18 +21,18 @@ Whatever the receiver decided is reported back honestly.
 ## Speaking
 
 ```
-voicecast [OPTIONS] [TEXT...]
-voicecast say [OPTIONS] [TEXT...]
+clispeak [OPTIONS] [TEXT...]
+clispeak say [OPTIONS] [TEXT...]
 ```
 
 ```
-$ voicecast "build finished"
-$ voicecast --to pixel "needs your input"
-$ voicecast --to pixel,laptop "deploy is live"
-$ voicecast --to all "coffee"
-$ echo "hello" | voicecast
-$ cat CHANGELOG.md | voicecast --strip --to laptop
-$ voicecast -f notes.md --to desk
+$ clispeak "build finished"
+$ clispeak --to pixel "needs your input"
+$ clispeak --to pixel,laptop "deploy is live"
+$ clispeak --to all "coffee"
+$ echo "hello" | clispeak
+$ cat CHANGELOG.md | clispeak --strip --to laptop
+$ clispeak -f notes.md --to desk
 ```
 
 Text comes from arguments, or stdin when arguments are absent. Both are the
@@ -46,20 +46,20 @@ error says so rather than offering `--strip` as advice that cannot work.
 
 **Flags go before the text.** Speech legitimately starts with a hyphen, so the
 text argument takes everything after it, a real flag included:
-`voicecast hello --to Phone` speaks nothing and fails, because "--to" and
+`clispeak hello --to Phone` speaks nothing and fails, because "--to" and
 "Phone" were read as words. The error names the flag and prints the corrected
 command, which can be run as printed.
 
 ### The subcommand collision
 
-`voicecast stop` is ambiguous: speak the word "stop", or stop playback? The rule:
+`clispeak stop` is ambiguous: speak the word "stop", or stop playback? The rule:
 
 **A first argument that exactly matches a subcommand name is treated as a
 subcommand.** To speak such a word, be explicit:
 
 ```
-$ voicecast say stop
-$ voicecast -- stop
+$ clispeak say stop
+$ clispeak -- stop
 ```
 
 Multi-word text never collides. This only affects single bare words that
@@ -79,9 +79,9 @@ happen to be reserved.
 Groups are purely local config — they never appear in the protocol:
 
 ```
-$ voicecast group set phones pixel,iphone
-$ voicecast group set loud desk,laptop
-$ voicecast groups
+$ clispeak group set phones pixel,iphone
+$ clispeak group set loud desk,laptop
+$ clispeak groups
 ```
 
 ## Options
@@ -123,32 +123,32 @@ meaningless the first time an agent marks everything urgent.
 ## Control
 
 ```
-$ voicecast stop                  # stop current message, clear queue, all targets
-$ voicecast stop --to pixel       # just that device
-$ voicecast stop --id m_8fk2p     # one specific message, wherever it is
-$ voicecast skip                  # abandon current, continue with the queue
-$ voicecast pause
-$ voicecast resume
-$ voicecast queue                 # what's pending here. Local only: no --to
+$ clispeak stop                  # stop current message, clear queue, all targets
+$ clispeak stop --to pixel       # just that device
+$ clispeak stop --id m_8fk2p     # one specific message, wherever it is
+$ clispeak skip                  # abandon current, continue with the queue
+$ clispeak pause
+$ clispeak resume
+$ clispeak queue                 # what's pending here. Local only: no --to
 ```
 
 Every send returns a message ID, which is what `--id` addresses.
 
 ## Feedback
 
-By default `voicecast` exits as soon as the local node accepts the message. This is
+By default `clispeak` exits as soon as the local node accepts the message. This is
 the fast path, and it tells you nothing about whether anything was actually
 spoken.
 
 ```
-$ voicecast --to pixel "done"
+$ clispeak --to pixel "done"
 m_8fk2p
 ```
 
 With `--wait`, it blocks for terminal state on every target:
 
 ```
-$ voicecast --to all --wait "deploy finished"
+$ clispeak --to all --wait "deploy finished"
   desk      spoken     3.2s
   laptop    spoken     3.4s
   pixel     spoken     3.1s
@@ -212,7 +212,7 @@ The case that is *not* refused is this device's own name. It wins outright —
 your own machine is what you meant — but the peers it beat are reported:
 
 ```
-$ voicecast --to laptop "deploying"
+$ clispeak --to laptop "deploying"
   laptop           spoken       (this device's own name was used; 1 other device
                                  also answers to it and was not sent to: a37d705ec0f61d92)
 ```
@@ -263,21 +263,21 @@ it and send the parts.
 `devices` prints a name, the first sixteen characters of the endpoint id, the
 space when a device is in more than the default one, and a marker on this
 machine. It does not print when a device was last seen, which the wire has
-always carried: `voicecast devices --json` has it as `last_seen_secs`, and
+always carried: `clispeak devices --json` has it as `last_seen_secs`, and
 that is the field to read when something reports `unreachable`.
 
 ```
-$ voicecast devices                    # name, short id, space, which one is here
-$ voicecast invite                     # QR + ticket to add a device
-$ voicecast invite | pbcopy            # the ticket alone, for pasting over SSH
-$ voicecast preview <ticket>           # what that invite would join
-$ voicecast join <ticket>              # join a space from this device
-$ voicecast join <ticket> --name home  # ...calling it something else here
-$ voicecast invite --space work        # invite into a named space
-$ voicecast revoke <name>
-$ voicecast revoke <name> --space work
-$ voicecast rename <new>                 # this device's own label
-$ voicecast status                     # this node: identity, engine, queue
+$ clispeak devices                    # name, short id, space, which one is here
+$ clispeak invite                     # QR + ticket to add a device
+$ clispeak invite | pbcopy            # the ticket alone, for pasting over SSH
+$ clispeak preview <ticket>           # what that invite would join
+$ clispeak join <ticket>              # join a space from this device
+$ clispeak join <ticket> --name home  # ...calling it something else here
+$ clispeak invite --space work        # invite into a named space
+$ clispeak revoke <name>
+$ clispeak revoke <name> --space work
+$ clispeak rename <new>                 # this device's own label
+$ clispeak status                     # this node: identity, engine, queue
 ```
 
 `status` names the engine, and when the engine cannot speak it says why on the
@@ -285,8 +285,8 @@ line below rather than leaving the reader to guess from a word:
 
 ```
 engine:  unavailable  (fallback)
-         Piper is not installed in any of: ~/Library/Application Support/voicecast,
-         /app/share/voicecast, /usr/share/voicecast
+         Piper is not installed in any of: ~/Library/Application Support/clispeak,
+         /app/share/clispeak, /usr/share/clispeak
 ```
 
 The node has always known that sentence — it reaches whoever *sends* a message
@@ -297,14 +297,14 @@ When the CLI cannot reach a node at all it says what it found and stops short
 of saying why:
 
 ```
-$ voicecast status
-error: nothing is listening for voicecast
+$ clispeak status
+error: nothing is listening for clispeak
 
 The node may not be running, or may not have finished starting.
 On macOS it does not bind until the keychain prompt is answered,
 which returns after every update — look for a dialog behind the app.
 
-start one with: voicecastd, or open the voicecast app
+start one with: clispeakd, or open the clispeak app
 ```
 
 Exit code 5 either way. The macOS lines appear only on macOS: naming a dialog
@@ -319,11 +319,11 @@ space is written into the ticket when the invite is minted, so `join` on its
 own is a command whose effect you cannot see until it has happened:
 
 ```
-$ voicecast preview voicecast://join/AE7Q...
+$ clispeak preview clispeak://join/AE7Q...
 joins 'work'
 From 3332cac4fca203fa
 Expires in 4m 12s. Single use.
-Join it with:  voicecast join <the same code>
+Join it with:  clispeak join <the same code>
 ```
 
 It is local. No device is contacted, the single-use token is not spent, and
@@ -345,17 +345,17 @@ for.
 A device can belong to several spaces at once, kept fully separate.
 
 ```
-$ voicecast space list
+$ clispeak space list
   work             3   devices
   home             4   devices  (default)
 
-$ voicecast space new home           # found a new space from this device
-$ voicecast leave --space work       # tell the others, then remove it here
+$ clispeak space new home           # found a new space from this device
+$ clispeak leave --space work       # tell the others, then remove it here
                                # warns if you are the last member
-$ voicecast space default home       # which space bare target names resolve in
-$ voicecast space rename work team   # local label only
-$ voicecast space rotate             # new space, re-invite survivors (see below)
-                               # also spelled `voicecast rotate`
+$ clispeak space default home       # which space bare target names resolve in
+$ clispeak space rename work team   # local label only
+$ clispeak space rotate             # new space, re-invite survivors (see below)
+                               # also spelled `clispeak rotate`
 ```
 
 Leaving works offline: the local roster is dropped immediately, and the signed
@@ -368,7 +368,7 @@ the revoke will still honor the revoked member until it syncs. When that
 window matters — a stolen phone rather than a sold laptop — rotate instead:
 
 ```
-$ voicecast space rotate
+$ clispeak space rotate
   Created a replacement for 'home'.
   Re-invite surviving devices:  desk, laptop, ipad
 ```
@@ -388,17 +388,17 @@ Bare names resolve in the **default space**. Qualify with `space/device` to
 reach anywhere else:
 
 ```
-$ voicecast --to pixel "..."            # default space
-$ voicecast --to work/laptop "..."      # explicit
-$ voicecast --to work/all "..."         # every device in one space
-$ voicecast --to work/all,home/all      # both, spelled out
+$ clispeak --to pixel "..."            # default space
+$ clispeak --to work/laptop "..."      # explicit
+$ clispeak --to work/all "..."         # every device in one space
+$ clispeak --to work/all,home/all      # both, spelled out
 ```
 
 A bare name resolves in the default space when it exists there, and otherwise
 anywhere it is unique. Ambiguity is an error, never a guess:
 
 ```
-$ voicecast --to laptop "..."
+$ clispeak --to laptop "..."
   error: 'laptop' exists in 2 spaces (work, home)
          qualify it:  work/laptop  or  home/laptop
 ```
@@ -425,11 +425,11 @@ spoken**. A message refused while the device was muted or in quiet hours is
 the one worth keeping: it is the only record that it came at all.
 
 ```
-$ voicecast history                    # recent messages, newest first
-$ voicecast history --unheard          # only the ones never spoken
-$ voicecast history -n 100
-$ voicecast history --clear
-$ voicecast replay <msg-id>            # speak it again, here
+$ clispeak history                    # recent messages, newest first
+$ clispeak history --unheard          # only the ones never spoken
+$ clispeak history -n 100
+$ clispeak history --clear
+$ clispeak replay <msg-id>            # speak it again, here
 ```
 
 `replay` plays **through** mute and quiet hours. Those settings exist to stop
@@ -457,20 +457,20 @@ Volume is not implemented at any level yet.
 ### Mute and quiet hours
 
 ```
-$ voicecast mute                       # this device: silent until unmuted
-$ voicecast unmute
-$ voicecast quiet 22:00-07:00          # this device, every day
-$ voicecast quiet 22:00-07:00 --high   # let urgent messages through
-$ voicecast quiet off
-$ voicecast quiet                      # show what is set, changing nothing
+$ clispeak mute                       # this device: silent until unmuted
+$ clispeak unmute
+$ clispeak quiet 22:00-07:00          # this device, every day
+$ clispeak quiet 22:00-07:00 --high   # let urgent messages through
+$ clispeak quiet off
+$ clispeak quiet                      # show what is set, changing nothing
 ```
 
 Each takes `--space` to act on one space instead of the whole device:
 
 ```
-$ voicecast mute --space work          # work goes quiet here; nothing else does
-$ voicecast quiet 18:00-09:00 --space work
-$ voicecast unmute --space work
+$ clispeak mute --space work          # work goes quiet here; nothing else does
+$ clispeak quiet 18:00-09:00 --space work
+$ clispeak unmute --space work
 ```
 
 Note the asymmetry with `revoke`, `leave` and `rotate`, where omitting
@@ -490,7 +490,7 @@ device's own quiet hours off and set a window on `work` alone.
 device originates is not *in* a space, so muting `work` does not silence an
 agent running here; muting the device does.
 
-`voicecast quiet` with nothing set prints the device policy first, then one
+`clispeak quiet` with nothing set prints the device policy first, then one
 block per space that restricts something:
 
 ```
@@ -503,7 +503,7 @@ work (on top of the above)
 
 ## Config
 
-`~/.config/voicecast/` (XDG; platform equivalents elsewhere).
+`~/.config/clispeak/` (XDG; platform equivalents elsewhere).
 
 ```toml
 # config.toml
@@ -511,7 +511,7 @@ default_target = "here"
 default_priority = "normal"
 # There is no `default_space` here. Which space bare names resolve in is
 # state the node holds, not a client setting, because every device in the
-# space has to agree: set it with `voicecast space default <name>`.
+# space has to agree: set it with `clispeak space default <name>`.
 
 [groups]
 phones = ["pixel", "iphone"]
@@ -526,12 +526,12 @@ by the node, not hand-edited.
 The shape this is all built around:
 
 ```bash
-voicecast --to phones "Claude needs your input on the migration plan"
+clispeak --to phones "Claude needs your input on the migration plan"
 ```
 
 Fire-and-forget, a few milliseconds, no blocking. When the agent needs to know
 it landed:
 
 ```bash
-voicecast --to phones --wait --json "deploy finished" | jq -r '.targets[].status'
+clispeak --to phones --wait --json "deploy finished" | jq -r '.targets[].status'
 ```

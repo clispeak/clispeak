@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use std::path::{Path, PathBuf};
 
 /// Crates that must stay portable across all five targets.
-const PORTABLE: &[&str] = &["voicecast-proto", "voicecast-text", "voicecast-core"];
+const PORTABLE: &[&str] = &["clispeak-proto", "clispeak-text", "clispeak-core"];
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -109,7 +109,7 @@ fn cargo() -> std::ffi::OsString {
 /// Every spelling of "this code is for one platform".
 ///
 /// The gate checked two of these and printed "3 crates clean", which was a
-/// stronger sentence than it had earned: `cfg(unix)` sat in `voicecast-core`
+/// stronger sentence than it had earned: `cfg(unix)` sat in `clispeak-core`
 /// the whole time and was never mentioned. The forms that matter are the ones
 /// that change what compiles, and `cfg(unix)` with no `cfg(windows)` arm
 /// compiles on four targets and fails on the fifth — which is the exact shape
@@ -202,10 +202,10 @@ fn portability() -> anyhow::Result<()> {
             eprintln!("{f}");
         }
         eprintln!();
-        eprintln!("Move it to voicecast-engine or the Tauri shell. If it genuinely");
+        eprintln!("Move it to clispeak-engine or the Tauri shell. If it genuinely");
         eprintln!("cannot be expressed portably, say why on the line above:");
         eprintln!("  // {EXCEPTION} <the reason there is no portable spelling>");
-        anyhow::bail!("platform code belongs in voicecast-engine or the Tauri shell");
+        anyhow::bail!("platform code belongs in clispeak-engine or the Tauri shell");
     }
 
     frontend_dialogs()?;
@@ -333,8 +333,8 @@ fn frontend_dialogs() -> anyhow::Result<()> {
 /// Fail if a class Rust looks up over JNI has no ProGuard keep rule.
 ///
 /// R8 runs on release builds only, and it decides what to delete by looking
-/// for callers. `voicecast-engine` reaches its Kotlin by *name* —
-/// `find_class("com/voicecast/app/Speech")` — which no static analysis can
+/// for callers. `clispeak-engine` reaches its Kotlin by *name* —
+/// `find_class("org/clispeak/app/Speech")` — which no static analysis can
 /// see, so R8 renamed the class and the release APK died on launch with
 /// `NoSuchMethodError` while the debug APK, which does not minify, was fine.
 ///
@@ -346,14 +346,14 @@ fn frontend_dialogs() -> anyhow::Result<()> {
 /// out from a crash report. Comments are skipped so this file's own
 /// explanation cannot satisfy the rule it enforces.
 fn jni_keep_rules() -> anyhow::Result<usize> {
-    let sources = PathBuf::from("crates/voicecast-engine/src");
+    let sources = PathBuf::from("crates/clispeak-engine/src");
     let rules = PathBuf::from("app/src-tauri/gen/android/app/proguard-rules.pro");
     let Ok(text) = std::fs::read_to_string(&rules) else {
         // Not a checkout with an Android project in it; nothing to say.
         return Ok(0);
     };
 
-    // What the rules already cover, as `com.voicecast.app.Speech`.
+    // What the rules already cover, as `org.clispeak.app.Speech`.
     let kept: Vec<String> = text
         .lines()
         .map(str::trim)
@@ -405,7 +405,7 @@ fn jni_keep_rules() -> anyhow::Result<usize> {
 /// Assembled rather than written literally so this file does not contain the
 /// pattern it searches for, which would make the gate find itself.
 const QUOTE: char = '"';
-const NEEDLE: &str = "\"com/voicecast/";
+const NEEDLE: &str = "\"org/clispeak/";
 
 /// Every `.rs` file under `dir`, recursively.
 /// Files allowed to contain what looks like a conflict marker.

@@ -70,8 +70,8 @@ prompts for passwords that should not exist in any transcript.
 
 ```bash
 keytool -genkeypair -v \
-  -keystore ~/voicecast-release.jks \
-  -alias voicecast \
+  -keystore ~/clispeak-release.jks \
+  -alias clispeak \
   -keyalg RSA -keysize 4096 \
   -validity 10000 \
   -storetype PKCS12
@@ -91,8 +91,8 @@ be a joke, because they cannot be changed later either.
 Then check it took:
 
 ```console
-$ keytool -list -v -keystore ~/voicecast-release.jks -alias voicecast
-Alias name: voicecast
+$ keytool -list -v -keystore ~/clispeak-release.jks -alias clispeak
+Alias name: clispeak
 Certificate fingerprints:
          SHA256: A1:B2:...
 ```
@@ -135,9 +135,9 @@ absent and the build comes out unsigned with nothing said about it. Confirmed
 by putting it in both places and asking Gradle which it saw.
 
 ```properties
-storeFile=/home/inpsight/voicecast-release.jks
+storeFile=/home/inpsight/clispeak-release.jks
 storePassword=…
-keyAlias=voicecast
+keyAlias=clispeak
 keyPassword=…
 ```
 
@@ -167,8 +167,8 @@ The quickest way to ask Gradle directly, without building anything:
 $ ./gradlew :app:signingReport
 Variant: universalRelease
 Config: release
-Store: /home/inpsight/voicecast-release.jks
-Alias: voicecast
+Store: /home/inpsight/clispeak-release.jks
+Alias: clispeak
 ```
 
 `Config: null` means the file was not found or `storeFile` was missing from
@@ -184,13 +184,13 @@ exactly as the macOS job does with its three:
 |---|---|
 | `ANDROID_KEYSTORE` | the `.jks`, base64-encoded |
 | `ANDROID_KEYSTORE_PASSWORD` | the store password |
-| `ANDROID_KEY_ALIAS` | `voicecast` |
+| `ANDROID_KEY_ALIAS` | `clispeak` |
 | `ANDROID_KEY_PASSWORD` | the key password (often the same as the store password) |
 
 To produce the first one:
 
 ```bash
-base64 -w0 ~/voicecast-release.jks > keystore.b64
+base64 -w0 ~/clispeak-release.jks > keystore.b64
 ```
 
 Then in the repository: **Settings → Secrets and variables → Actions → New
