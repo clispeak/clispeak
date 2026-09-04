@@ -222,16 +222,29 @@ impl Roster {
     /// founder's entry is self-signed, so admitting it into an empty roster
     /// would be impossible. Trust for the whole set comes from the invite
     /// ticket that led here, not from each record individually.
-    pub fn adopt(members: impl IntoIterator<Item = Member>) -> Self {
+    ///
+    /// **Returns what it threw away as well as what it kept**, and the
+    /// caller has to name it to ignore it. This used to drop an unverifiable
+    /// record with nothing said, which is how the rename of decision 83 cost
+    /// a day: the signing domain separator changed, every record a peer sent
+    /// failed to verify, all of them were discarded, and the device reported
+    /// *"joined space, 1 of 1 device"* — a true sentence about a roster that
+    /// had just had everything thrown out of it. Being sent nothing and
+    /// discarding everything looked identical from both ends (#145).
+    pub fn adopt(members: impl IntoIterator<Item = Member>) -> (Self, Vec<RosterError>) {
         // The id is derived by the caller once members are in place: it is a
         // function of the founder's entry, which does not exist yet here.
         let mut roster = Self::new();
+        let mut rejected = Vec::new();
         for member in members {
-            if verify(&member).is_ok() {
-                roster.members.insert(member.endpoint_id.clone(), member);
+            match verify(&member) {
+                Ok(()) => {
+                    roster.members.insert(member.endpoint_id.clone(), member);
+                }
+                Err(e) => rejected.push(e),
             }
         }
-        roster
+        (roster, rejected)
     }
 
     /// Leave the space, keeping only this device.
@@ -244,13 +257,18 @@ impl Roster {
     }
 
     /// Rebuild a roster from a peer's snapshot, verifying every signature.
-    pub fn from_parts(members: Vec<Member>, revoked: Vec<(String, u64)>) -> Self {
-        let mut roster = Self::adopt(members);
+    ///
+    /// Reports the records it refused, for the reason in [`Roster::adopt`].
+    pub fn from_parts(
+        members: Vec<Member>,
+        revoked: Vec<(String, u64)>,
+    ) -> (Self, Vec<RosterError>) {
+        let (mut roster, rejected) = Self::adopt(members);
         roster.id = roster.derived_id();
         for (id, at) in revoked {
             roster.revoked.insert(id, at);
         }
-        roster
+        (roster, rejected)
     }
 
     /// Revocations, for sending to a peer.
@@ -281,6 +299,17 @@ impl Roster {
         }
         self.members.insert(member.endpoint_id.clone(), member);
         Ok(())
+    }
+
+    /// Whether this roster holds a current entry for an id.
+    ///
+    /// Separate from [`Roster::allows`] because that one takes a parsed key,
+    /// and the commonest question — "did my own record survive this?" — is
+    /// asked with the string the caller already has.
+    pub fn holds(&self, endpoint_id: &str) -> bool {
+        self.members
+            .get(endpoint_id)
+            .is_some_and(|m| self.is_current(m))
     }
 
     /// Whether this endpoint may speak on this device.
@@ -336,6 +365,11 @@ impl Roster {
         }
     }
 
+    /// The label this roster holds for an id, if it holds one at all.
+    pub fn name_of(&self, endpoint_id: &str) -> Option<&str> {
+        self.members.get(endpoint_id).map(|m| m.name.as_str())
+    }
+
     /// Look up a member by its local label.
     pub fn by_name(&self, name: &str) -> Option<&Member> {
         self.members
@@ -389,6 +423,9 @@ impl Roster {
             *entry = (*entry).max(at);
         }
         for (id, member) in &other.members {
+            // Not reported, unlike `adopt`: every roster that reaches here
+            // has already been through `from_parts`, which says what it
+            // refused, so a second message would name the same record twice.
             if verify_at(member, now).is_err() {
                 continue;
             }

@@ -3342,3 +3342,81 @@ without giving up what the pinning was for.
 being written: `pointer-events-auto` computed as `none` because `styles.css`
 was stale, which is the generated-CSS trap `CLAUDE.md` warns about, caught
 here only because this probe asserts a computed style rather than behaviour.
+
+## 85. A join that discards everything is not a join
+
+Decision 83 ended with a note that `adopt` deserved half the blame, filed as
+#145. This is that half, and a second silence found beside it.
+
+**What `adopt` did.** It verified each record and inserted the ones that
+checked out. A record that did not verify was dropped with nothing said —
+which is correct behaviour and no report. When the rename changed the signing
+domain separator, a peer sent three members, all three were refused, and the
+device announced *"joined space, 1 of 1 device"*. Both ends were internally
+consistent and neither could explain the other, because neither had noticed
+anything happen. **Discarding everything and being sent nothing are spelled
+the same way.**
+
+**The decision: make the caller name the discards.** `adopt` and `from_parts`
+now return `(Roster, Vec<RosterError>)`. Not a log line inside them — a
+returned value, so ignoring it is `.0` or a `let (_, _)`, which is a thing
+somebody wrote on purpose rather than a thing nobody thought about. The node
+prints what was refused and why on both paths that take one, a join and a
+roster sync.
+
+**And a join that kept no record of this device now fails.** `do_join` asks
+whether the roster it just built holds `me`; if it does not, the join errors
+rather than reporting a membership that does not exist. The message counts
+what was offered and what was refused, and when every refusal is a signature
+it says what that means — two devices on different builds — because that is
+the one diagnosis nobody can reach from the evidence without being told.
+
+The other end has already recorded the membership by then, so the two devices
+disagree about whether the join happened. That is the same disagreement as
+before; the difference is that now exactly one of them says so, and it is the
+one in front of the person.
+
+`merge` still drops quietly, deliberately: every roster reaching it has been
+through `from_parts` already, so a second report would name the same record
+twice.
+
+**Costs.** A signature change in a public API, and four call sites in tests
+that now say `.0`. Cheap against a day.
+
+## 86. A device is called one thing, in every space, on every start
+
+Issue #147, seen on a phone: **Settings → This device** said `Phone` while
+**Spaces → main** said `Android phone`, seconds apart, on a fresh identity.
+The laptop agreed with Settings. So the roster entry a device held *for
+itself* carried a different name from the one it advertised to everyone else,
+and the device — the authority on its own name — was the one that had it
+wrong.
+
+The cause was never reproduced. Two defects in the startup reconciliation
+were, and either produces exactly this:
+
+- It ran on `current_mut()` — **the default space only**. A device in two
+  spaces was corrected in one of them. This is the same "every space, not
+  just the default" bug that `rename` carries a comment about having already
+  fixed once, made again in the other place that touches the same field.
+- It was **skipped entirely on a migrating start**. The branch that saves a
+  freshly migrated `spaces.cbor` returned before the reconciliation, so a
+  device coming through the legacy-roster migration kept whatever name that
+  roster held while advertising whatever `device_name()` said.
+
+**The decision: `adopt_own_name` runs on every start, over every space, and
+says when it had to correct one.** `device_name()` is what the last rename
+wrote down, what every join request carries and what `--to` matches, so a
+roster entry disagreeing with it is stale by definition. The direction is not
+new — `rename` has always pushed the file's answer into the rosters — it is
+now applied where a device gets its second chance to notice.
+
+The announcement matters as much as the correction. This was found by a
+screenshot and could not be reproduced from one; a line naming both strings
+turns the next occurrence into evidence.
+
+**Costs.** A device whose name file is lost while its rosters survive would
+adopt the fallback name rather than keeping the good one. Both live in the
+same directory and move together through the migration allowlist, so that is
+a directory half-deleted — and a device that cannot read its own name is
+already wrong on the settings screen and in every join request it sends.

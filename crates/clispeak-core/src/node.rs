@@ -28,6 +28,7 @@ use crate::history::{Entry, History};
 use crate::ipc::{read_frame, socket_name, write_frame};
 use crate::policy::{self, Policies};
 use crate::queue::{Job, Speaker, words_in};
+use crate::roster::RosterError;
 use crate::spaces::Spaces;
 use crate::transport::{read_msg, write_msg};
 use crate::{Identity, Roster, Ticket, Transport};
@@ -139,6 +140,49 @@ pub struct Node {
     transport: Arc<Transport>,
 }
 
+/// Make this device's own roster entries agree with the name it advertises.
+///
+/// A device is the authority on its own name, and this is where that stops
+/// being a claim: `device_name()` is what the last rename wrote down and what
+/// every join request and every `--to` match uses, so any roster entry
+/// disagreeing with it is stale by definition and is brought into line here.
+/// Returns whether anything moved, so the caller knows to save.
+///
+/// **Every space, and on every start, including a migrating one.** It used to
+/// be the current space only, and to be skipped entirely on the start that
+/// migrated a legacy roster — so a device could hold a space calling it one
+/// thing while its own settings screen, its join requests and every peer
+/// called it another, with nothing to say which was right (#147). That is the
+/// same "not just the default one" mistake `rename` already carries a comment
+/// about, made once more in the one place a device gets a second chance to
+/// notice.
+///
+/// The correction is announced when it has to make one. The disagreement has
+/// been seen on a real phone and never reproduced; a line naming both strings
+/// is what turns the next occurrence into evidence instead of a screenshot.
+fn adopt_own_name(spaces: &mut Spaces, me: &str, name: &str) -> bool {
+    let mut changed = false;
+    for id in spaces.ids() {
+        let label = spaces.label(&id).to_string();
+        let Some(roster) = spaces.get_mut(&id) else {
+            continue;
+        };
+        let was = roster.name_of(me).map(str::to_string);
+        if roster.rename(me, name) {
+            if let Some(was) = was {
+                eprintln!(
+                    "{label}: this device was recorded as {was:?}, but it is called \
+                     {name:?} — corrected"
+                );
+            }
+            changed = true;
+        } else if roster.stamp_own_label(me) {
+            changed = true;
+        }
+    }
+    changed
+}
+
 impl Node {
     /// Start a node with the given engine, identity and transport.
     pub async fn new(
@@ -163,23 +207,17 @@ impl Node {
         let mut spaces = Spaces::load(&spaces_path, &legacy).context("loading spaces")?;
         // A device is always a member of its own space, even before anyone
         // else joins — otherwise it could not speak to itself.
-        if spaces.ids().is_empty() {
+        let founding = spaces.ids().is_empty();
+        if founding {
             spaces.insert(Roster::found(identity.secret(), &name), "main");
-            spaces.save(&spaces_path).context("saving spaces")?;
-        } else if migrating {
-            spaces.save(&spaces_path).context("saving spaces")?;
-        } else if spaces
-            .current_mut()
-            .rename(&identity.id().to_string(), &name)
-            || spaces
-                .current_mut()
-                .stamp_own_label(&identity.id().to_string())
-        {
-            // Two reasons to rewrite: the label changed, or it predates the
-            // `renamed_at` stamp. Rosters written before that field existed
-            // deserialize it as zero, and a merge comparing 0 > 0 keeps the
-            // stale copy forever — so an unstamped entry is stamped once, on
-            // the device that owns it.
+        }
+        // Two reasons to rewrite beyond that: the label changed, or it
+        // predates the `renamed_at` stamp. Rosters written before that field
+        // existed deserialize it as zero, and a merge comparing 0 > 0 keeps
+        // the stale copy forever — so an unstamped entry is stamped once, on
+        // the device that owns it.
+        let corrected = adopt_own_name(&mut spaces, &identity.id().to_string(), &name);
+        if founding || migrating || corrected {
             spaces.save(&spaces_path).context("saving spaces")?;
         }
 
@@ -1967,7 +2005,9 @@ async fn merge_from_peer(
     revoked: Vec<(String, u64)>,
 ) -> Result<()> {
     let mut spaces = shared.spaces.lock().await;
-    let theirs = Roster::from_parts(members, revoked);
+    let offered = members.len();
+    let (theirs, rejected) = Roster::from_parts(members, revoked);
+    report_rejected("roster sync", offered, &rejected);
     let Some(roster) = spaces.get_mut(space) else {
         return Ok(());
     };
@@ -2097,6 +2137,59 @@ fn preview(raw: &str) -> Response {
     }
 }
 
+/// Say what a roster exchange threw away.
+///
+/// Silence here is what made decision 83 cost a day: three records arrived,
+/// three were discarded, and the only thing said afterwards was that the
+/// join had worked. A refusal is cheap to print and it names the record and
+/// the reason, so the next mismatch is one line of output rather than a
+/// day (#145).
+fn report_rejected(what: &str, offered: usize, rejected: &[RosterError]) {
+    if rejected.is_empty() {
+        return;
+    }
+    eprintln!(
+        "{what}: {} of {offered} membership records were refused",
+        rejected.len()
+    );
+    for e in rejected {
+        eprintln!("  {e}");
+    }
+}
+
+/// Why a join the other device accepted still failed here.
+///
+/// Written for whoever reads it, which is why it names the count on both
+/// sides and offers the fix rather than the diagnosis: a run of refused
+/// signatures is what two devices on different builds look like from this
+/// end, and it is indistinguishable from anything else without knowing that.
+fn join_verification_failed(offered: usize, rejected: &[RosterError]) -> String {
+    let Some(first) = rejected.first() else {
+        return "the other device accepted this join but sent no membership record for \
+                this device, so there is nothing here to be a member with. Show a new \
+                invite there and try again"
+            .to_string();
+    };
+    let kept = offered.saturating_sub(rejected.len());
+    let mut why = format!(
+        "the other device accepted this join, but this device's own membership record \
+         did not verify here: {} of {offered} records were refused and {kept} kept. \
+         First: {first}",
+        rejected.len()
+    );
+    if rejected
+        .iter()
+        .all(|e| matches!(e, RosterError::BadSignature(_)))
+    {
+        why.push_str(
+            ". Every one failed on its signature, which is what two devices running \
+             different builds look like from here: put both on the same version and \
+             pair again",
+        );
+    }
+    why
+}
+
 async fn do_join(
     shared: &Arc<Shared>,
     transport: &Arc<Transport>,
@@ -2133,8 +2226,19 @@ async fn do_join(
             // already belong to. Replacing was right when a device could hold
             // one space and became wrong the moment it could hold several: a
             // device in `home` that joined `work` lost `home`.
-            let all = members.into_iter().chain(std::iter::once(member));
-            let mut joined = Roster::from_parts(all.collect(), Vec::new());
+            let all: Vec<Member> = members.into_iter().chain(std::iter::once(member)).collect();
+            let offered = all.len();
+            let (mut joined, rejected) = Roster::from_parts(all, Vec::new());
+            report_rejected("join", offered, &rejected);
+            // A join that kept no record of *us* is not a join, whatever the
+            // other end said. This is the check that was missing when the
+            // signing domain separator changed under decision 83: both
+            // devices agreed the join had succeeded, and the roster it
+            // produced was empty (#145).
+            let me = shared.identity.id().to_string();
+            if !joined.holds(&me) {
+                anyhow::bail!("{}", join_verification_failed(offered, &rejected));
+            }
             // The inviter has already told us what this space is called, and
             // its answer beats the one derived here — see `adopt_id`.
             if let Some(agreed) = agreed.as_deref() {
@@ -2157,7 +2261,6 @@ async fn do_join(
             // Displacing that is what `replace_current` was written for, and
             // it stops a fresh device ending up with an abandoned space
             // beside the one it just joined.
-            let me = shared.identity.id().to_string();
             // What to call it here. The joiner's choice first, then the name
             // the inviter uses — live from the reply, which beats the ticket's
             // copy if the space was renamed after the invite was minted — then
@@ -3146,7 +3249,51 @@ fn new_msg_id() -> String {
 #[cfg(test)]
 mod tests {
 
-    use super::{MAX_MESSAGE_CHARS, accept_chunk, name_objection};
+    use super::{MAX_MESSAGE_CHARS, accept_chunk, adopt_own_name, name_objection};
+
+    /// Issue #147: a device that disagrees with itself about its own name.
+    ///
+    /// Seen on a phone whose settings screen said one thing and whose space
+    /// list said another, seconds apart, with the laptop agreeing with the
+    /// settings screen. The cause was never reproduced; what is fixed here is
+    /// that the disagreement no longer survives a restart, in any space, and
+    /// no longer passes unremarked.
+    #[test]
+    fn this_device_is_called_the_same_thing_in_every_space() {
+        use crate::spaces::Spaces;
+        use iroh_base::SecretKey;
+
+        let secret = SecretKey::from_bytes(&[7; 32]);
+        let host = SecretKey::from_bytes(&[8; 32]);
+        let me = secret.public().to_string();
+
+        let mut spaces = Spaces::default();
+        spaces.insert(crate::Roster::found(&secret, "Android phone"), "main");
+        // A second space, joined rather than founded — which is the ordinary
+        // way a device ends up in two, and the one the old code left alone
+        // because it reconciled the current space and nothing else.
+        let mut joined = crate::Roster::found(&host, "Laptop");
+        joined.invite(&host, &me, "Android phone");
+        spaces.insert(joined, "work");
+        assert_eq!(spaces.ids().len(), 2, "two spaces, one device");
+
+        assert!(
+            adopt_own_name(&mut spaces, &me, "Phone"),
+            "a disagreement is a change"
+        );
+        for id in spaces.ids() {
+            assert_eq!(
+                spaces.get(&id).and_then(|r| r.name_of(&me)),
+                Some("Phone"),
+                "every space, not just the default one"
+            );
+        }
+
+        assert!(
+            !adopt_own_name(&mut spaces, &me, "Phone"),
+            "agreeing already is not a change, and must not force a save"
+        );
+    }
 
     #[test]
     fn a_device_name_that_would_break_a_selector_is_refused() {

@@ -1,6 +1,6 @@
 //! Roster signatures, admission, revocation, and merge convergence.
 
-use clispeak_core::{Member, Roster, verify};
+use clispeak_core::{Member, Roster, RosterError, verify};
 use iroh_base::SecretKey;
 
 fn device() -> SecretKey {
@@ -365,7 +365,13 @@ fn a_record_dated_far_in_the_future_is_refused_everywhere() {
 
     // Nor may it arrive as part of a roster, which is the path a peer
     // actually has: `from_parts` verifies, so the record never lands.
-    let theirs = Roster::from_parts(vec![forged], Vec::new());
+    let (theirs, refused) = Roster::from_parts(vec![forged], Vec::new());
+    // And says so. Dropping it quietly is #145: a roster arriving with
+    // everything in it refused is indistinguishable from an empty one.
+    assert!(
+        matches!(refused.as_slice(), [RosterError::FromTheFuture(_)]),
+        "the refusal has to be reported, and by its reason: {refused:?}"
+    );
     on_alice.merge(&theirs);
     assert!(
         !on_alice.allows(&mallory.public()),
@@ -424,7 +430,7 @@ fn a_far_future_tombstone_evicts_but_does_not_outlast_a_rejoin() {
         .expect("alice vouches for bob");
     assert!(on_alice.allows(&bob.public()));
 
-    let poison = Roster::from_parts(Vec::new(), vec![(bob.public().to_string(), u64::MAX)]);
+    let (poison, _) = Roster::from_parts(Vec::new(), vec![(bob.public().to_string(), u64::MAX)]);
     on_alice.merge(&poison);
     assert!(!on_alice.allows(&bob.public()), "the eviction still lands");
 
@@ -454,7 +460,7 @@ fn an_impossible_rename_stamp_does_not_pin_a_name() {
         .expect("bob is a member")
         .joined_at;
 
-    let pinned = Roster::from_parts(
+    let (pinned, _) = Roster::from_parts(
         vec![signed_at(
             &alice,
             &bob.public().to_string(),
@@ -501,7 +507,7 @@ fn an_id_agreed_with_the_inviter_beats_the_one_derived_here() {
         .filter(|m| m.endpoint_id != alice.public().to_string())
         .cloned()
         .collect();
-    let mut joined = Roster::from_parts(without_founder, Vec::new());
+    let (mut joined, _) = Roster::from_parts(without_founder, Vec::new());
     assert_ne!(
         joined.space_id(),
         agreed,
@@ -516,4 +522,50 @@ fn an_id_agreed_with_the_inviter_beats_the_one_derived_here() {
     // Idempotent, so a second sync does not report a change and force a save.
     assert!(!joined.adopt_id(&agreed));
     assert!(!joined.adopt_id(""), "nothing to adopt is not a change");
+}
+
+#[test]
+fn a_roster_that_discards_everything_says_so() {
+    // Decision 83, as a test. The rename changed the domain separator inside
+    // the signed payload, so every record a peer sent failed to verify, all
+    // of them were dropped, and the join reported success over a roster it
+    // had just emptied. The signature check was right; the silence was the
+    // bug (#145).
+    let alice = device();
+    let bob = device();
+    let carol = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    let good = on_alice.invite(&alice, &bob.public().to_string(), "bob");
+
+    // What a peer on the other side of a domain-separator change sends: a
+    // real key, a real inviter, a signature over something else entirely.
+    let mut stale = good.clone();
+    stale.endpoint_id = carol.public().to_string();
+
+    let (roster, refused) = Roster::adopt(vec![good, stale]);
+
+    assert!(roster.allows(&bob.public()), "the good record still lands");
+    assert!(!roster.allows(&carol.public()));
+    assert!(
+        matches!(refused.as_slice(), [RosterError::BadSignature(id)] if *id == carol.public().to_string()),
+        "the discard has to name the record and the reason: {refused:?}"
+    );
+}
+
+#[test]
+fn a_roster_holds_its_own_members_by_id() {
+    // What `do_join` asks to find out whether the join it was told succeeded
+    // actually produced a membership for this device.
+    let alice = device();
+    let bob = device();
+    let mut roster = Roster::found(&alice, "alice");
+    roster.invite(&alice, &bob.public().to_string(), "bob");
+
+    assert!(roster.holds(&alice.public().to_string()));
+    assert_eq!(roster.name_of(&bob.public().to_string()), Some("bob"));
+    assert!(!roster.holds(&device().public().to_string()));
+
+    roster.revoke(&bob.public().to_string());
+    assert!(!roster.holds(&bob.public().to_string()));
 }
