@@ -12,11 +12,13 @@
 //! ```
 
 mod chunk;
+mod plain;
 mod protect;
 mod strip;
 mod validate;
 
 pub use chunk::{MAX_CHUNK, chunk};
+pub use plain::{plain, plain_lines};
 pub use strip::strip;
 pub use validate::validate;
 
