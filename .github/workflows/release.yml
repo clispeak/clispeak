@@ -282,11 +282,42 @@ jobs:
           P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
           printf '%s' "$P8" | base64 --decode > AuthKey.p8
+
+          # **`--issuer` belongs to Team API keys and must be absent for
+          # Individual ones.** `notarytool` says so in its own help text, and
+          # it is not a detail anybody reads before setting six secrets: the
+          # first real notarisation attempt failed with "must be a valid
+          # UUID" because the value was there and was not one.
+          #
+          # So the flag is passed only when an issuer is present and is
+          # shaped like a UUID, and a value that is present and malformed is
+          # an error rather than something quietly dropped — dropping it
+          # would turn a Team key with a typo into "no issuer", which fails
+          # later and somewhere else.
+          set -- --key AuthKey.p8 --key-id "$KEY_ID"
+          if [ -z "$ISSUER" ]; then
+            echo "no issuer set — submitting as an Individual API key"
+          else
+            case "$ISSUER" in
+              ????????-????-????-????-????????????)
+                set -- "$@" --issuer "$ISSUER"
+                echo "issuer looks like a UUID — submitting as a Team API key"
+                ;;
+              *)
+                echo "::error::APPLE_API_ISSUER is set but is not a UUID." \
+                     "A Team API key needs the Issuer ID from the top of the" \
+                     "App Store Connect Keys page; an Individual API key" \
+                     "needs no issuer at all, and the secret should be" \
+                     "deleted rather than guessed at."
+                exit 1
+                ;;
+            esac
+          fi
+
           # `--wait`, so the job's verdict is the notarisation's verdict
           # rather than "submitted successfully", which is true of a
           # submission Apple later rejects.
-          xcrun notarytool submit signed.dmg \
-            --key AuthKey.p8 --key-id "$KEY_ID" --issuer "$ISSUER" --wait
+          xcrun notarytool submit signed.dmg "$@" --wait
           xcrun stapler staple signed.dmg
           rm -f AuthKey.p8
 
