@@ -1251,10 +1251,17 @@ fn device_names(spaces: &Spaces, own: &str) -> String {
     for id in &ids {
         let roster = spaces.get(id).expect("id came from this map");
         for m in roster.members() {
+            // A member's name is chosen on that device and this is the one
+            // suggestion list that goes inside an error message, which the
+            // CLI now prints with its line breaks intact. Escaped here, where
+            // it is interpolated, and not on the way into the roster — see
+            // decision 38 for why the roster keeps what the peer actually
+            // said (#135).
+            let name = clispeak_text::plain(&m.name);
             names.push(if several {
-                format!("{}/{}", spaces.label(id), m.name)
+                format!("{}/{name}", spaces.label(id))
             } else {
-                m.name.clone()
+                name
             });
         }
     }
@@ -2293,7 +2300,13 @@ async fn do_join(
             spaces.save(&shared.spaces_path)?;
             Ok((count, label))
         }
-        PeerMessage::JoinRefused { reason } => anyhow::bail!("{reason}"),
+        // Free-form text written by the other device, and it ends up inside
+        // an error the CLI now prints with its line breaks intact — so it is
+        // escaped here, where it is interpolated, rather than there, where
+        // our own prose would be escaped with it (#135).
+        PeerMessage::JoinRefused { reason } => {
+            anyhow::bail!("{}", clispeak_text::plain(&reason))
+        }
         other => anyhow::bail!("unexpected reply: {other:?}"),
     }
 }
@@ -2497,6 +2510,12 @@ fn name_objection(name: &str) -> Option<String> {
     if name.contains('/') || name.contains(',') {
         return Some("a device name cannot contain '/' or ','".into());
     }
+    // Before the message below quotes it back. A name is peer-visible text
+    // that ends up in other devices' rosters and in errors printed to an
+    // agent, and the CLI no longer escapes a finished error message (#135).
+    if name.chars().any(char::is_control) {
+        return Some("a device name cannot contain control characters".into());
+    }
     if name.eq_ignore_ascii_case("all") || name.eq_ignore_ascii_case("here") {
         return Some(format!(
             "'{name}' already means something to --to; pick another name"
@@ -2616,7 +2635,17 @@ fn pick_space_label<'a>(
 ) -> String {
     for candidate in wanted.into_iter().flatten() {
         let candidate = candidate.trim();
-        if candidate.is_empty() || candidate.contains('/') || candidate.contains(',') {
+        // The last two come from the other device — a live label in the join
+        // reply, and the ticket's copy — so this is where a peer's string
+        // becomes one of this device's own labels, and the only place that
+        // happens without going through `set_label`. A control character in
+        // one would end up quoted back inside errors the CLI prints with
+        // their line breaks intact (#135).
+        if candidate.is_empty()
+            || candidate.contains('/')
+            || candidate.contains(',')
+            || candidate.chars().any(char::is_control)
+        {
             continue;
         }
         // A name is taken only if some *other* space has it. Counting the
@@ -3202,19 +3231,18 @@ fn pick_device<'a>(
     match (by_name.as_slice(), by_id.as_slice()) {
         ([only], _) => Ok((*only).to_string()),
         (several @ [_, _, ..], _) => {
-            // One line, deliberately. The CLI escapes control characters in
-            // anything a node sends — newlines included — so a message
-            // written across several lines arrives carrying a literal `\n`,
-            // which the sibling error in `resolve` has been doing since it
-            // was written (#135).
+            // Across lines, which it could not be until #135: the CLI escaped
+            // control characters in the whole of anything a node sent,
+            // newlines included, so this arrived as one line with a literal
+            // `\n` in it. One id per line because the next thing to do with
+            // one is paste it back.
             let ids = several
                 .iter()
-                .map(|id| short_id(id))
-                .collect::<Vec<_>>()
-                .join(", ");
+                .map(|id| format!("\n  {}", short_id(id)))
+                .collect::<String>();
             Err(format!(
-                "more than one device is called '{selector}' in this space \
-                 ({ids}). Revoke by id instead: clispeak revoke <id>"
+                "more than one device is called '{selector}' in this space{ids}\n\
+                 Revoke by id instead: clispeak revoke <id>"
             ))
         }
         ([], [only]) => Ok((*only).to_string()),
@@ -3361,9 +3389,10 @@ mod tests {
             e.contains("aaaa1111aaaa1111") && e.contains("bbbb2222bbbb2222"),
             "it must name both candidates: {e}"
         );
-        // The message has to survive the CLI's control-character escaping,
-        // which turns a newline into a literal backslash-n (#135).
-        assert!(!e.contains('\n'), "the message must be one line: {e}");
+        // It says it across lines now, which is what #135 was: the CLI
+        // escaped control characters in the whole of anything a node sent,
+        // so this arrived as one line with a literal backslash-n in it.
+        assert_eq!(e.lines().count(), 4, "an id per line, then the fix: {e}");
 
         assert_eq!(
             super::pick_device(members(), "Laptop").expect("unambiguous"),

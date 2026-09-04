@@ -204,6 +204,13 @@ impl Spaces {
         if label.contains('/') || label.contains(',') {
             return Err("a space name cannot contain '/' or ','".into());
         }
+        // Refused rather than escaped, because a label is chosen here rather
+        // than arriving from a peer, and because every message below puts it
+        // between quotes in prose the CLI now prints with its line breaks
+        // intact (#135).
+        if label.chars().any(char::is_control) {
+            return Err("a space name cannot contain control characters".into());
+        }
         if self.by_label(label).is_some_and(|other| other != id) {
             return Err(format!("there is already a space called '{label}'"));
         }
