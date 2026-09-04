@@ -360,11 +360,21 @@ a file mode would do elsewhere, which is why the node answers *first*: a
 client that spoke first would hand its text to whoever had taken the name.
 
 **What this does not fix.** Another local user can still take the socket name
-before the node does, and that denies service — the node fails to bind, or the
-app decides one is already running. Nothing leaks, because that listener
-cannot prove itself and the CLI refuses it, but the app does not start. The
-fix for that is a socket in a directory only the owner can enter, which
-changes the name-length budget in decision 35 and is not done.
+before the node does, and that denies service — the node cannot bind. Nothing
+leaks, because that listener cannot prove itself and the CLI refuses it, but
+the node does not start. The fix for that is a socket in a directory only the
+owner can enter, which changes the name-length budget in decision 35 and is
+not done.
+
+**It does now say so, which it did not.** Both checks on the way to starting a
+node — the app's "is one already running" and `bind_ipc`'s "is this name
+free" — treated *something answered* as *a node is running*, so a squatter
+produced "another clispeak node is already running" and an app that quietly
+declined to start. The handshake could always tell a squatter from a node, and
+was never asked; `who_is_listening` asks it, before the token is replaced,
+because replacing it destroys the only thing that could identify a node
+already running. A stranger is now named as a stranger, with the reason, and
+with `CLISPEAK_SOCKET` offered as the way round it.
 
 **Anyone who can read the config directory is the owner as far as this is
 concerned.** That is the intended boundary: it is the same directory holding

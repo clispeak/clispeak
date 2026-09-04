@@ -1461,6 +1461,10 @@ async fn start_node() -> anyhow::Result<Node> {
     // endpoint online under the same secret key and a window that looked
     // healthy — the failure only surfaced at `serve()`, by which time the
     // damage was done. Desktop only: a phone has no socket and no CLI.
+    //
+    // False when something *else* holds the socket, on purpose: that is not
+    // another node and this message would be wrong about it. Starting anyway
+    // is what produces the accurate report, from `serve` (#128).
     #[cfg(desktop)]
     if clispeak_core::ipc::node_is_listening().await {
         anyhow::bail!(
