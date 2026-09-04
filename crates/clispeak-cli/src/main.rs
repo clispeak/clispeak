@@ -1488,12 +1488,16 @@ fn first_line(text: &str) -> String {
 /// way and had the same ten seconds.
 /// `clispeak_core::transport::PEER_CONNECT`, duplicated by hand.
 ///
+/// Ninety seconds, and the number came from a measurement rather than a
+/// guess: a real phone answered in 2.1s warm and 58s cold. See the constant
+/// in `clispeak-core` for why a cold phone is the ordinary case here.
+///
 /// This crate depends on `clispeak-proto` and `clispeak-text` and nothing
 /// else, deliberately — it is what keeps startup at ~3ms — so a handful of
 /// constants are kept in step here rather than imported, as the socket name
 /// and the frame format already are. If the node's bound moves, this moves
 /// with it: being *shorter* than the node's is the bug in `patience` above.
-const PEER_CONNECT: std::time::Duration = std::time::Duration::from_secs(20);
+const PEER_CONNECT: std::time::Duration = std::time::Duration::from_secs(90);
 
 fn patience(request: &Request) -> std::time::Duration {
     use std::time::Duration;

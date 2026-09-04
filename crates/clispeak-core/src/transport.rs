@@ -35,16 +35,28 @@ const MAX_FRAME: u32 = 8 * 1024 * 1024;
 /// to an unreachable device reported that the *local* node had never
 /// answered and told the reader to restart a healthy app (#151).
 ///
-/// Twenty seconds: M0 measured a relay-first connection across carrier-grade
-/// NAT completing in about a second, so this is an order of magnitude past
-/// the working case and short enough that an agent is not left holding a
-/// request while a device that is switched off is dialled.
+/// **Ninety seconds, measured rather than reasoned.** This was twenty, chosen
+/// because M0 timed a relay-first connection across carrier-grade NAT at
+/// about a second and twenty looked like an order of magnitude of headroom.
+/// It was headroom over the wrong case.
+///
+/// Measured on 4 September 2026 against a real Android phone: **2.1 and 2.3
+/// seconds warm, and 58 seconds cold** — the first message after the phone
+/// had been idle for hours. A dozing phone is the *ordinary* case for this
+/// project, not an edge one; the whole premise is reaching someone who is
+/// not at their machine. At twenty seconds that first message would have
+/// been reported unreachable to a phone that was about to answer.
+///
+/// Ninety is well past the one cold sample and still a bound. What it costs
+/// is that a device genuinely switched off takes that long to be called
+/// unreachable, which is slow and true — against ten seconds and false,
+/// which is what this replaced (#151, decision 89).
 ///
 /// **Changing it means changing the mirror.** `clispeak-cli` cannot import
 /// this — it depends on `clispeak-proto` and `clispeak-text` only, which is
 /// what keeps its startup at 3ms — so the number is duplicated there by hand
 /// beside a comment naming this constant.
-pub const PEER_CONNECT: std::time::Duration = std::time::Duration::from_secs(20);
+pub const PEER_CONNECT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// This device's connection to the network.
 pub struct Transport {

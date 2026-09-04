@@ -246,12 +246,18 @@ reason: either this device is not in the space the message was sent in, or the
 message was longer than the 100,000 characters it will speak in one go. Split
 it and send the parts.
 
-`unreachable` takes up to **20 seconds** to arrive, because that is how long
+`unreachable` takes up to **90 seconds** to arrive, because that is how long
 the node spends dialling before it gives up, and it dials before it replies
 whether or not you passed `--wait`. So a `say` naming a device that is
-switched off returns in about twenty seconds with `unreachable`, rather than
+switched off returns in about ninety seconds with `unreachable`, rather than
 returning at once. It is not the node hanging — if the node itself goes quiet
 you get exit `5` instead, which says so in as many words.
+
+**Ninety, because a phone that has been idle is slow to answer and is not
+absent.** Measured against a real Android phone: 2.1 seconds warm, and 58
+seconds for the first message after hours of idleness. A device that answers
+in a minute is reachable; calling it unreachable at twenty seconds would be
+wrong about the case this tool exists for.
 
 ### Exit codes
 
