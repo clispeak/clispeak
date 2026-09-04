@@ -420,11 +420,10 @@ xcrun stapler validate clispeak_0.1.0_aarch64.dmg
 What that costs a downloader in practice is the only untested part left, and
 it is a much narrower question than "is opening the dmg clean".
 
-**It is fixable rather than merely regrettable.** `xcrun notarytool submit`
-accepts a `.dmg` and `stapler` staples one — that is the ordinary shape for a
-direct download. So the options are an extra submit-and-staple step after the
-bundle, or shipping the `.app` in a zip instead. Tracked as #108 rather than left as a
-paragraph here.
+**It was fixable rather than merely regrettable, and it is fixed.** `xcrun
+notarytool submit` accepts a `.dmg` and `stapler` staples one — the ordinary
+shape for a direct download — and that is what the `macos-sign` job now does.
+#108 closed on 4 September 2026.
 
 Until then: **before announcing a release, download the `.dmg` on a Mac that
 has never seen this project and open it.** Same rule as installing the release
@@ -512,8 +511,27 @@ because the wrong version was specific enough to act on.
 
 Signed and un-notarised is a **named** rejection, not a silent one — Gatekeeper
 says `source=Unnotarized Developer ID`, and the app inside a mounted copy
-assesses the same way. What a downloader sees once the `.app` carries a
-stapled ticket and the `.dmg` does not is still unmeasured, and is #108.
+assesses the same way.
+
+**Measured on 4 September 2026, and it is now the other way round.** The
+release job notarises and staples the **`.dmg`**, which is what a person
+downloads:
+
+```
+check/clispeak.app: accepted
+source=Notarized Developer ID
+Processing: signed.dmg
+The validate action worked!
+```
+
+Downloaded from the run and installed over a local ad-hoc build on a real
+Mac: it opened without a Gatekeeper warning and kept its keychain identity
+and its pairings. #108 closed.
+
+What the `.app` does *not* have is a ticket of its own — stapling the app as
+well means notarising it separately, before the image is built. So an app
+dragged out of the image is checked online at first launch, which Gatekeeper
+accepts and which would matter only offline.
 
 The release job runs the first two of these itself and fails the build if
 credentials were supplied and the artefact came out without them.
