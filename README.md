@@ -87,14 +87,22 @@ which names no home directory, so the app also adds a line to `~/.zprofile` —
 after `path_helper`, which would otherwise reorder it away. Nothing is written
 if any of your start-up files already puts that directory on the PATH.
 
-Builds are ad-hoc signed unless `APPLE_SIGNING_IDENTITY` names a certificate.
-Ad-hoc is enough to run, at a cost worth knowing: the identity is derived from
-the binary's own hash, so every rebuild looks like a different program to
-macOS and the keychain grant holding the device identity is asked for again.
-Any stable certificate, self-signed included, ends that — five minutes in
-Keychain Access, and `docs/signing.md` has the steps. A self-signed one does
-nothing for anyone *else*: a downloaded `.dmg` still gets Gatekeeper's
-warning, which needs a Developer ID certificate and notarisation (#29).
+**A locally built `.app` is ad-hoc signed**, which is enough to run and has a
+cost worth knowing: the identity is derived from the binary's own hash, so
+every rebuild looks like a different program to macOS and the keychain grant
+holding the device identity is asked for again. Any stable certificate,
+self-signed included, ends that — five minutes in Keychain Access, and
+`docs/signing.md` has the steps.
+
+**Release builds are signed and notarised**, so a downloaded `.dmg` opens
+without Gatekeeper's warning. Verified on 4 September 2026 by downloading the
+release artefact and installing it over a local build: `spctl` reports
+`source=Notarized Developer ID`, the ticket validates against the disk image,
+and the app kept its keychain identity and its pairings across the swap.
+
+The signing happens in a job that holds the certificate and runs nothing else
+— no `npm`, no `cargo`, no build scripts — behind an environment that needs an
+approval. `docs/signing.md` explains why (#117).
 
 **Android.** Build and install over USB:
 
