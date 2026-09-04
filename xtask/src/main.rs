@@ -515,12 +515,33 @@ fn workflow_run_steps() -> anyhow::Result<()> {
     let mut findings = Vec::new();
     let mut checked = 0usize;
     let mut spanning = 0usize;
+    let mut parsed = 0usize;
+    let mut unparseable = Vec::new();
 
     for file in tracked_files()? {
         if file.parent() != Some(Path::new(".github/workflows")) {
             continue;
         }
         let text = std::fs::read_to_string(&file)?;
+
+        // **Does GitHub see a workflow at all?**
+        //
+        // The rest of this function is deliberately lexical, and says why.
+        // That reasoning holds for the rule it is about and does not extend
+        // to "is this a file that parses", which is the one thing here
+        // nobody can check by eye — this gate printed `all gates passed` on
+        // a file containing `jobs:  macos:`, produced by a lost newline
+        // while editing, and the author read it twice without seeing it
+        // (#172).
+        //
+        // It matters more than a syntax error usually would, because a
+        // workflow that fails to parse does not fail loudly. It stops
+        // running, which looks like nothing happening.
+        if let Err(e) = yaml_rust2::YamlLoader::load_from_str(&text) {
+            unparseable.push(format!("  {}: {e}", file.display()));
+            continue;
+        }
+        parsed += 1;
         let lines: Vec<&str> = text.lines().collect();
         for (i, line) in lines.iter().enumerate() {
             let Some((before, after)) = split_run_key(line) else {
@@ -563,6 +584,13 @@ fn workflow_run_steps() -> anyhow::Result<()> {
         }
     }
 
+    if !unparseable.is_empty() {
+        eprintln!("workflow files GitHub cannot parse, and so will not run:");
+        for f in &unparseable {
+            eprintln!("{f}");
+        }
+        anyhow::bail!("a workflow that does not parse does not fail, it stops running");
+    }
     if !findings.is_empty() {
         eprintln!("workflow run steps that lose shell line continuations:");
         for f in &findings {
@@ -574,7 +602,12 @@ fn workflow_run_steps() -> anyhow::Result<()> {
     // generous about what it had inspected: the count was of every `run:`
     // key, most of them one-liners the rule does not apply to. A count exists
     // to prove the gate looked at something, so it should say at what.
-    println!("workflows ok: {spanning} of {checked} run steps span lines, all literal");
+    // Both counts, because a summary that grows a claim without growing the
+    // sentence is how #88 read "3 crates clean" while one of them was not.
+    println!(
+        "workflows ok: {parsed} parse, {spanning} of {checked} run steps span \
+         lines, all literal"
+    );
     Ok(())
 }
 
