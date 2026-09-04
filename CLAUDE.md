@@ -220,9 +220,40 @@ stale pass then masks a fresh failure, which is the hole counting rows already
 has. The last entry per name is the status, for the same reason the SKIPPED row
 is not one: it is a history.
 
-So the rule is three parts, and each was learned separately, twice in one day:
-**mergeable, or there is nothing to count · five distinct names, not five green
-rows · the latest conclusion per name, not all of them.**
+**And before any of that, check the results are for the commit you are
+merging.** `statusCheckRollup` lags `headRefOid`. After a push the pull
+request reports the new head while the rollup is still serving the previous
+head's results, so a rollup that is green, complete and consistent with your
+local sha can be describing the commit before it:
+
+```
+03:25:51  3875aae  in_progress    <- the actual head
+03:15:59  f7beddb  success        <- what the rollup was reporting
+```
+
+Every other guard here passes that. Matching the sha is not enough, because
+the sha matches. Read the Actions API, match runs by `head_sha`, and refuse
+while any run for *that* sha is incomplete.
+
+So the rule is four parts, each learned separately and all four in one day:
+
+1. **runs matched by `head_sha`** — the rollup may be reporting the previous
+   commit
+2. **mergeable**, or no runs are produced at all and zero checks looks like
+   early rather than empty
+3. **five distinct names**, not five green rows
+4. **the latest conclusion per name**, since a superseded draft run leaves
+   `CANCELLED` beside `SUCCESS`
+
+The first is listed first because it defeats the other three silently, while
+they at least fail visibly.
+
+**What all four have in common is the thing this file is about.** Each is a
+tool answering honestly about something *adjacent* to the question asked.
+Mergeable is not checks-passing. A row is not a name. A history is not a
+status. A rollup keyed on a pull request is not a run keyed on a commit. None
+of them lies; each answers a question next to the one you meant, and the
+answer looks exactly like the answer you wanted.
 
 **And before counting, check the pull request is mergeable — a conflicting
 one produces nothing to count.** GitHub runs a `pull_request` workflow against
