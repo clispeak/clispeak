@@ -61,6 +61,12 @@ function showScreen(name) {
  *
  * `tone` is "info" or "error"; errors persist until the next action rather
  * than timing out, so a failure cannot vanish before it is read.
+ *
+ * "Until the next action" was doing more work than it looked like. On a phone
+ * the next action may never come, and an error had no close control, no click
+ * handler, and sat inside a `pointer-events-none` wrapper — so a single
+ * failure held the bottom of the screen for the rest of the session (#144).
+ * Pinning is still right; being unable to say *I have read it* was not.
  */
 /** How long an ordinary message stays up before fading. */
 const SAY_MS = 3500;
@@ -80,24 +86,46 @@ function say(text, tone = "info") {
   alert.replaceChildren();
   if (!text) return;
 
-  const bubble = Object.assign(document.createElement("p"), {
+  const error = tone === "error";
+  // An error is a `button`, not a `p`: it is the only one of the two that has
+  // to be dismissed by hand, and a real control is what a thumb, a keyboard
+  // and a screen reader all already know how to use. `pointer-events-auto`
+  // because the wrapper turns them off for the whole layer, which is correct
+  // for a bubble that must not block the interface underneath it and was
+  // exactly what made this one unreachable.
+  const bubble = Object.assign(document.createElement(error ? "button" : "p"), {
     textContent: text,
     // Rebuilt in full each time, since the tone changes the whole palette.
     className:
-      "max-w-sm rounded-full border px-4 py-2 text-center text-sm shadow-lg " +
-      (tone === "error"
-        ? "border-red-300 bg-red-50 text-red-700 " +
-          "dark:border-red-500/40 dark:bg-red-950 dark:text-red-300"
-        : "border-neutral-300 bg-white text-neutral-700 " +
+      "max-w-sm rounded-full border px-4 py-2 text-sm shadow-lg " +
+      (error
+        ? "pointer-events-auto flex items-center gap-2 text-left " +
+          "border-red-300 bg-red-50 text-red-700 hover:bg-red-100 " +
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 " +
+          "dark:border-red-500/40 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-900"
+        : "text-center border-neutral-300 bg-white text-neutral-700 " +
           "dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"),
   });
+  if (error) {
+    bubble.type = "button";
+    // The name is the whole message plus what pressing it does, because the
+    // alert region announces the text and the control has to say the rest.
+    bubble.setAttribute("aria-label", `${text} — dismiss`);
+    const cross = Object.assign(document.createElement("span"), {
+      textContent: "\u2715",
+      className: "shrink-0 text-xs opacity-70",
+    });
+    cross.setAttribute("aria-hidden", "true");
+    bubble.append(cross);
+    bubble.addEventListener("click", () => say(null));
+  }
   // Appended into a region that was already there, rather than unhiding the
   // region itself. That difference is the whole of why these were silent.
-  (tone === "error" ? alert : status).replaceChildren(bubble);
+  (error ? alert : status).replaceChildren(bubble);
 
-  // Errors stay until something replaces them; a confirmation that has been
-  // read is only clutter.
-  if (tone !== "error") {
+  // Errors stay until something replaces them or the reader dismisses them; a
+  // confirmation that has been read is only clutter.
+  if (!error) {
     sayTimer = setTimeout(() => {
       status.replaceChildren();
       sayTimer = null;
