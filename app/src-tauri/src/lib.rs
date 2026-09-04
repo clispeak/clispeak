@@ -1340,24 +1340,32 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
     // and a missing feature. When there is an iOS build worth shipping this
     // becomes `AVSpeechSynthesizer`, which is a real engine rather than a
     // process to spawn.
-    #[cfg(target_os = "ios")]
+    // Both Apple targets, and for different reasons that reach the same
+    // engine. On iOS `AVSpeechSynthesizer` is the only speech there is. On
+    // macOS it replaces Piper, whose install needs Xcode Command Line Tools,
+    // whose upstream was archived in October 2025, and whose maintained
+    // successor is GPL-3.0 for the whole project (#132).
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
     {
-        // `AVSpeechSynthesizer`, which is what iOS speech is — not a
-        // stand-in, so its tier is `Full`.
-        return match clispeak_engine::IosEngine::new() {
+        // Not a stand-in: this is what speech on these platforms *is*, so
+        // its tier is `Full`.
+        match clispeak_engine::AppleEngine::new() {
             Ok(engine) => Arc::new(engine),
             // Its own reason, not a stand-in's. The failure this is most
             // likely to carry is the audio session refusing playback, which
-            // means the phone would have spoken silently — worth saying
+            // means the device would have spoken silently — worth saying
             // rather than replacing with "no engine".
             Err(e) => {
-                eprintln!("the iOS speech engine did not start: {e}");
+                eprintln!("the platform speech engine did not start: {e}");
                 Arc::new(clispeak_engine::SilentEngine::new(e.reason()))
             }
-        };
+        }
     }
 
-    #[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
+    #[cfg(all(
+        unix,
+        not(any(target_os = "android", target_os = "ios", target_os = "macos"))
+    ))]
     {
         // Best available, in order. Piper is what this platform should sound
         // like; espeak is a floor where the host happens to provide one, which
