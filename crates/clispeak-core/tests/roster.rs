@@ -695,3 +695,33 @@ fn a_tombstone_for_a_non_member_still_refuses_a_replay() {
         "and the old record must not readmit him"
     );
 }
+
+#[test]
+fn re_inviting_a_revoked_device_clears_its_revocation() {
+    // Decision 98 cleared the tombstone in `admit` and on the merge path,
+    // and missed the one an inviter takes. `accept_join` re-admits through
+    // `invite`, so removing a device and pairing it again — the commonest
+    // route there is — put it back as a member with its revocation still
+    // standing beside it, which is the half-state 98 exists to remove.
+    let alice = device();
+    let bob = device();
+    let bob_id = bob.public().to_string();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob_id, "bob");
+    on_alice.revoke(&bob_id);
+    assert!(!on_alice.allows(&bob.public()));
+
+    // What `accept_join` does when the ticket is scanned again.
+    on_alice.invite(&alice, &bob_id, "bob");
+    assert!(on_alice.allows(&bob.public()), "he is a member again");
+
+    // And a peer that learns this roster has to agree, rather than being
+    // handed a contradiction to resolve by arithmetic.
+    let mut on_carol = Roster::new();
+    on_carol.merge(&on_alice);
+    assert!(
+        on_carol.allows(&bob.public()),
+        "the revocation must not travel alongside the membership"
+    );
+}
