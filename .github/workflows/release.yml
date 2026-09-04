@@ -169,10 +169,9 @@ jobs:
         id: creds
         env:
           CERT: ${{ secrets.APPLE_CERTIFICATE }}
-          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
-          if [ -n "$CERT" ] && [ -n "$IDENTITY" ] && [ -n "$P8" ]; then
+          if [ -n "$CERT" ] && [ -n "$P8" ]; then
             echo "signing=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -185,6 +184,7 @@ jobs:
       # keychain: this runner is disposable, but the habit is what stops the
       # same script being run one day on a machine that is not.
       - name: Import the certificate
+        id: cert
         if: steps.creds.outputs.signing == 'true'
         env:
           CERT: ${{ secrets.APPLE_CERTIFICATE }}
@@ -207,6 +207,32 @@ jobs:
           security list-keychains -d user -s build.keychain
           rm -f cert.p12
 
+          # **Ask the certificate who it is, rather than being told.**
+          # `APPLE_SIGNING_IDENTITY` used to carry the common name, and the
+          # first real run failed on `no identity found` — the import had
+          # worked ("1 identity imported") and the string simply did not
+          # match. That is a paste nobody can check: the value is a secret,
+          # so every log line containing it is masked, and the failure reads
+          # the same whether the name is wrong, quoted, or padded.
+          #
+          # The keychain already knows. Exactly one, not the first of
+          # several, for the same reason the Android job counts its APKs —
+          # a `.p12` holding two identities would otherwise be signed with
+          # whichever sorted first.
+          found=$(security find-identity -v -p codesigning build.keychain)
+          echo "$found"
+          count=$(printf '%s' "$found" | grep -c "Developer ID Application" || true)
+          if [ "$count" != "1" ]; then
+            echo "::error::expected exactly one Developer ID Application" \
+                 "identity in the certificate, found $count. Signing with" \
+                 "the wrong one is worse than not signing."
+            exit 1
+          fi
+          # The SHA-1 hash, not the name: unambiguous, and immune to every
+          # way a display name can be mistyped.
+          hash=$(printf '%s' "$found" | awk '/Developer ID Application/ { print $2; exit }')
+          echo "identity=$hash" >> "$GITHUB_OUTPUT"
+
       # Signed *inside* Tauri's own dmg rather than rebuilt around the app.
       # A dmg made here with `hdiutil create` would lose the window layout
       # and background the bundler produces, so the download would look
@@ -215,7 +241,7 @@ jobs:
       - name: Sign the app inside the disk image
         if: steps.creds.outputs.signing == 'true'
         env:
-          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          IDENTITY: ${{ steps.cert.outputs.identity }}
         run: |
           dmg=$(ls unsigned/*.dmg)
           echo "signing the app inside $dmg"

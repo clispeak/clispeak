@@ -182,18 +182,27 @@ because it costs nothing.
 
 ## The release workflow
 
-`release.yml` reads three secrets and signs only if they are all present:
+`release.yml` signs in a **separate job** from the one that builds, so the
+certificate is never in the environment of a step that runs `npm ci` and
+several hundred crates' build scripts. See decision 101 and #117.
 
 | Secret | Holds |
 |---|---|
 | `APPLE_CERTIFICATE` | the `.p12`, base64-encoded |
 | `APPLE_CERTIFICATE_PASSWORD` | the password set when exporting it |
-| `APPLE_SIGNING_IDENTITY` | the certificate's name, e.g. `Developer ID Application: … (TEAMID)` |
 
-The Tauri CLI does the keychain work itself — `security create-keychain`,
+**There is no `APPLE_SIGNING_IDENTITY` secret any more.** The signing job
+imports the certificate and then asks the keychain which identity arrived,
+requiring exactly one `Developer ID Application`, and signs with its SHA-1
+hash. The first real run failed on `no identity found` with the import
+having plainly worked — and the name was a secret, so every log line
+carrying it was masked and the failure read identically whether the string
+was wrong, quoted or padded. A value the certificate already knows is not
+worth asking a person for.
+
+That job does the keychain work itself: `security create-keychain`,
 `import -T /usr/bin/codesign`, `set-key-partition-list`, and
-`delete-keychain` at the end — so there is no keychain script here to get
-wrong.
+`delete-keychain` on the way out under `if: always()`.
 
 **With none of them set the job still builds, and says the artefact is
 unsigned.** That is the useful default while there is no certificate to use,
@@ -372,8 +381,10 @@ again on every path out of the job.
 Read out of `tauri-bundler` 2.9.4 rather than assumed, because the order
 matters and the failure modes are quiet:
 
-1. If `APPLE_SIGNING_IDENTITY` is absent, **nothing** below happens — no
-   signing and therefore no notarisation.
+1. If no signing identity is given, **nothing** below happens — no signing
+   and therefore no notarisation. (This section describes `tauri build`,
+   which is still how a *local* signed build works. In CI the bundler is no
+   longer given a certificate at all; the `macos-sign` job signs afterwards.)
 2. The app is signed inside out: sidecars and frameworks first, the bundle
    last. Hardened runtime is on by default, which notarisation requires.
 3. Notarisation credentials are looked up. **If they are missing, the build
@@ -428,7 +439,6 @@ app and says so, which is the state today and is not an error.
 |---|---|
 | `APPLE_CERTIFICATE` | the Developer ID `.p12`, base64-encoded |
 | `APPLE_CERTIFICATE_PASSWORD` | the password set when exporting it |
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` |
 | `APPLE_API_KEY` | the Key ID |
 | `APPLE_API_ISSUER` | the Issuer UUID |
 | `APPLE_API_KEY_P8` | the `AuthKey_<KEYID>.p8`, base64-encoded |
