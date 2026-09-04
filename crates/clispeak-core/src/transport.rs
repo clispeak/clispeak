@@ -24,6 +24,28 @@ pub const ALPN: &[u8] = b"clispeak/1";
 /// Refuse absurd frames rather than trusting a length and allocating for it.
 const MAX_FRAME: u32 = 8 * 1024 * 1024;
 
+/// How long to spend reaching a device before calling it unreachable.
+///
+/// Ours rather than iroh's, and written down, because the CLI mirrors it.
+/// `patience()` in `clispeak-cli` explains the rule: the node applies the
+/// bound and is the one that times out, because it knows *why* and can
+/// answer `unreachable` with a reason. That only works if there is a bound
+/// here to mirror — and there was not. The dial fell through to iroh's own
+/// timeout at about thirty seconds while the CLI gave up at ten, so a speak
+/// to an unreachable device reported that the *local* node had never
+/// answered and told the reader to restart a healthy app (#151).
+///
+/// Twenty seconds: M0 measured a relay-first connection across carrier-grade
+/// NAT completing in about a second, so this is an order of magnitude past
+/// the working case and short enough that an agent is not left holding a
+/// request while a device that is switched off is dialled.
+///
+/// **Changing it means changing the mirror.** `clispeak-cli` cannot import
+/// this — it depends on `clispeak-proto` and `clispeak-text` only, which is
+/// what keeps its startup at 3ms — so the number is duplicated there by hand
+/// beside a comment naming this constant.
+pub const PEER_CONNECT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// This device's connection to the network.
 pub struct Transport {
     endpoint: Endpoint,
@@ -74,10 +96,15 @@ impl Transport {
     /// what lets a device move between networks without re-pairing.
     pub async fn connect(&self, peer: EndpointId) -> Result<Connection> {
         let addr: EndpointAddr = peer.into();
-        self.endpoint
-            .connect(addr, ALPN)
-            .await
-            .context("connecting to peer")
+        match tokio::time::timeout(PEER_CONNECT, self.endpoint.connect(addr, ALPN)).await {
+            Ok(result) => result.context("connecting to peer"),
+            // Says the number, because the next question anyone asks is
+            // whether waiting longer would have worked.
+            Err(_) => bail!(
+                "connecting to peer: no answer in {}s",
+                PEER_CONNECT.as_secs()
+            ),
+        }
     }
 
     /// Close the endpoint.
