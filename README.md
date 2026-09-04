@@ -229,7 +229,10 @@ clispeak skill --install --path <dir>/SKILL.md    # anywhere else
 clispeak skill                                    # print it, to pipe somewhere
 ```
 
-or from the app's Settings tab. The agent
+or from the app's Settings tab on a desktop. The phone build does not offer
+it, because a skill is a file an agent running on that machine reads and
+nothing on a phone reads one — it was offered there, and would have written
+into the app's own sandbox and reported success. The agent
 gains the judgement the `--help` output cannot give it: when speaking is worth
 doing at all, which device suits which kind of message, what each exit code
 means for what to do next, and that a `muted` device is a decision to respect

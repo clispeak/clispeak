@@ -647,8 +647,17 @@ fn skill_state(path: &std::path::Path) -> &'static str {
 }
 
 /// Where the skill is or would be, and whether it is current.
+///
+/// `None` on a phone, which hides the section: a skill is a file an agent
+/// running on this machine reads, and no agent runs on a phone. The option
+/// was offered there because `BaseDirs` answers with a home directory inside
+/// the app's own sandbox, so the path looked plausible and the install would
+/// have reported success — writing a file nothing would ever open (#134).
 #[tauri::command]
 fn skill_status() -> Option<SkillStatus> {
+    if cfg!(mobile) {
+        return None;
+    }
     let path = skill_record()
         .and_then(|r| std::fs::read_to_string(r).ok())
         .map(|p| std::path::PathBuf::from(p.trim()))
@@ -668,6 +677,17 @@ fn skill_status() -> Option<SkillStatus> {
 /// and says which command does work.
 #[tauri::command]
 fn install_skill(path: Option<String>) -> Result<String, String> {
+    // The interface does not offer this on a phone, and the command refuses
+    // there as well: a hidden control is not a closed door, and a recorded
+    // `skill-destination` carried over from a desktop install would otherwise
+    // give this a plausible-looking path to write to (#134).
+    if cfg!(mobile) {
+        return Err(
+            "the agent skill is for a machine an agent runs on; there is nothing on a \
+             phone that reads one"
+                .into(),
+        );
+    }
     let destination = match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => std::path::PathBuf::from(shellexpand_home(p)),
         None => skill_default().ok_or("no home directory on this system")?,
