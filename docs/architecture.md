@@ -378,7 +378,7 @@ something that does not exist yet, it says so.
 | Platform | TTS engine | Background listening |
 |---|---|---|
 | Linux | Piper, bundled in the Flatpak; espeak-ng floor only outside it | Tray |
-| macOS | Piper, bundled in the `.app`; espeak-ng floor only if installed | Tray |
+| macOS | `AVSpeechSynthesizer`; no speech payload in the bundle | Tray |
 | Windows | Piper, placed by `cargo xtask piper`; no floor engine | Tray |
 | Android | `android.speech.tts.TextToSpeech` | Foreground service |
 | iOS | `AVSpeechSynthesizer` | **Foreground only** — measured, see below |
@@ -393,20 +393,28 @@ and became the desktop answer everywhere **because it was the only thing that
 could be** — and that got read back afterwards as a principle. Android has
 always sounded like Android and nobody thought it a defect.
 
-So macOS is moving to `AVSpeechSynthesizer`, the engine iOS now uses. It is
-better on that platform, it removes a dependency on an upstream that has been
-archived since October 2025, and it takes GPL-3.0 espeak-ng out of the macOS
-artefact entirely (#132). Piper stays where it is the best available answer.
+So macOS moved to `AVSpeechSynthesizer`, the engine iOS uses — decision 91, on
+3 September 2026. It is better on that platform, it removes a dependency on an
+upstream archived since October 2025, and it takes GPL-3.0 espeak-ng out of
+the macOS artefact entirely: 208MB to 32MB, with no speech files in it at all
+(#132). Piper stays where it is the best available answer, which is Linux and
+Windows.
+
+**Built, not yet heard.** The macOS engine compiles and the app launches; that
+it speaks, and that it speaks while backgrounded, are unmeasured and are being
+checked on hardware. Piper managed 3.3s backgrounded on that machine, which is
+the number to match rather than assume.
 
 **The cost is real and is not hidden:** a message read aloud on a Linux desk
 and on a Mac will not sound identical. `voice_config` already reports voices
 per device, so the interface can say which is which.
 
 **The espeak-ng floor is thinner than it looks.** `speech_engine()` falls back
-to it on Unix, but nothing ships it: the GNOME runtime the Flatpak builds on
-has no espeak at all, and the macOS bundle carries only Piper. So the floor
-exists on a Linux host whose distribution happens to provide espeak-ng, and
-nowhere else.
+to it on Unix — but not on macOS or iOS any more, which reach the platform
+engine before the fallback is considered, and nothing ships espeak in any
+case: the GNOME runtime the Flatpak builds on has no espeak at all. So the
+floor exists on a Linux host whose distribution happens to provide espeak-ng,
+and nowhere else.
 
 **What happens when Piper will not start** is worth knowing before reading a
 `no_engine`. The app and the daemon pick engines in separate code —
