@@ -1049,7 +1049,7 @@ async fn revoke_device(
     name: String,
     space: Option<String>,
 ) -> Result<String, String> {
-    replies::renamed(state.node.revoke(&name, space.as_deref()).await)
+    replies::revoked(state.node.revoke(&name, space.as_deref()).await)
 }
 
 #[tauri::command]
@@ -1257,6 +1257,13 @@ mod replies {
     pub(super) fn renamed(r: Response) -> Result<String, String> {
         match r {
             Response::Renamed { name } => Ok(name),
+            other => Err(describe(other)),
+        }
+    }
+
+    pub(super) fn revoked(r: Response) -> Result<String, String> {
+        match r {
+            Response::Revoked { name } => Ok(format!("removed {name}")),
             other => Err(describe(other)),
         }
     }

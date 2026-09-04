@@ -2469,8 +2469,8 @@ async fn revoke(shared: &Arc<Shared>, name: &str, space: Option<&str>) -> Respon
     if let Err(e) = spaces.save(&shared.spaces_path) {
         return Response::error(e.to_string());
     }
-    Response::Renamed {
-        name: format!("removed {name}"),
+    Response::Revoked {
+        name: name.to_string(),
     }
 }
 
