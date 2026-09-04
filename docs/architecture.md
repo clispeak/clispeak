@@ -417,10 +417,16 @@ So Piper stays where it is the best available answer, which is Linux — the one
 platform with no universal native engine, and the one where shipping copyleft
 is least of an obstacle.
 
-**Built, not yet heard.** The macOS engine compiles and the app launches; that
-it speaks, and that it speaks while backgrounded, are unmeasured and are being
-checked on hardware. Piper managed 3.3s backgrounded on that machine, which is
-the number to match rather than assume.
+**Heard, on 4 September 2026.** The macOS engine speaks, and it speaks while
+backgrounded — the property that matters, since the whole point is being heard
+when nobody is looking at the screen. Measured end to end from the laptop:
+**5.0s with the app backgrounded, 5.7s with it in front.** Backgrounding costs
+nothing measurable, and the difference is within the variation of the network
+hop the number includes.
+
+Piper's 3.3s on that machine is **not** a like-for-like comparison and should
+not be read as a regression: it was measured differently, and both of these
+numbers are dominated by reaching the Mac rather than by synthesis.
 
 **The cost is real and is not hidden:** a message read aloud on a Linux desk
 and on a Mac will not sound identical. `voice_config` already reports voices
