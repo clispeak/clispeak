@@ -24,7 +24,7 @@ use interprocess::local_socket::{
 };
 use tokio::sync::Mutex;
 
-use crate::history::{Entry, History};
+use crate::history::{Entry, History, Saver};
 use crate::ipc::{read_frame, socket_name, write_frame};
 use crate::policy::{self, Policies};
 use crate::queue::{Job, Speaker, words_in};
@@ -118,7 +118,9 @@ struct Shared {
     /// A plain mutex: it is written from the speech thread, which is not
     /// async, and every operation is over in microseconds.
     history: std::sync::Mutex<History>,
-    history_path: PathBuf,
+    /// Writes it, off whatever thread recorded something. Owns the path: no
+    /// other caller writes the file, which is what keeps one writer.
+    history_saver: Saver,
     /// When each peer was last reached, as unix seconds.
     ///
     /// Recorded from real contact rather than a separate heartbeat protocol:
@@ -224,6 +226,7 @@ impl Node {
         let history_path = History::default_path()
             .ok_or_else(|| anyhow::anyhow!("no config directory for the history"))?;
         let history = std::sync::Mutex::new(History::load(&history_path));
+        let history_saver = Saver::spawn(history_path);
 
         // The queue reports every outcome here, because most messages have
         // nobody waiting on them and would otherwise be recorded as "queued"
@@ -268,7 +271,7 @@ impl Node {
             pending: Mutex::new(Ticket::recall()),
             speaker,
             history,
-            history_path,
+            history_saver,
             last_seen: Mutex::new(std::collections::HashMap::new()),
             policy: std::sync::Mutex::new(policy::load()),
             on_show: Mutex::new(None),
@@ -305,6 +308,10 @@ impl Node {
     /// [`shutdown`]: Node::shutdown
     pub async fn close(&self) {
         self.shutdown();
+        // Before the transport, because this is the one place waiting for a
+        // history write is the right thing to do: nothing is racing it and
+        // the alternative is losing the last outcome recorded.
+        self.shared.history_saver.flush();
         self.transport.close().await;
     }
 
@@ -387,7 +394,7 @@ impl Node {
     pub fn clear_history(&self) -> Response {
         let mut history = self.shared.history.lock().expect("history lock");
         history.clear();
-        let _ = history.save(&self.shared.history_path);
+        hand_to_saver(&self.shared, &history);
         Response::Done
     }
 
@@ -761,7 +768,7 @@ async fn handle_cli(
         Request::ClearHistory => {
             let mut history = shared.history.lock().expect("history lock");
             history.clear();
-            let _ = history.save(&shared.history_path);
+            hand_to_saver(shared, &history);
             Response::Done
         }
         Request::Policy => policy_response(shared).await,
@@ -1914,17 +1921,25 @@ fn replay(shared: &Arc<Shared>, msg_id: &str) -> Response {
 fn remember(shared: &Arc<Shared>, entry: Entry) {
     let mut history = shared.history.lock().expect("history lock");
     history.record(entry);
-    if let Err(e) = history.save(&shared.history_path) {
-        eprintln!("could not save history: {e}");
-    }
+    hand_to_saver(shared, &history);
 }
 
 /// Fill in how a message ended, once it has.
 fn remember_outcome(shared: &Arc<Shared>, msg_id: &str, status: Status) {
     let mut history = shared.history.lock().expect("history lock");
     history.set_status(msg_id, status);
-    if let Err(e) = history.save(&shared.history_path) {
-        eprintln!("could not save history: {e}");
+    hand_to_saver(shared, &history);
+}
+
+/// Serialise while the lock is held, and let the saver do the disk.
+///
+/// The lock has to be held to serialise a consistent snapshot; it must not be
+/// held across the write, which is where `sync_all` sits. Splitting it this
+/// way is the whole of #78 — see [`Saver`].
+fn hand_to_saver(shared: &Arc<Shared>, history: &History) {
+    match history.to_bytes() {
+        Ok(bytes) => shared.history_saver.put(bytes),
+        Err(e) => eprintln!("could not serialise history: {e}"),
     }
 }
 

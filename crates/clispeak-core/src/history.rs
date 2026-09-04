@@ -115,14 +115,159 @@ impl History {
         self.entries.clear();
     }
 
-    /// Write to disk.
+    /// Write to disk, here and now.
+    ///
+    /// The blocking form, kept for tests and for the one place a caller
+    /// genuinely has to know the bytes have landed. Everything on the path of
+    /// a message being spoken goes through [`Saver`] instead — see there.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            crate::store::create_dir_private(dir)?;
+        crate::store::write_private(path, &self.to_bytes()?)
+    }
+
+    /// The file's contents, without writing them.
+    ///
+    /// Split out so a caller can serialise while it holds the lock and hand
+    /// the bytes to [`Saver`] without holding it across a disk write.
+    pub fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
+        serde_json::to_vec(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+}
+
+/// Writes the history to disk, off whatever thread asked.
+///
+/// **Every `SpeakBegin` and every outcome used to write the whole file**,
+/// under a `std::sync::Mutex`, on a tokio worker — up to 200 entries of
+/// 100,000 characters, and `write_private` calls `sync_all` before it
+/// renames. So delivering a message waited on an fsync, on a phone, with
+/// latency proportional to how much history the device had accumulated
+/// (#78).
+///
+/// This is a thread and a one-slot mailbox. The slot holds the *latest*
+/// snapshot rather than a queue of them, which is what makes a burst of
+/// outcomes cost one write instead of five: an older snapshot that has not
+/// been written yet is not a lost update, it is a state the newer one
+/// already contains.
+///
+/// A thread rather than `spawn_blocking` because the outcome callback is
+/// handed to the queue and can run without a tokio runtime around it, and a
+/// history write that panics because there is no reactor would be a worse
+/// bug than the one being fixed.
+pub struct Saver {
+    slot: std::sync::Arc<Slot>,
+    /// Kept so a `put` can still write when the thread could not be started.
+    path: PathBuf,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// The mailbox, shared with the writer thread.
+struct Slot {
+    state: std::sync::Mutex<SlotState>,
+    /// Woken when something is put in, and when a write finishes.
+    bell: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct SlotState {
+    pending: Option<Vec<u8>>,
+    stopping: bool,
+    /// Counts snapshots handed over.
+    queued: u64,
+    /// The highest `queued` whose snapshot has reached the disk.
+    ///
+    /// Not a count of writes: coalescing means one write can satisfy several
+    /// `put`s, and the snapshot taken carries whatever every earlier one
+    /// contained. Counting writes instead would leave `flush` waiting for
+    /// writes that correctly never happened.
+    written: u64,
+}
+
+impl Saver {
+    /// Start writing to `path`.
+    pub fn spawn(path: PathBuf) -> Self {
+        let slot = std::sync::Arc::new(Slot {
+            state: std::sync::Mutex::new(SlotState::default()),
+            bell: std::sync::Condvar::new(),
+        });
+        let mine = std::sync::Arc::clone(&slot);
+        let mine_path = path.clone();
+        let thread = std::thread::Builder::new()
+            .name("clispeak-history".into())
+            .spawn(move || write_loop(&mine, &mine_path))
+            .ok();
+        Self { slot, path, thread }
+    }
+
+    /// Hand over the latest snapshot, replacing any not yet written.
+    pub fn put(&self, bytes: Vec<u8>) {
+        // No thread means the write has to happen here or not at all, and
+        // "not at all" is a history that silently stops recording. Slow is
+        // the failure this whole type exists to avoid; losing the file is a
+        // worse one.
+        if self.thread.is_none() {
+            if let Err(e) = crate::store::write_private(&self.path, &bytes) {
+                eprintln!("could not save history: {e}");
+            }
+            return;
         }
-        let text = serde_json::to_string(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        crate::store::write_private(path, text.as_bytes())
+        let mut state = self.slot.state.lock().expect("history slot");
+        state.pending = Some(bytes);
+        state.queued += 1;
+        self.slot.bell.notify_all();
+    }
+
+    /// Wait until everything handed over so far has been written.
+    ///
+    /// For shutdown, and for a test that needs the file to exist. Ordinary
+    /// recording never calls this — waiting is the thing being removed.
+    pub fn flush(&self) {
+        let mut state = self.slot.state.lock().expect("history slot");
+        let want = state.queued;
+        while state.written < want && self.thread.is_some() {
+            state = self.slot.bell.wait(state).expect("history slot");
+        }
+    }
+}
+
+impl Drop for Saver {
+    fn drop(&mut self) {
+        {
+            let mut state = self.slot.state.lock().expect("history slot");
+            state.stopping = true;
+            self.slot.bell.notify_all();
+        }
+        // Joined rather than detached: the last snapshot has to reach the
+        // disk, and a process exiting is not a reason to lose it.
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn write_loop(slot: &Slot, path: &Path) {
+    loop {
+        let (bytes, mark) = {
+            let mut state = slot.state.lock().expect("history slot");
+            while state.pending.is_none() && !state.stopping {
+                state = slot.bell.wait(state).expect("history slot");
+            }
+            let mark = state.queued;
+            match state.pending.take() {
+                Some(bytes) => (bytes, mark),
+                // Nothing left and asked to stop. Anything put in after this
+                // point cannot arrive: `Drop` sets `stopping` and joins.
+                None => return,
+            }
+        };
+        if let Err(e) = crate::store::write_private(path, &bytes) {
+            eprintln!("could not save history: {e}");
+        }
+        let mut state = slot.state.lock().expect("history slot");
+        // Marked done even when the write failed. This says the writer got
+        // to it, which is what a flush is waiting for; the failure has
+        // already been reported and waiting longer will not mend it.
+        state.written = state.written.max(mark);
+        slot.bell.notify_all();
     }
 }
 
@@ -130,7 +275,7 @@ impl History {
 mod tests {
     use super::*;
 
-    fn entry(id: &str, status: Status) -> Entry {
+    pub(super) fn entry(id: &str, status: Status) -> Entry {
         Entry {
             msg_id: id.into(),
             text: format!("message {id}"),
@@ -195,5 +340,67 @@ mod tests {
         big.text = "x".repeat(MAX_TEXT * 2);
         history.record(big);
         assert_eq!(history.get("m1").map(|e| e.text.len()), Some(MAX_TEXT));
+    }
+}
+
+#[cfg(test)]
+mod saver_tests {
+    use super::tests::entry;
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("clispeak-history-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        dir.join(name)
+    }
+
+    #[test]
+    fn a_burst_of_snapshots_lands_as_the_last_one() {
+        // The property that makes this worth a thread: five outcomes in a
+        // row cost one write, not five, and the file ends up holding the
+        // newest state rather than whichever write finished last (#78).
+        let path = scratch("burst.json");
+        let _ = std::fs::remove_file(&path);
+
+        let saver = Saver::spawn(path.clone());
+        let mut history = History::default();
+        for i in 0..5 {
+            history.record(entry(&format!("m{i}"), Status::Spoken));
+            saver.put(history.to_bytes().expect("serialise"));
+        }
+        saver.flush();
+
+        let written = History::load(&path);
+        assert_eq!(written.recent(10).len(), 5, "the newest snapshot, whole");
+        assert_eq!(written.recent(1)[0].msg_id, "m4");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dropping_the_saver_writes_what_was_still_pending() {
+        // A node closing must not lose the last outcome it recorded.
+        let path = scratch("pending.json");
+        let _ = std::fs::remove_file(&path);
+
+        let mut history = History::default();
+        history.record(entry("only", Status::Muted));
+        {
+            let saver = Saver::spawn(path.clone());
+            saver.put(history.to_bytes().expect("serialise"));
+        }
+
+        let written = History::load(&path);
+        assert_eq!(written.recent(1).len(), 1);
+        assert_eq!(written.recent(1)[0].msg_id, "only");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_flush_with_nothing_pending_returns() {
+        // `close` flushes unconditionally, including on a node that never
+        // recorded anything.
+        let saver = Saver::spawn(scratch("never.json"));
+        saver.flush();
+        saver.flush();
     }
 }
