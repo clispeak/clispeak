@@ -140,8 +140,15 @@ Nothing has been published yet — no releases, no tags, and the voice is not in
 git — so this is a problem to avoid rather than one to unwind.
 
 **More pressing: we redistribute other people's software inside our packages.**
-The Flatpak, the macOS bundle and the planned Windows installer all carry
-Piper, which is not one program. The archive we ship contains, at least:
+**One package, now: the Flatpak.** macOS and Windows both moved to the
+platform synthesiser (decisions 96 and 102), and the bundler stages the
+payload only where Piper is the engine — so the macOS `.dmg` and the Windows
+installer carry none of what follows, and the licensing question below is
+Linux's alone. That was not a size optimisation. Shipping espeak-ng is a
+redistribution with obligations, and doing it for a platform that never calls
+it is all of the cost and none of the use.
+
+Piper is not one program. The archive the Flatpak ships contains, at least:
 
 - `piper` itself
 - `libonnxruntime` — Microsoft's ONNX Runtime
@@ -149,7 +156,10 @@ Piper, which is not one program. The archive we ship contains, at least:
 - **`espeak-ng`, its shared library and its data** — espeak-ng is
   GPL-3.0-or-later
 - a voice model, whose own terms are separate again
-- on Windows, Microsoft's Visual C++ runtime (issue #20)
+
+Issue #20 was the Windows half of this — Microsoft's Visual C++ runtime, which
+Piper links against and a clean Windows does not have. It is gone with Piper
+rather than solved.
 
 Two things about that are worth stating plainly rather than assuming.
 
