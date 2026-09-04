@@ -119,7 +119,7 @@ App Store build recreates that situation exactly.
 | Platform | Speech engine | GPL payload in the artefact |
 |---|---|---|
 | Linux | Piper, bundled in the Flatpak | **yes** — espeak-ng and a voice model |
-| Windows | Piper, placed by `cargo xtask piper` | **yes** — espeak-ng and a voice model |
+| Windows | SAPI 5 | no — nothing is staged |
 | macOS | `AVSpeechSynthesizer` | **no** — nothing is staged |
 | iOS | `AVSpeechSynthesizer` | **no** — never had one |
 | Android | `android.speech.tts.TextToSpeech` | **no** — never had one |
@@ -138,11 +138,17 @@ rpath and without the dylibs it links against, so installing it runs `otool`,
 tooling first" (#132). The native engine ended that, the archived upstream and
 the GPL question in one move.
 
-**What is left is Linux and Windows**, and they are the two where it is
-hardest: there is no universal native engine on Linux, and Windows has one
-nobody has written yet.
+**What is left is Linux**, alone. Windows took the native route on
+4 September 2026 for reasons that were never primarily about licensing —
+Piper links a Visual C++ runtime Windows does not ship — and removed its
+payload as a side effect, exactly as macOS did.
 
-**For those two, the original plan still applies:** stop bundling the payload
+Linux is the one platform with no universal native engine, and it is also the
+one where shipping copyleft is least of an obstacle: the Flatpak is
+distributed in an ecosystem built around it, and there is no store term that
+GPL-3.0 conflicts with.
+
+**For Linux, the original plan still applies:** stop bundling the payload
 and fetch it on first run. `cargo xtask piper` already downloads Piper and a
 voice on demand, and the engine layer already tolerates an engine that is
 absent and appears later (`Rediscovering`, decision 52). Then:
@@ -158,10 +164,8 @@ tooling and is not shipped. That also means it stops shelling out to `curl`
 and `tar`, which is the same shape as every row in `CLAUDE.md`'s divergence
 table: a binary name that resolves on the machine you wrote it on.
 
-Windows could also take the native route — the platform has a speech
-synthesiser and the `SpeechEngine` trait already anticipates one, exactly as
-macOS did. That would leave Linux as the only platform shipping GPL code, and
-Linux is the one where copyleft is least of an obstacle.
+That is now the whole of the remaining work, and it is one platform rather
+than two.
 
 ---
 

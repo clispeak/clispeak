@@ -389,7 +389,7 @@ something that does not exist yet, it says so.
 |---|---|---|
 | Linux | Piper, bundled in the Flatpak; espeak-ng floor only outside it | Tray |
 | macOS | `AVSpeechSynthesizer`; no speech payload in the bundle | Tray |
-| Windows | Piper, placed by `cargo xtask piper`; no floor engine | Tray |
+| Windows | SAPI 5; no speech payload in the bundle | Tray |
 | Android | `android.speech.tts.TextToSpeech` | Foreground service |
 | iOS | `AVSpeechSynthesizer` | **Foreground only** — measured, see below |
 
@@ -407,8 +407,15 @@ So macOS moved to `AVSpeechSynthesizer`, the engine iOS uses — decision 91, on
 3 September 2026. It is better on that platform, it removes a dependency on an
 upstream archived since October 2025, and it takes GPL-3.0 espeak-ng out of
 the macOS artefact entirely: 208MB to 32MB, with no speech files in it at all
-(#132). Piper stays where it is the best available answer, which is Linux and
-Windows.
+(#132). **Windows followed on 4 September 2026**, for reasons that were never
+about size: Piper there links a Visual C++ runtime Windows does not ship, so a
+clean machine installed it correctly, found it correctly, and exited
+`0xC0000135` with no message (#20). SAPI 5 is the platform's own synthesiser
+and needs nothing installed.
+
+So Piper stays where it is the best available answer, which is Linux — the one
+platform with no universal native engine, and the one where shipping copyleft
+is least of an obstacle.
 
 **Built, not yet heard.** The macOS engine compiles and the app launches; that
 it speaks, and that it speaks while backgrounded, are unmeasured and are being

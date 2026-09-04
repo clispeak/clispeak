@@ -10,9 +10,18 @@
 // on a phone build this compiled a helper nothing could reach. The compiler
 // said so, as two dead-code warnings on an `aarch64-apple-ios` check, which
 // is a warning nobody would ever have seen: CI runs clippy on Linux only.
-#[cfg(any(all(unix, not(target_os = "ios")), windows))]
+//
+// Windows came off this list when Piper did. It was the last thing there
+// that spawned a process, so leaving the gate alone would have produced the
+// same dead-code warnings on the Windows job — and `RUSTFLAGS: -D warnings`
+// means that job fails rather than warns. Caught by checking the target
+// locally rather than by a matrix run, which is the cheaper way round.
+#[cfg(all(unix, not(target_os = "ios")))]
 mod child;
 mod rediscovering;
+// Portable arithmetic that platform engines need. Outside their modules so
+// that it is tested at all — see the module's own header.
+mod scale;
 mod silent;
 
 #[cfg(target_os = "android")]
@@ -49,10 +58,23 @@ mod apple;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub use apple::AppleEngine;
 
+// The platform synthesiser on Windows, replacing Piper there (#132, and
+// Patrick's decision of 4 September 2026). Piper on Windows links a Visual
+// C++ runtime Windows does not ship, which is why a clean machine installs
+// it correctly and then exits `0xC0000135` with no message (#20) — and why
+// the installer had to carry a runtime, a voice and 300MB of engine (#30).
+// Named `sapi` rather than `windows` because a module by that name would
+// make every `use windows::…` inside it ambiguous.
+#[cfg(windows)]
+mod sapi;
+#[cfg(windows)]
+pub use sapi::WindowsEngine;
+
 // Same reasoning as espeak above: iOS is unix and cannot spawn a process.
-#[cfg(any(all(unix, not(target_os = "ios")), windows))]
+// Windows is no longer in this list — see `sapi` above.
+#[cfg(all(unix, not(target_os = "ios")))]
 mod piper;
-#[cfg(any(all(unix, not(target_os = "ios")), windows))]
+#[cfg(all(unix, not(target_os = "ios")))]
 pub use piper::PiperEngine;
 
 /// A voice offered by an engine.

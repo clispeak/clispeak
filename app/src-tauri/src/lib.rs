@@ -1416,16 +1416,25 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
             }
         }
     }
-    // Windows. Piper, the same engine as every other desktop — and when it
-    // does not start, the reason it gave rather than a stand-in. There is no
-    // floor engine here, so that reason is the only thing standing between
-    // the sender and an unexplained silence; see decision 22.
+    // Windows, through SAPI 5 — the platform synthesiser, as on macOS, iOS
+    // and Android. It replaced Piper on Patrick's decision of 4 September
+    // 2026: Piper linked a Visual C++ runtime Windows does not ship, so a
+    // clean machine installed it correctly and then exited `0xC0000135` with
+    // no message (#20), and the installer had to carry that runtime, a voice
+    // and 300MB of engine with no terminal (#30).
+    //
+    // No floor engine here, so when it does not start the reason it gave is
+    // the only thing standing between the sender and an unexplained silence;
+    // see decision 22. `SilentEngine` rather than `Rediscovering`, unlike the
+    // Linux arm: Piper could appear later because a person installs it, and
+    // SAPI either exists on this machine or the machine is broken in a way
+    // that will not fix itself while the app is running.
     #[cfg(not(unix))]
     {
-        match clispeak_engine::PiperEngine::discover() {
+        match clispeak_engine::WindowsEngine::new() {
             Ok(engine) => Arc::new(engine),
             Err(e) => {
-                eprintln!("piper unavailable: {e}");
+                eprintln!("the platform speech engine did not start: {e}");
                 Arc::new(clispeak_engine::SilentEngine::new(e.reason()))
             }
         }

@@ -66,14 +66,30 @@ pub fn bundle(root: &Path) -> Result<()> {
     // exactly what a first build with the new engine showed — 208MB with
     // `libespeak-ng.1.dylib` still inside.
     //
-    // Windows keeps it. Piper is still its engine, and the Windows archive is
-    // self-contained where the macOS one never was.
+    // **Not on Windows either, since 4 September 2026.** Windows speaks
+    // through SAPI now, for reasons that were never really about size:
+    // Piper links a Visual C++ runtime Windows does not ship, so a clean
+    // machine installed it correctly and exited `0xC0000135` with no message
+    // (#20). Same conclusion as macOS by a different road.
+    //
+    // So the condition is not a list of exceptions but a property: **stage
+    // the payload where Piper is the engine.** That is Linux and the
+    // remaining unixes, and writing it that way means the next platform to
+    // move does not have to be remembered here.
     //
     // `speech`, not `clispeak`: Tauri stages resources beside the built
     // executable, and `target/release/clispeak` is already the command-line
     // tool. A directory of the same name collides with that file and the
     // build dies with a bare "Not a directory".
-    if !cfg!(target_os = "macos") {
+    let piper_is_the_engine = cfg!(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "android"
+        ))
+    ));
+    if piper_is_the_engine {
         piper::fetch(&tauri.join("speech"))?;
     }
 
@@ -90,14 +106,19 @@ pub fn bundle(root: &Path) -> Result<()> {
             "tauri",
             "build",
             "--config",
-            // macOS declares no speech resource, because it stages none. A
-            // declared resource that is absent fails Tauri's own build-script
-            // check, so removing the payload and leaving the declaration
-            // would break the build rather than shrink it.
-            if cfg!(target_os = "macos") {
-                "src-tauri/tauri.bundle.macos.conf.json"
-            } else {
+            // A platform that stages no payload declares no speech
+            // resource. A declared resource that is absent fails Tauri's own
+            // build-script check, so removing the payload and leaving the
+            // declaration would break the build rather than shrink it.
+            //
+            // The file was `tauri.bundle.macos.conf.json` for the few hours
+            // macOS was the only platform in this state. Windows joining it
+            // made the name wrong rather than merely narrow, which is the
+            // kind of stale name this project has paid for before.
+            if piper_is_the_engine {
                 "src-tauri/tauri.bundle.conf.json"
+            } else {
+                "src-tauri/tauri.bundle.nopayload.conf.json"
             },
         ])
         .current_dir(&app)
