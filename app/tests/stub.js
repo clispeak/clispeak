@@ -52,6 +52,15 @@ const device = (name, id, seen, self) => ({
 window.__TAURI__ = {
   core: {
     invoke: async (cmd) => {
+      // Lets a probe make one command fail. The error path in `say()` is
+      // otherwise only reachable with a broken node, and it is the path that
+      // had no way out of it (#144). Cleared as it fires, so a probe arms a
+      // single failure rather than breaking everything after it.
+      if (window.__forceError) {
+        const message = window.__forceError;
+        window.__forceError = null;
+        throw message;
+      }
       // Once reset, `skill_status` reports the default, the way the real
       // command does once the record is gone.
       if (cmd === "skill_status" && reset) {
