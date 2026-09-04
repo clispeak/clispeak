@@ -3184,12 +3184,31 @@ written. Editing them to say otherwise would make the record agree with the
 present at the cost of being false about the past, which is the exact move
 this file exists to prevent.
 
-**Desktops keep their identity; phones cannot.** `ProjectDirs` derives the
+**A plain desktop install keeps its identity. The Flatpak does not, and that
+correction is the useful part of this entry.** `ProjectDirs` derives the
 config directory from the project name, so the rename moved it out from under
 every install. `migrate_from_previous_name` moves the identity, roster,
 spaces, history and policy across on first run, and says which files it moved
 rather than doing it quietly — verified against a directory laid out as an
 existing device.
+
+That works for `clispeakd` and for an unsandboxed build. **It cannot work for
+the Flatpak**, because a Flatpak's configuration lives under
+`~/.var/app/<application-id>/`, so the identifier is part of the path. The
+renamed app starts in `~/.var/app/org.clispeak.app/` and the migration, running
+*inside* that sandbox, looks for a previous-name directory that is also inside
+it — never at `~/.var/app/org.voicecast.App/`, where the state actually is.
+
+The identity key survives regardless, because it is in the system keyring and
+the manifest grants `--talk-name=org.freedesktop.secrets`. Everything else —
+roster, spaces, history, policy, device name — would not, which is the worst
+shape available: a node that is still itself, still listed by its peers, and
+has forgotten all of them.
+
+So a Flatpak upgrade needs the state directory copied across once, by hand or
+by the packaging, and this is written down because "desktop" was assumed to
+mean ordinary directories. It is the Android problem again, on a platform
+nobody thought of as sandboxed.
 
 An application identifier is the app's name to a phone, so a new one is a new
 app with a sandbox the old one cannot reach. Android and iOS re-pair, and the
