@@ -28,17 +28,20 @@ laptop and an iOS device and spoken to across the network.
 
 iOS uses the same engine, and has been launched and heard on a real device.
 
-**Windows and Linux speak with Piper**, which is where it is still the best
-available answer: there is no universal native engine on Linux, and nobody has
-written the Windows one yet. So a message does *not* sound identical on every
-platform any more. That uniformity was a consequence of Piper being the only
-thing that ran everywhere, not a goal — Android has always sounded like
-Android and nobody thought it a defect.
+**Windows speaks through SAPI 5**, the platform synthesiser, so it needs
+nothing installed and carries no speech payload. **It has been built and never
+run** — nobody here has a Windows machine, and it is type-checked for
+`x86_64-pc-windows-msvc` and verified by no one.
 
-There is no Windows installer yet: Piper has to be put in place with `cargo
-xtask piper` — a running node picks it up within a couple of seconds, without
-a restart — and Windows also needs the Microsoft Visual C++ Redistributable,
-which it does not ship and which Piper links against.
+**Linux speaks with Piper**, which is the one platform where it is still the
+best available answer: there is no universal native engine there. So a message
+does *not* sound identical everywhere any more. That uniformity was a
+consequence of Piper being the only thing that ran everywhere, not a goal —
+Android has always sounded like Android and nobody thought it a defect.
+
+There is no Windows installer yet, but what one has to do got much smaller: no
+Piper, no voice model, and no Microsoft Visual C++ Redistributable, which was
+needed only because Piper linked against it.
 
 The riskiest assumption — that peer-to-peer connections survive carrier-grade
 NAT and network changes — was [measured on real hardware](docs/m0-results.md)
@@ -114,10 +117,10 @@ adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-u
 ```
 
 **Without the app.** `clispeakd` is a headless node for a machine with no
-desktop. It needs Piper installed where the engine looks for it, which
-`cargo xtask piper` does — `~/.local/share/clispeak` on Linux,
-`~/Library/Application Support/clispeak` on macOS. Linux can instead fall
-back to `espeak-ng` on `PATH`.
+desktop. On Linux it needs Piper where the engine looks for it, which `cargo
+xtask piper` does — `~/.local/share/clispeak` — and can otherwise fall back to
+`espeak-ng` on `PATH`. On macOS and Windows it uses the platform synthesiser
+and needs nothing installed.
 
 ## Pairing
 
