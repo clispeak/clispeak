@@ -1137,8 +1137,21 @@ async fn send_with(request: Request, json: bool, unheard_only: bool) -> anyhow::
                 return Ok(exit::NO_NODE);
             }
             Err(_) => {
-                err("error: the node accepted the request and never answered");
-                err("It may be wedged. Quit the clispeak app and open it again.");
+                // The number, and no diagnosis beyond what is actually
+                // known. This used to assert the node was wedged, which for
+                // the commonest case — a device that is simply switched off —
+                // named the wrong node and told the reader to restart a
+                // healthy app (#151). The node now bounds its own dial and
+                // answers `unreachable` inside this window, so reaching here
+                // really does mean the node itself stopped answering.
+                err(&format!(
+                    "error: the node accepted the request and said nothing for {}s",
+                    patience(&request).as_secs()
+                ));
+                err(
+                    "It is not a device being slow to answer — the node reports that \
+                     itself. Quit the clispeak app and open it again.",
+                );
                 return Ok(exit::NO_NODE);
             }
         };
@@ -1463,22 +1476,49 @@ fn first_line(text: &str) -> String {
 /// A wait gets what it asked for plus a margin, because the node applies the
 /// same bound and should be the one to time out — it knows *why*, and can say
 /// "queued" or "speaking" instead of leaving the caller to guess.
+///
+/// **So does anything that dials a device.** That rule was written for
+/// `--wait` and applied to nothing else, and the bound an ordinary speak
+/// would have had to mirror did not exist: the dial fell through to iroh's
+/// own timeout at about thirty seconds while this waited ten. A speak to an
+/// unreachable device therefore reported that the *local* node had accepted
+/// the request and never answered, and told the reader to quit and reopen a
+/// perfectly healthy app — twenty seconds before the node had an answer to
+/// give (#151). `stop`, `skip`, `pause` and `resume` reach a peer the same
+/// way and had the same ten seconds.
+/// `clispeak_core::transport::PEER_CONNECT`, duplicated by hand.
+///
+/// This crate depends on `clispeak-proto` and `clispeak-text` and nothing
+/// else, deliberately — it is what keeps startup at ~3ms — so a handful of
+/// constants are kept in step here rather than imported, as the socket name
+/// and the frame format already are. If the node's bound moves, this moves
+/// with it: being *shorter* than the node's is the bug in `patience` above.
+const PEER_CONNECT: std::time::Duration = std::time::Duration::from_secs(20);
+
 fn patience(request: &Request) -> std::time::Duration {
     use std::time::Duration;
     /// Long enough for a node busy synthesising to get round to answering,
-    /// short enough that an agent is not stuck behind it.
+    /// short enough that an agent is not stuck behind it. For requests the
+    /// node answers out of its own state, with nothing to dial.
     const ORDINARY: Duration = Duration::from_secs(10);
     /// What the node itself caps a wait at, mirrored here.
     const MAX_WAIT: u64 = 3600;
     /// Room for the node's own timeout to fire first and be reported.
     const MARGIN: Duration = Duration::from_secs(15);
-
     match request {
         Request::Speak {
             wait: true,
             timeout_secs,
             ..
         } => Duration::from_secs(timeout_secs.unwrap_or(MAX_WAIT).min(MAX_WAIT)) + MARGIN,
+        // Everything that can reach another device. The node dials before it
+        // replies, whether or not anyone is waiting for the outcome.
+        Request::Speak { .. }
+        | Request::Stop { .. }
+        | Request::Skip { .. }
+        | Request::Pause { .. }
+        | Request::Resume { .. }
+        | Request::Join { .. } => PEER_CONNECT + MARGIN,
         _ => ORDINARY,
     }
 }
@@ -1635,7 +1675,9 @@ use frame::{read_frame, write_frame};
 
 #[cfg(test)]
 mod display_tests {
-    use super::{Command, first_line, flags_first, ignores_to, plain, plain_lines, short_id};
+    use super::{
+        Command, Request, first_line, flags_first, ignores_to, plain, plain_lines, short_id,
+    };
 
     fn argv(line: &str) -> Vec<String> {
         line.split(' ').map(str::to_string).collect()
@@ -1706,10 +1748,10 @@ mod display_tests {
             Duration::from_secs(10),
             "an ordinary request is answered in milliseconds"
         );
-        assert_eq!(
-            super::patience(&speak(false, None)),
-            Duration::from_secs(10)
-        );
+        // Not ten, and this assertion used to say ten. A speak reaches a
+        // device, the node dials before it replies whether or not anyone is
+        // waiting, and waiting less than the node's own bound is #151.
+        assert!(super::patience(&speak(false, None)) > super::PEER_CONNECT);
 
         // A wait is waiting on a device speaking, not on the node, and the
         // node should be the one to time out: it knows why, and can say
@@ -1769,6 +1811,55 @@ mod display_tests {
         assert_eq!(ignores_to(&Some(Command::Status)), Some("status"));
         assert_eq!(ignores_to(&Some(Command::Queue)), Some("queue"));
         assert_eq!(ignores_to(&Some(Command::Devices)), Some("devices"));
+    }
+
+    #[test]
+    fn anything_that_dials_a_device_outlives_the_node_dialling_it() {
+        // #151: the node dials before it replies, whether or not anyone is
+        // waiting, and its bound is 20s. This waited 10, so a speak to a
+        // device that was switched off reported that the *local* node had
+        // never answered and told the reader to restart a healthy app.
+        //
+        // The property is one-directional and that is the whole point: this
+        // must be longer than the node's bound, so the node is the one that
+        // times out and gets to say `unreachable` with a reason.
+        let speak = Request::Speak {
+            text: "hello".into(),
+            priority: clispeak_proto::Priority::Normal,
+            to: Some("phone".into()),
+            wait: false,
+            voice: None,
+            timeout_secs: None,
+        };
+        assert!(
+            super::patience(&speak) > super::PEER_CONNECT,
+            "a speak must outlive the dial it waits on"
+        );
+        for reaching in [
+            Request::Stop {
+                to: Some("phone".into()),
+                msg_id: None,
+            },
+            Request::Skip {
+                to: Some("phone".into()),
+            },
+            Request::Pause {
+                to: Some("phone".into()),
+            },
+            Request::Resume {
+                to: Some("phone".into()),
+            },
+        ] {
+            assert!(
+                super::patience(&reaching) > super::PEER_CONNECT,
+                "{reaching:?} reaches a peer and must outlive the dial"
+            );
+        }
+
+        // And a request the node answers out of its own state is unchanged:
+        // there is nothing to dial, so waiting longer would only leave an
+        // agent holding a wedged node.
+        assert!(super::patience(&Request::Status) < super::PEER_CONNECT);
     }
 
     #[test]

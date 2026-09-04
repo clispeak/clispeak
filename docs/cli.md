@@ -246,6 +246,13 @@ reason: either this device is not in the space the message was sent in, or the
 message was longer than the 100,000 characters it will speak in one go. Split
 it and send the parts.
 
+`unreachable` takes up to **20 seconds** to arrive, because that is how long
+the node spends dialling before it gives up, and it dials before it replies
+whether or not you passed `--wait`. So a `say` naming a device that is
+switched off returns in about twenty seconds with `unreachable`, rather than
+returning at once. It is not the node hanging — if the node itself goes quiet
+you get exit `5` instead, which says so in as many words.
+
 ### Exit codes
 
 | Code | Meaning |
