@@ -544,8 +544,73 @@ impl Member {
     ///
     /// Deliberately excludes `name`, so renaming a device does not invalidate
     /// its membership.
+    ///
+    /// # These bytes are not a name
+    ///
+    /// `clispeak-join-v1` is a **domain separator**: it is data that every
+    /// signature in existence was computed over, on every device, including
+    /// ones that will never be rebuilt. Changing it does not rename anything.
+    /// It makes every membership record on every paired device fail to
+    /// verify, at once, with no error and no message — the roster simply
+    /// empties and both ends report a successful join over nothing.
+    ///
+    /// That is not hypothetical. A blanket rename of the project changed this
+    /// line from `voicecast-join-v1`, and it cost a day of diagnosis and
+    /// every pairing on three devices (decision 83).
+    ///
+    /// A test below pins the exact bytes, because nothing else can: signing
+    /// and verifying use this same function, so **a test that signs and
+    /// verifies agrees with itself no matter what this says**. Only a written
+    /// down expected value disagrees.
     pub fn signed_payload(endpoint_id: &str, invited_by: &str, joined_at: u64) -> Vec<u8> {
         format!("clispeak-join-v1:{endpoint_id}:{invited_by}:{joined_at}").into_bytes()
+    }
+}
+
+#[cfg(test)]
+mod signed_payload_tests {
+    use super::Member;
+
+    /// The bytes, written down.
+    ///
+    /// **If this test fails, do not update the expected value.** It is not
+    /// describing the code; it is describing the signatures already sitting
+    /// on every paired device, which cannot be updated. A change here is a
+    /// break of every existing pairing, and the only honest ways through it
+    /// are to put the constant back, or to accept the break deliberately and
+    /// tell everyone to re-pair — which is what decision 83 records having
+    /// done, once, and why this test exists so it is never done by accident.
+    ///
+    /// The value is spelled out rather than built with `format!`, because a
+    /// test that derives its expectation the same way the code does is a test
+    /// that cannot disagree with it.
+    #[test]
+    fn the_signed_payload_is_a_fixed_shape_that_past_signatures_depend_on() {
+        // Compared as text, not bytes: a failure here has to be readable at
+        // a glance, and two 38-element `u8` arrays are not.
+        let payload = String::from_utf8(Member::signed_payload("aaaa", "bbbb", 1_700_000_000))
+            .expect("the payload is ascii");
+        assert_eq!(
+            payload, "clispeak-join-v1:aaaa:bbbb:1700000000",
+            "the signed payload changed shape. Every membership record on \
+             every paired device was signed over the old one and none of them \
+             will verify against this. Read `Member::signed_payload`'s doc \
+             comment before touching this expectation"
+        );
+    }
+
+    /// The other half: what is *not* in it.
+    ///
+    /// A name outside the payload is what lets a device be renamed without
+    /// losing its membership, and `renamed_at` sits outside for the same
+    /// reason. Adding either would break every signature exactly as changing
+    /// the separator does, and would do it while looking like a feature.
+    #[test]
+    fn a_name_is_not_part_of_what_is_signed() {
+        let payload = Member::signed_payload("aaaa", "bbbb", 1);
+        let text = String::from_utf8(payload).expect("ascii");
+        assert!(!text.contains("Phone"), "nothing about a label is in here");
+        assert_eq!(text.split(':').count(), 4, "separator, two ids, a time");
     }
 }
 
