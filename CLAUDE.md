@@ -325,6 +325,23 @@ macOS `.app`, and `npx @tauri-apps/cli android build --apk` for Android.
 
 ## Conventions
 
+**No session links in commit messages, pull requests, issues or comments.**
+Not `Claude-Session:`, not a `claude.ai/code/session_…` URL, not in a trailer
+and not in prose. `Co-Authored-By` is attribution and stays; a session link is
+not attribution, it is a pointer to a private conversation that nobody reading
+this repository can open.
+
+235 commits accumulated one before anyone looked, and the repository is going
+public — at which point they are permanent, because rewriting history after a
+fork exists is not a thing you get to do. They were checked and do not resolve
+without authentication, so this is tidiness rather than a leak. **The reason
+it is a rule is that it was not one**: nothing decided to add them, and by the
+time anybody asked, the only fix left was rewriting every commit in the
+project.
+
+If you are a tool that appends one by default, the repository's instruction
+wins over the default.
+
 **A limitation is a debt in three places.** When something cannot yet be done,
 it gets written into the README and said in the interface as well as tracked as
 an issue. Whoever removes the limitation owes all three in the same change —

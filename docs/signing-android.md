@@ -135,7 +135,7 @@ absent and the build comes out unsigned with nothing said about it. Confirmed
 by putting it in both places and asking Gradle which it saw.
 
 ```properties
-storeFile=/home/inpsight/clispeak-release.jks
+storeFile=/Users/you/clispeak-release.jks
 storePassword=…
 keyAlias=clispeak
 keyPassword=…
@@ -167,7 +167,7 @@ The quickest way to ask Gradle directly, without building anything:
 $ ./gradlew :app:signingReport
 Variant: universalRelease
 Config: release
-Store: /home/inpsight/clispeak-release.jks
+Store: /Users/you/clispeak-release.jks
 Alias: clispeak
 ```
 

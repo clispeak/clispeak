@@ -324,6 +324,16 @@ it because it is convenient, not because it is contained.
 ## Licence
 
 **MIT OR Apache-2.0**, at your option — the Rust ecosystem's usual pair.
+
+**The speech payload is not ours and is not always shipped.** Piper, its
+phonemiser and ONNX Runtime are MIT; espeak-ng is GPL-3.0-or-later; and a
+voice model carries the terms of the corpus it was trained on. macOS, iOS and
+Android use the platform's own synthesiser and carry no payload at all; Linux
+and Windows are covered in [`docs/licensing.md`](docs/licensing.md), which is
+the honest answer rather than a badge.
+
+Reporting a security issue: [`SECURITY.md`](SECURITY.md). Working on it:
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 Apache-2.0 carries an explicit patent grant; MIT is there for anyone who
 prefers the shorter terms. See [LICENSE-MIT](LICENSE-MIT) and
 [LICENSE-APACHE](LICENSE-APACHE).
