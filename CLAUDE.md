@@ -210,6 +210,20 @@ It is a history, not a status. "There is no SKIPPED row" would reject every
 correctly-verified pull request from here on. "Five green rows" passes an
 unfinished one. Only the set of names answers the question.
 
+**And where one name has two conclusions, take the latest.** That is not a
+rare case, it is what `cancel-in-progress` produces on every pull request that
+was ever a draft: marking one ready supersedes the draft run, so the gate job
+appears as `CANCELLED` from the run that was killed and `SUCCESS` from the one
+that replaced it. Requiring *every* conclusion for a name to be green rejects a
+correctly verified pull request. Accepting *any* green conclusion is worse — a
+stale pass then masks a fresh failure, which is the hole counting rows already
+has. The last entry per name is the status, for the same reason the SKIPPED row
+is not one: it is a history.
+
+So the rule is three parts, and each was learned separately, twice in one day:
+**mergeable, or there is nothing to count · five distinct names, not five green
+rows · the latest conclusion per name, not all of them.**
+
 **And before counting, check the pull request is mergeable — a conflicting
 one produces nothing to count.** GitHub runs a `pull_request` workflow against
 the *merge* of head into base, and when that merge cannot be computed it
