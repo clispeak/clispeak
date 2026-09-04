@@ -297,6 +297,11 @@ impl Roster {
             // record. It cannot forge a newer one without a real member.
             return Ok(());
         }
+        // The record beat the revocation, so the revocation is spent. Left in
+        // place, it made a device a member *and* revoked at the same time,
+        // and `merge` copied that contradiction to every peer it synced with
+        // — which is where a thirty-second space dissolution started (#166).
+        self.revoked.remove(&member.endpoint_id);
         self.members.insert(member.endpoint_id.clone(), member);
         Ok(())
     }
@@ -382,7 +387,25 @@ impl Roster {
         self.members.values().filter(|m| self.is_current(m))
     }
 
-    /// Remove a device from the space.
+    /// Drop a member here, without telling anyone else.
+    ///
+    /// The difference from [`Roster::revoke`] is the whole of #166. A revoke
+    /// mints a tombstone, tombstones travel through [`Roster::merge`], and a
+    /// tombstone applies on every device that receives it. That is right for
+    /// a decision — "this device is no longer ours" — and catastrophic for a
+    /// guess.
+    ///
+    /// This is for the guess: a peer answered one roster sync as though we
+    /// were not a member, which usually means it left and its farewell went
+    /// missing, and occasionally means it is briefly confused. Forgetting it
+    /// here costs nothing and self-corrects — the next sync with any other
+    /// member puts it back if it really is one, and brings its real tombstone
+    /// if it really left.
+    pub fn forget(&mut self, endpoint_id: &str) -> bool {
+        self.members.remove(endpoint_id).is_some()
+    }
+
+    /// Remove a device from the space, and tell everyone.
     pub fn revoke(&mut self, endpoint_id: &str) {
         self.revoked.insert(endpoint_id.to_string(), now());
         self.members.remove(endpoint_id);
@@ -454,6 +477,14 @@ impl Roster {
         }
         self.members
             .retain(|id, m| !self.revoked.get(id).is_some_and(|t| *t > m.joined_at));
+        // Every tombstone a surviving member outlived is spent, for the
+        // reason in `admit`: a roster that says both is one a later merge can
+        // read either way, and it is what travels onward (#166). A tombstone
+        // for a device that is *not* a member stays — that is the one still
+        // doing a job, refusing a replayed record.
+        let members = &self.members;
+        self.revoked
+            .retain(|id, at| !members.get(id).is_some_and(|m| m.joined_at >= *at));
     }
 
     /// Load from disk, returning an empty roster if there is none yet.

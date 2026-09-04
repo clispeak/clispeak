@@ -569,3 +569,129 @@ fn a_roster_holds_its_own_members_by_id() {
     roster.revoke(&bob.public().to_string());
     assert!(!roster.holds(&bob.public().to_string()));
 }
+
+#[test]
+fn a_rejoin_clears_the_revocation_it_beat() {
+    // #166, at the level it started. A device was revoked, rejoined 45
+    // seconds later, and stayed in `members` and `revoked` at once — a
+    // contradiction `merge` then copied to every peer.
+    let alice = device();
+    let bob = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    let old = on_alice.invite(&alice, &bob.public().to_string(), "bob");
+    on_alice.revoke(&bob.public().to_string());
+    assert!(!on_alice.allows(&bob.public()), "revoking removes him");
+
+    // The rejoin, signed now, which is what `accept_join` produces.
+    let fresh = on_alice.invite(&alice, &bob.public().to_string(), "bob");
+    assert!(fresh.joined_at >= old.joined_at);
+    assert!(on_alice.allows(&bob.public()), "a rejoin restores him");
+
+    // The part that was missing: the tombstone is gone, not merely outranked.
+    // A peer that still holds it must not be able to talk him back out.
+    let mut on_carol = Roster::new();
+    on_carol.merge(&on_alice);
+    assert!(
+        on_carol.allows(&bob.public()),
+        "a peer learning this roster has to agree he is a member"
+    );
+
+    // And the contradiction does not travel: merging in either direction
+    // leaves both sides holding him.
+    let mut back = on_alice.clone();
+    back.merge(&on_carol);
+    assert!(back.allows(&bob.public()), "and it converges");
+}
+
+#[test]
+fn a_stale_revocation_cannot_talk_a_rejoined_device_back_out() {
+    // The dangerous direction: a third device that was offline for the whole
+    // revoke-and-rejoin still holds the tombstone. When it syncs, its old
+    // news must not evict a device that has since rejoined.
+    let alice = device();
+    let bob = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob.public().to_string(), "bob");
+
+    // Carol's copy: bob revoked, and she never heard about the rejoin.
+    let mut on_carol = on_alice.clone();
+    on_carol.revoke(&bob.public().to_string());
+
+    // Alice revokes and re-invites, which is the whole of the sequence.
+    on_alice.revoke(&bob.public().to_string());
+    on_alice.invite(&alice, &bob.public().to_string(), "bob");
+
+    on_alice.merge(&on_carol);
+    assert!(
+        on_alice.allows(&bob.public()),
+        "a rejoin is newer than the revocation it replaced, whoever holds it"
+    );
+}
+
+#[test]
+fn forgetting_a_peer_is_local_and_revoking_it_is_not() {
+    // The other half of #166. `revoke` is a decision and must travel;
+    // `forget` is a guess and must not, because a guess that travels removed
+    // a device from every roster in the space on the strength of one refused
+    // sync.
+    let alice = device();
+    let bob = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob.public().to_string(), "bob");
+    let mut on_carol = Roster::new();
+    on_carol.merge(&on_alice);
+
+    assert!(on_alice.forget(&bob.public().to_string()));
+    assert!(!on_alice.allows(&bob.public()), "gone here");
+
+    // Carol is untouched, and telling Alice about it puts him back — which
+    // is the self-correction: if he really is a member, any other member
+    // says so.
+    assert!(on_carol.allows(&bob.public()), "and nowhere else");
+    on_alice.merge(&on_carol);
+    assert!(
+        on_alice.allows(&bob.public()),
+        "a forget must be undone by the next sync, or it is a revoke"
+    );
+
+    // A revoke is the opposite and stays the opposite.
+    on_carol.revoke(&bob.public().to_string());
+    let mut on_dave = Roster::new();
+    on_dave.merge(&on_carol);
+    assert!(!on_dave.allows(&bob.public()), "a decision travels");
+
+    // Forgetting something that is not there is not a change.
+    assert!(!on_alice.forget(&device().public().to_string()));
+}
+
+#[test]
+fn a_tombstone_for_a_non_member_still_refuses_a_replay() {
+    // The tombstone that is doing a job must survive the cleanup above:
+    // a revoked device replaying its old record has to keep failing.
+    let alice = device();
+    let bob = device();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    // Dated an hour ago, so the revocation below is genuinely newer.
+    // Timestamps are whole seconds, and a record stamped in the same second
+    // as a tombstone is neither before nor after it — which is why the
+    // rejoin tests above put real time between the two.
+    let old = signed_at(&alice, &bob.public().to_string(), "bob", now() - 3600, 0);
+    on_alice.admit(old.clone()).expect("alice vouches for bob");
+    on_alice.revoke(&bob.public().to_string());
+
+    // Bob is not a member, so nothing outlived his tombstone and it stays.
+    let mut replayed = Roster::new();
+    replayed.merge(&on_alice);
+    assert!(
+        replayed.admit(old).is_ok(),
+        "a replay is refused, not an error"
+    );
+    assert!(
+        !replayed.allows(&bob.public()),
+        "and the old record must not readmit him"
+    );
+}
