@@ -212,6 +212,10 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 | Windows | SAPI 5 — built, never run | tray app |
 | iOS | Apple's own | **foreground only** — see below |
 
+The Android build is **`arm64-v8a` only** (decision 106), which is every phone
+made since about 2019 and no emulator. The APK is called `clispeak-android.apk`
+and does not say that, so wherever it is offered for download, the page has to.
+
 **iOS only speaks while the app is on screen**, and that is the platform
 rather than an unfinished corner. Backgrounded, it stops answering somewhere
 between five and ten minutes — measured on the simulator, which suspends less
