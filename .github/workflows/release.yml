@@ -616,24 +616,64 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artefacts
+      # GitHub serves `/releases/latest/download/<name>` as a permanent
+      # redirect to whichever release is newest — which is the whole reason
+      # clispeak.com can be a static page that never needs republishing. It
+      # only works if `<name>` is identical between releases, and the names
+      # the bundlers produce are not: two carry the version, and Android's
+      # is `app-universal-release.apk`, which names neither the product nor
+      # the platform. So the names are assigned here, once, deliberately
+      # (#187).
+      #
+      # **Exactly one match, or fail.** A glob is the wrong tool for choosing
+      # which file a person downloads: `apk/**/*.apk` matching a universal
+      # build *and* four per-ABI builds would pick one silently, and the
+      # release would look complete while half the phones that installed it
+      # got the wrong architecture. Two matches is a build change nobody
+      # meant; zero is a job that failed upstream and did not say so. Both
+      # stop the release rather than produce a wrong one.
+      - name: Give the artefacts names that do not move
+        run: |
+          mkdir release
+          take() {
+            local pattern="$1" name="$2"
+            local matches
+            mapfile -t matches < <(find artefacts -type f -path "$pattern" | sort)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one file matching $pattern for $name, found ${#matches[@]}"
+              printf '  %s\n' "${matches[@]}"
+              exit 1
+            fi
+            cp "${matches[0]}" "release/$name"
+            echo "$name  <-  ${matches[0]}"
+          }
+          take 'artefacts/macos/*.dmg'      clispeak-macos.dmg
+          take 'artefacts/windows/*.exe'    clispeak-windows-setup.exe
+          take 'artefacts/android/*.apk'    clispeak-android.apk
+          take 'artefacts/linux/*.flatpak'  clispeak-linux.flatpak
       # Nothing signs these yet (#29, #31), so a checksum is the only way a
       # person can tell what they downloaded from what this built. It matters
-      # more, not less, once #23 serves them from somewhere other than the
-      # release page — a bad upload and a tampered one look identical without
-      # it. Paths are relative to `artefacts/` so the file reads the same
-      # wherever it is unpacked.
+      # more, not less, now that clispeak.com serves them from somewhere
+      # other than the release page (#25) — a bad upload and a tampered one
+      # look identical without it. Paths are relative to `release/` so the
+      # file reads the same wherever it is unpacked.
+      #
+      # It also carries the version, which the filenames no longer do: this
+      # is how somebody with three downloaded copies of `clispeak-macos.dmg`
+      # works out which is which.
       - name: Checksum the artefacts
-        working-directory: artefacts
+        working-directory: release
         run: |
           find . -type f ! -name SHA256SUMS -print0 \
             | sort -z \
             | xargs -0 sha256sum > SHA256SUMS
+          sed -i '1i # clispeak ${{ github.ref_name }}' SHA256SUMS
           cat SHA256SUMS
       - name: Draft a release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           draft: true
-          files: artefacts/**/*
+          files: release/*
           body: |
             Built from ${{ github.ref_name }}.
 
@@ -641,8 +681,17 @@ jobs:
             download until the licensing of what these packages bundle is
             settled — see issue #24.
 
-            The macOS app is unsigned and the Android APK is an unsigned
-            *release* build. Both need credentials that do not exist yet —
-            see #29 and #31. `SHA256SUMS` lists what each file should hash
-            to; it is not a signature, and it is only as trustworthy as the
-            page you read it from.
+            **macOS is signed and notarised** (#29). **Windows and Android
+            are not.** Windows has no certificate, so its installer raises
+            SmartScreen; the Android APK is a *release* build signed with
+            whatever key the workflow was given, and #31 is where that key
+            comes from. `SHA256SUMS` lists what each file should hash to and
+            names the version these files were built from — it is not a
+            signature, and it is only as trustworthy as the page you read it
+            from.
+
+            Filenames here do not carry the version, so that
+            `/releases/latest/download/clispeak-linux.flatpak` and its four
+            siblings keep working as clispeak.com's download links without
+            the page being republished (#187). `SHA256SUMS` is how you tell
+            two downloads apart.
