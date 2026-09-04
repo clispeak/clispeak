@@ -1,8 +1,24 @@
-//! Speech on iOS, through `AVSpeechSynthesizer`.
+//! Speech on Apple platforms, through `AVSpeechSynthesizer`.
 //!
-//! The other unix engines spawn a process. iOS does not permit that at all,
-//! which is why it was excluded from them (#126) and why this exists: the
-//! platform's own synthesiser is the only speech there is.
+//! **iOS, because it is the only speech there is.** The other unix engines
+//! spawn a process and iOS does not permit that at all, which is why it was
+//! excluded from them (#126).
+//!
+//! **macOS, because Piper there is three problems in a trenchcoat** (#132).
+//! Upstream's macOS build ships without an rpath and without the dylibs it
+//! links against, so installing it runs `otool`, `install_name_tool` and
+//! `codesign` — Xcode Command Line Tools, not base macOS. "Download the
+//! engine on first run" therefore meant "install a gigabyte of developer
+//! tooling first", which is not a first-run download. On top of that
+//! `rhasspy/piper` was archived in October 2025 and its maintained successor
+//! is GPL-3.0 for the whole project, because it embeds espeak-ng rather than
+//! spawning it.
+//!
+//! One engine ends all three on macOS, and it is the engine iOS already
+//! needed. What it costs is that a message no longer sounds identical on
+//! every desktop — which `docs/architecture.md` stated as a goal, and which
+//! was really a consequence of Piper being the only thing available
+//! everywhere.
 //!
 //! # Why nothing here claims to be `Send`
 //!
@@ -57,7 +73,7 @@ const POLL: std::time::Duration = std::time::Duration::from_millis(20);
 const START_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Speech through the platform synthesiser.
-pub struct IosEngine {
+pub struct AppleEngine {
     synth: MainThreadBound<objc2::rc::Retained<AVSpeechSynthesizer>>,
     /// Chosen voice identifier, or `None` for the system default.
     voice: Mutex<Option<String>>,
@@ -66,7 +82,7 @@ pub struct IosEngine {
     rate: Mutex<f32>,
 }
 
-impl IosEngine {
+impl AppleEngine {
     /// Build one, configuring the audio session so it can actually be heard.
     pub fn new() -> Result<Self, EngineError> {
         // Playback, or the hardware silent switch mutes it. The default
@@ -128,7 +144,7 @@ impl IosEngine {
     }
 }
 
-impl SpeechEngine for IosEngine {
+impl SpeechEngine for AppleEngine {
     fn speak(&self, chunk: &str) -> Result<(), EngineError> {
         let text = chunk.to_string();
         let voice = self.voice.lock().expect("voice lock").clone();

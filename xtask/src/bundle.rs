@@ -55,14 +55,27 @@ pub fn bundle(root: &Path) -> Result<()> {
     stage_cli(root, &tauri)?;
 
     // Piper and one voice, bundled rather than fetched on first run — the
-    // same reasoning as the Flatpak manifest, and doubly so on a Mac, which
-    // has no system speech this project can reach.
+    // same reasoning as the Flatpak manifest.
+    //
+    // **Not on macOS.** It speaks through `AVSpeechSynthesizer` now, so the
+    // payload would be 200MB of engine nothing calls — and it is not inert
+    // freight: espeak-ng is GPL-3.0, and shipping it is a redistribution with
+    // obligations for something the Mac does not use. That is the licensing
+    // half of #132, and switching the engine alone does not deliver it: the
+    // bundler stages the payload whether or not anything reads it, which is
+    // exactly what a first build with the new engine showed — 208MB with
+    // `libespeak-ng.1.dylib` still inside.
+    //
+    // Windows keeps it. Piper is still its engine, and the Windows archive is
+    // self-contained where the macOS one never was.
     //
     // `speech`, not `clispeak`: Tauri stages resources beside the built
     // executable, and `target/release/clispeak` is already the command-line
     // tool. A directory of the same name collides with that file and the
     // build dies with a bare "Not a directory".
-    piper::fetch(&tauri.join("speech"))?;
+    if !cfg!(target_os = "macos") {
+        piper::fetch(&tauri.join("speech"))?;
+    }
 
     // `tauri.bundle.conf.json` rather than the main config, because Tauri's
     // build script checks that every declared resource and sidecar exists —
@@ -77,7 +90,15 @@ pub fn bundle(root: &Path) -> Result<()> {
             "tauri",
             "build",
             "--config",
-            "src-tauri/tauri.bundle.conf.json",
+            // macOS declares no speech resource, because it stages none. A
+            // declared resource that is absent fails Tauri's own build-script
+            // check, so removing the payload and leaving the declaration
+            // would break the build rather than shrink it.
+            if cfg!(target_os = "macos") {
+                "src-tauri/tauri.bundle.macos.conf.json"
+            } else {
+                "src-tauri/tauri.bundle.conf.json"
+            },
         ])
         .current_dir(&app)
         .status()

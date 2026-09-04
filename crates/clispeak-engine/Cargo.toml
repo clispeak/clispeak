@@ -27,7 +27,7 @@ jni = "0.21"
 # AVSpeechSynthesizer, the only speech on iOS. `objc2` and `objc2-foundation`
 # are already in the tree by way of the webview, so these pin to the same
 # major versions rather than pulling a second copy of the runtime.
-[target.'cfg(target_os = "ios")'.dependencies]
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std",
