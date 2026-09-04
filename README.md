@@ -18,23 +18,28 @@ and no account to create.
 **Working on Linux, macOS and Android.** Linux and Android run the packaged
 app and talk to each other over the open internet, including on cellular.
 
-**macOS speaks, and installs like a Mac app.** Verified on an arm64 Mac:
-installed from the built dmg, synthesising through Piper, with the `clispeak`
-command on the PATH. Its peer-to-peer side is exercised only as far as binding
-an endpoint — pairing a Mac with another device has not been tested yet, and
-an Intel Mac has no verified Piper checksum, so it is refused rather than
-guessed at.
+**macOS speaks in its own voice.** It uses `AVSpeechSynthesizer`, the
+platform synthesiser, rather than Piper — which also takes the GPL-3.0 speech
+payload out of the Mac build entirely and drops it from 208MB to 32MB.
+Installing from the built dmg with the `clispeak` command on the PATH was
+verified on an arm64 Mac while it still used Piper; **the new engine has been
+built but not yet heard**, and that is being checked on hardware. Its
+peer-to-peer side is exercised only as far as binding an endpoint — pairing a
+Mac with another device has not been tested yet.
 
-Windows now speaks with Piper, the same engine as Linux and macOS, so a
-message sounds the same wherever it lands. There is no installer yet: Piper
-has to be put in place with `cargo xtask piper` — a running node picks it up
-within a couple of seconds, without a restart — and Windows also needs the
-Microsoft Visual C++ Redistributable, which it does not ship and which Piper
-links against.
+iOS uses the same engine, and has been launched and heard on a real device.
 
-iOS builds on every commit but is not yet wired to a speech engine — the rule
-is that nothing merges unless it compiles for all five targets, so adding it
-later is a matter of testing rather than untangling.
+**Windows and Linux speak with Piper**, which is where it is still the best
+available answer: there is no universal native engine on Linux, and nobody has
+written the Windows one yet. So a message does *not* sound identical on every
+platform any more. That uniformity was a consequence of Piper being the only
+thing that ran everywhere, not a goal — Android has always sounded like
+Android and nobody thought it a defect.
+
+There is no Windows installer yet: Piper has to be put in place with `cargo
+xtask piper` — a running node picks it up within a couple of seconds, without
+a restart — and Windows also needs the Microsoft Visual C++ Redistributable,
+which it does not ship and which Piper links against.
 
 The riskiest assumption — that peer-to-peer connections survive carrier-grade
 NAT and network changes — was [measured on real hardware](docs/m0-results.md)
@@ -67,8 +72,9 @@ the host rather than inside the sandbox: entering a Flatpak costs about 86ms
 against the tool's own 3ms, and an agent calls it repeatedly. They still find
 each other, over an abstract socket that crosses the sandbox.
 
-**macOS.** Build the app bundle, which carries Piper, a voice and the
-command-line tool, so a drag to /Applications is the whole install:
+**macOS.** Build the app bundle, which carries the command-line tool and no
+speech payload at all — macOS speaks through the platform synthesiser — so a
+drag to /Applications is the whole install:
 
 ```bash
 cargo xtask bundle
@@ -179,8 +185,8 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 
 | | Speech | Background |
 |---|---|---|
-| Linux | Piper, falling back to espeak-ng | tray app |
-| macOS | Piper | tray app |
+| Linux | Piper, falling back to espeak-ng if the host has it | tray app |
+| macOS | Apple's own | tray app |
 | Android | system text-to-speech | foreground service + battery exemption |
 | Windows | Piper | tray app |
 | iOS | Apple's own | **foreground only** — see below |

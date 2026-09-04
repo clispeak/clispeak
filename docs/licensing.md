@@ -15,12 +15,14 @@ about something nobody had run.
 | | |
 |---|---|
 | **Our code** | **MIT OR Apache-2.0**, the Rust ecosystem default |
-| **Bundled speech engine** | **stop shipping it** — download on first run instead |
+| **Bundled speech engine** | **stop shipping it** — done on macOS, iOS and Android; Linux and Windows still bundle |
 | **Default voice** | ~~must change~~ **done** — LJ Speech, public domain |
 | **Website** | GitHub Pages, static, no accounts, no data |
 | **Terms of use** | not needed for the software; a privacy policy *is* needed for the stores |
 
-Two of those are blockers. The rest is paperwork.
+Two of those are blockers. The rest is paperwork. Both blockers have moved
+since this was written: the voice is fixed outright, and the engine is fixed
+on three platforms of five — see each section for what is left.
 
 ---
 
@@ -71,7 +73,13 @@ the repository.
 
 This is cheap to fix now and expensive to fix after a download page exists.
 
-## Blocker 2: we ship GPL-3.0 code, and that closes the Apple App Store
+## Blocker 2: we ship GPL-3.0 code, and that closes the Apple App Store — **half fixed**
+
+**No longer true on Apple.** Decision 91 moved macOS to `AVSpeechSynthesizer`
+and stopped staging the payload there, and iOS never had one, so neither Apple
+artefact contains GPL code. What follows is the analysis as it stood, kept
+because it is still live for Linux and Windows, with where it now stands at
+the end.
 
 **This half was already written down.** `docs/releasing.md` identified
 espeak-ng as GPL-3.0-or-later and said the archive "carries no licence text at
@@ -104,26 +112,56 @@ distribution restrictions that GPL forbids adding; this is why VLC was pulled
 in 2011 after a copyright holder objected. Shipping a GPL-3.0 binary inside an
 App Store build recreates that situation exactly.
 
-**What to do — one change fixes both:** stop bundling the speech payload.
-`cargo xtask piper` already downloads Piper and a voice on demand, and the
-engine layer already tolerates an engine that is absent and appears later
-(`Rediscovering`, decision 52). So the app can ship with no engine and fetch
-one on first run, at the user's request.
+### Where this stands now — three platforms of five carry nothing
 
-Then:
+**Measured on 3 September 2026, after decision 91.**
 
-- the distributed artefact contains no GPL code, and the App Store question
-  disappears
-- the voice-corpus problem disappears from *our* distribution as well, because
-  we are no longer the distributor
-- Android already uses the platform engine and is unaffected
-- Linux and Windows keep Piper, fetched rather than bundled
+| Platform | Speech engine | GPL payload in the artefact |
+|---|---|---|
+| Linux | Piper, bundled in the Flatpak | **yes** — espeak-ng and a voice model |
+| Windows | Piper, placed by `cargo xtask piper` | **yes** — espeak-ng and a voice model |
+| macOS | `AVSpeechSynthesizer` | **no** — nothing is staged |
+| iOS | `AVSpeechSynthesizer` | **no** — never had one |
+| Android | `android.speech.tts.TextToSpeech` | **no** — never had one |
 
-The cost is a first-run download and an app that cannot speak until it
-finishes. That is a real regression in first impressions and it is the honest
-price. The alternative — native engines on macOS and Windows, which the
-`SpeechEngine` trait already anticipates — is more work and better, and can
-come later.
+The macOS bundle went from 208MB to 32MB with zero speech files in it: no
+Piper, no `libespeak-ng.1.dylib`, no voice model. **So the App Store question
+is settled for both Apple platforms**, not by an argument about aggregation
+but because there is no GPL binary in the artefact to argue about.
+
+That was not the plan when this page was written. The plan was to stop
+bundling and fetch on first run everywhere, and it turned out the first-run
+download could not work on macOS at all: upstream's build ships without an
+rpath and without the dylibs it links against, so installing it runs `otool`,
+`install_name_tool` and `codesign` — Xcode Command Line Tools, not base macOS.
+"Download the engine on first run" meant "install a gigabyte of developer
+tooling first" (#132). The native engine ended that, the archived upstream and
+the GPL question in one move.
+
+**What is left is Linux and Windows**, and they are the two where it is
+hardest: there is no universal native engine on Linux, and Windows has one
+nobody has written yet.
+
+**For those two, the original plan still applies:** stop bundling the payload
+and fetch it on first run. `cargo xtask piper` already downloads Piper and a
+voice on demand, and the engine layer already tolerates an engine that is
+absent and appears later (`Rediscovering`, decision 52). Then:
+
+- the distributed artefact contains no GPL code
+- the voice-corpus problem disappears from *our* distribution too, because we
+  are no longer the distributor
+- the cost is a first-run download and an app that cannot speak until it
+  finishes — a real regression in first impressions, and the honest price
+
+**The fetch has to move out of `xtask` first**, because `xtask` is developer
+tooling and is not shipped. That also means it stops shelling out to `curl`
+and `tar`, which is the same shape as every row in `CLAUDE.md`'s divergence
+table: a binary name that resolves on the machine you wrote it on.
+
+Windows could also take the native route — the platform has a speech
+synthesiser and the `SpeechEngine` trait already anticipates one, exactly as
+macOS did. That would leave Linux as the only platform shipping GPL code, and
+Linux is the one where copyleft is least of an obstacle.
 
 ---
 
