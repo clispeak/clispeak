@@ -352,19 +352,31 @@ every other user on the machine — and `Request` is everything a device can be
 told to do: speak, invite, join, rotate, revoke, read the history, quit
 (#54, decision 76).
 
-**The socket name is not protected by the operating system, on any platform we
-support.** Linux's abstract namespace carries no permissions at all, and
-`interprocess` puts the macOS socket in `/tmp` — its own source calls that
-"the world-writable temporary directory". So the secret is doing the work that
-a file mode would do elsewhere, which is why the node answers *first*: a
-client that spoke first would hand its text to whoever had taken the name.
+**The socket lives in a directory only its owner can enter, on Unix.**
+`$XDG_RUNTIME_DIR/clispeak/` where there is one — per-user, `0700`, on tmpfs,
+cleaned at logout — and the per-user temporary directory otherwise, which is
+what macOS has. The node checks what it got before binding: a real directory
+rather than a symlink, owned by whoever is running, and closed to group and
+other. Anything else is a refusal naming the mode, because binding anyway
+would leave this paragraph claiming a protection that is not there.
 
-**What this does not fix.** Another local user can still take the socket name
-before the node does, and that denies service — the node cannot bind. Nothing
-leaks, because that listener cannot prove itself and the CLI refuses it, but
-the node does not start. The fix for that is a socket in a directory only the
-owner can enter, which changes the name-length budget in decision 35 and is
-not done.
+It was not always so. Until 4 September 2026 the name was namespaced and
+unprotected on every platform: Linux's abstract namespace carries no
+permissions at all, and `interprocess` puts a macOS socket in `/tmp` — its own
+source calls that "the world-writable temporary directory". The handshake was
+doing the work a file mode does elsewhere, which is why the node answers
+*first*: a client that spoke first would hand its text to whoever had taken
+the name. That reasoning still holds and the handshake stays; it is now the
+second line of defence rather than the only one.
+
+**Windows is still unprotected.** A named pipe has no directory to live in and
+needs a security descriptor on the listener instead, which is not written yet
+(#128). The code says so where the pipe is created rather than only here.
+
+**What this used to not fix**, and now does on Unix: another local user could
+take the socket name before the node did. Nothing leaked — that listener
+cannot prove itself — but the node would not start. It cannot happen inside a
+directory they cannot enter.
 
 **It does now say so, which it did not.** Both checks on the way to starting a
 node — the app's "is one already running" and `bind_ipc`'s "is this name
