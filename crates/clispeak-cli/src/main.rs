@@ -1271,6 +1271,20 @@ async fn send_with(
             err("Other devices keep the old name until they sync.");
             exit::OK
         }
+        Response::Revoked { name } => {
+            out(&format!("removed {}", plain(&name)));
+            // The one thing a person needs to hear after a revoke, and the
+            // one thing the old wording could not say because it was the
+            // rename's caveat: removal is eventually consistent. `rotate`
+            // is the answer when that is not good enough, and its own help
+            // says it is "for a device that was stolen rather than sold".
+            err(
+                "It keeps working until it syncs and hears about this. If the \
+                 device is out of your hands, use `clispeak rotate` instead — \
+                 a rotated space never contained it.",
+            );
+            exit::OK
+        }
         Response::Joined { members, space } => {
             out(&format!("joined '{space}'. {members} devices in it"));
             // Said because joining a second space has to name it something,

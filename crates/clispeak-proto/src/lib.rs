@@ -368,6 +368,20 @@ pub enum Response {
         #[serde(default)]
         revoked: Vec<RevokedInfo>,
     },
+    /// A device was removed from a space.
+    ///
+    /// Its own variant because it is not a rename. `revoke` used to answer
+    /// with `Renamed { name: "removed <id>" }`, so the CLI printed "renamed
+    /// to removed 49e4a3e1" and then the *rename* advice — "other devices
+    /// keep the old name until they sync" — which is a true sentence about
+    /// something that did not happen.
+    ///
+    /// The caveat a revoke actually needs is the opposite one, and was never
+    /// said: the removed device goes on working until it syncs.
+    Revoked {
+        /// What was removed, as the caller named it.
+        name: String,
+    },
     /// Node health.
     Status {
         /// This device's public key — its address on the network.
