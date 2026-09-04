@@ -22,7 +22,7 @@
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:theme="@style/Theme.voicecast_app"
+        android:theme="@style/Theme.clispeak_app"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
@@ -38,13 +38,13 @@
             </intent-filter>
 
             <!-- Scanning an invite QR opens this app. Without it the camera
-                 finds no handler for voicecast:// and reports "app not
+                 finds no handler for clispeak:// and reports "app not
                  found", which makes the primary pairing flow a dead end. -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="voicecast" android:host="join" />
+                <data android:scheme="clispeak" android:host="join" />
             </intent-filter>
         </activity>
 

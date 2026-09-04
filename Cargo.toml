@@ -1,13 +1,13 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/voicecast-proto",
-    "crates/voicecast-text",
-    "crates/voicecast-engine",
-    "crates/voicecast-core",
-    "crates/voicecast-cli",
-    "crates/voicecast-daemon",
-    "crates/voicecast-keystore",
+    "crates/clispeak-proto",
+    "crates/clispeak-text",
+    "crates/clispeak-engine",
+    "crates/clispeak-core",
+    "crates/clispeak-cli",
+    "crates/clispeak-daemon",
+    "crates/clispeak-keystore",
     "app/src-tauri",
     "xtask",
 ]
@@ -25,12 +25,12 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-voicecast-proto = { path = "crates/voicecast-proto" }
-voicecast-text = { path = "crates/voicecast-text" }
-voicecast-engine = { path = "crates/voicecast-engine" }
-voicecast-core = { path = "crates/voicecast-core" }
-voicecast-daemon = { path = "crates/voicecast-daemon" }
-voicecast-keystore = { path = "crates/voicecast-keystore" }
+clispeak-proto = { path = "crates/clispeak-proto" }
+clispeak-text = { path = "crates/clispeak-text" }
+clispeak-engine = { path = "crates/clispeak-engine" }
+clispeak-core = { path = "crates/clispeak-core" }
+clispeak-daemon = { path = "crates/clispeak-daemon" }
+clispeak-keystore = { path = "crates/clispeak-keystore" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

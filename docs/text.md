@@ -41,7 +41,7 @@ The error message *is* the mechanism, so it carries the offending spans, a
 concrete replacement the agent can resend verbatim, and the escape hatch:
 
 ```
-$ voicecast --to pixel "Updated **3 files**. See \`src/main.rs\` for details."
+$ clispeak --to pixel "Updated **3 files**. See \`src/main.rs\` for details."
 
 error: text contains markdown that will not read well aloud
 
@@ -70,7 +70,7 @@ responses.
 | `--raw` | Speak exactly what was given, asterisks and all. |
 
 Strict applies to stdin too, which is why the walkthrough's
-`cat CHANGELOG.md | voicecast` becomes `cat CHANGELOG.md | voicecast --strip`. A changelog
+`cat CHANGELOG.md | clispeak` becomes `cat CHANGELOG.md | clispeak --strip`. A changelog
 *is* markdown; the flag makes the conversion explicit rather than silent.
 
 Messages composed in the GUI are human-authored and not validated.
@@ -115,7 +115,7 @@ unmasked.
 2. Clause boundary — comma, semicolon, dash
 3. Hard cap around 200 characters, **never mid-word**
 
-The opposite case needs no special handling: `voicecast "build finished"` has no
+The opposite case needs no special handling: `clispeak "build finished"` has no
 terminal punctuation and is simply one chunk.
 
 ## Who chunks

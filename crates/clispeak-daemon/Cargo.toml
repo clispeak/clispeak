@@ -1,0 +1,24 @@
+[package]
+name = "clispeak-daemon"
+description = "The node process. Desktop only; the Tauri app replaces it at M6."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "clispeakd"
+path = "src/main.rs"
+
+[dependencies]
+clispeak-core.workspace = true
+clispeak-engine.workspace = true
+anyhow.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# Desktop keystores only. Kept out of clispeak-core deliberately: this crate
+# is excluded from the mobile CI targets, so core stays buildable everywhere.
+clispeak-keystore.workspace = true
+
+[lints]
+workspace = true

@@ -1,8 +1,8 @@
 {
-  "name": "voicecast-ui",
+  "name": "clispeak-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "The voicecast app's interface. Compiled CSS only \u2014 no bundler, no framework.",
+  "description": "The clispeak app's interface. Compiled CSS only \u2014 no bundler, no framework.",
   "scripts": {
     "tauri": "tauri",
     "build:css": "tailwindcss -i src/input.css -o src/styles.css --minify",

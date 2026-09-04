@@ -8,9 +8,9 @@ A command-line tool that lets an agent speak text aloud on one or more of your
 devices:
 
 ```
-$ voicecast "build finished"                 # speak on default target(s)
-$ voicecast --to phone "needs your input"    # speak on a named device
-$ cat CHANGELOG.md | voicecast --to desk     # long-form, piped
+$ clispeak "build finished"                 # speak on default target(s)
+$ clispeak --to phone "needs your input"    # speak on a named device
+$ cat CHANGELOG.md | clispeak --to desk     # long-form, piped
 ```
 
 Devices reach each other peer-to-peer. There is no server to run.
@@ -40,7 +40,7 @@ entirely, and makes each device's voice a purely local concern.
 
 ## Components
 
-### `voicecast` — the CLI
+### `clispeak` — the CLI
 
 A small binary (~2MB), desktop only. It does not hold an identity, open
 sockets, or synthesize anything. It writes to a local IPC socket and exits.
@@ -54,7 +54,7 @@ has not bound yet, which on macOS is the ordinary case while a keychain prompt
 waits. Autostart is the intended mitigation for the CLI depending on the app
 (decision 5) and has not been built.
 
-### `voicecast-node` — the Tauri v2 app
+### `clispeak-node` — the Tauri v2 app
 
 One codebase, five targets: Linux, macOS, Windows, Android, iOS. Long-running.
 Holds the device identity, the iroh endpoint and its warm connections, the
@@ -69,7 +69,7 @@ something has to launch it.
 "broadcaster" build. The CLI is desktop-only because that's where agents run,
 not because phones can't send.
 
-### `voicecast-core` — the shared Rust library
+### `clispeak-core` — the shared Rust library
 
 Everything that isn't UI: transport, discovery, pairing, allowlist, chunking,
 queue, playback, engine abstraction. Compiles to all five targets. This is
@@ -133,7 +133,7 @@ blocks and phones have cameras, so this direction needs zero typing.
 ```
   INVITER (any member)                        NEW DEVICE
   --------------------                        ----------
-  $ voicecast invite
+  $ clispeak invite
     |
     |- mint one-time token (5 min TTL, single use)
     |- build ticket = NodeId + relay hint + token
@@ -158,7 +158,7 @@ blocks and phones have cameras, so this direction needs zero typing.
 
 - **QR code** — phones. The default path.
 - **Paste-able ticket** — desktop-to-desktop, headless boxes, over SSH.
-- **`voicecast://join/<ticket>` deep link** — tapping on the same device.
+- **`clispeak://join/<ticket>` deep link** — tapping on the same device.
 
 **The one-time token is not optional.** Without it, a QR photographed over your
 shoulder — or sitting in terminal scrollback, or in a screen recording — is
@@ -318,8 +318,8 @@ the other end.
 ## Message flow
 
 A message is a **stream of chunks with an ID**, not a single blob. This is what
-makes `cat file | voicecast` work — the receiver starts speaking sentence one while
-sentence forty is still arriving — and it's what gives `voicecast stop` something to
+makes `cat file | clispeak` work — the receiver starts speaking sentence one while
+sentence forty is still arriving — and it's what gives `clispeak stop` something to
 address. Priority and queue behavior are specified in `cli.md`.
 
 Chunking happens at sentence boundaries, which is required regardless: most TTS
@@ -411,12 +411,12 @@ nowhere else.
 **What happens when Piper will not start** is worth knowing before reading a
 `no_engine`. The app and the daemon pick engines in separate code —
 `speech_engine()` in `app/src-tauri/src/lib.rs`, `fallback()` in
-`crates/voicecast-daemon/src/main.rs` — and only Linux has a floor to fall to.
+`crates/clispeak-daemon/src/main.rs` — and only Linux has a floor to fall to.
 
 | | Piper missing, espeak present | Piper missing, espeak missing |
 |---|---|---|
-| `voicecastd`, Linux | speaks via espeak | refuses to start, naming both |
-| `voicecastd`, macOS and Windows | — | starts silent, carrying Piper's reason |
+| `clispeakd`, Linux | speaks via espeak | refuses to start, naming both |
+| `clispeakd`, macOS and Windows | — | starts silent, carrying Piper's reason |
 | app, Linux | speaks via espeak | starts silent, carrying Piper's reason |
 | app, macOS and Windows | — | starts silent, carrying Piper's reason |
 
@@ -429,7 +429,7 @@ replaced Piper's reason with "no speech engine is installed on this device",
 which is false on any Mac where Piper is installed and merely broken.
 Decision 30 records the split.
 
-`voicecastd` on Linux still refuses rather than starting silent, and that is
+`clispeakd` on Linux still refuses rather than starting silent, and that is
 deliberate: espeak-ng is a genuine floor there, so reaching this case means
 the machine has nothing at all rather than one broken install.
 
@@ -456,8 +456,8 @@ a missing rustls crypto provider that every other target resolves through
 feature unification.
 
 The matrix could not have caught any of them: it links exactly one iOS binary,
-`voicecast`, whose crate depends on `proto` and `text` and reaches no network
-code — and `voicecast-app`, which does, is excluded from that job. See
+`clispeak`, whose crate depends on `proto` and `text` and reaches no network
+code — and `clispeak-app`, which does, is excluded from that job. See
 `CLAUDE.md` on compiled, linked, and launched being three claims.
 
 **iOS goes unreachable in the background, and that is a property of the
@@ -499,7 +499,7 @@ text-only invariant. v1 ships `NativeEngine`; `ApiEngine` (ElevenLabs, OpenAI,
 Azure — key stored on the receiver) can be added later without touching the
 protocol.
 
-Worth prototyping against: the `voicecast` Rust crate (Darilek) wraps native
+Worth prototyping against: the `clispeak` Rust crate (Darilek) wraps native
 synthesis across all five platforms behind one interface. If it holds up it is
 most of `NativeEngine` for free.
 
@@ -572,7 +572,7 @@ who deliberately wants espeak should not be pestered forever.
 
 ### Visible from other devices too
 
-Engine state travels in `Presence`, so `voicecast devices` shows it without visiting
+Engine state travels in `Presence`, so `clispeak devices` shows it without visiting
 the machine:
 
 ```
@@ -616,7 +616,7 @@ the instinct is to build a recovery flow that turns out to preserve nothing.
 |---|---|---|
 | Identity keypair | System keyring | With its device. Meaningless elsewhere. |
 | Space roster | Every member device | Meaningless without living peers. |
-| Groups, defaults | `~/.config/voicecast/config.toml` | With your dotfiles. |
+| Groups, defaults | `~/.config/clispeak/config.toml` | With your dotfiles. |
 | Quiet hours, voice, volume | Each device, per space | With its device. |
 
 ### Why backing up a space is pointless
@@ -629,7 +629,7 @@ matter. There are two branches and neither wants a backup:
   yields nothing: those devices are gone, and new ones are not in it.
 
 The roster has value only *relative to living devices*, so preserving it
-independently preserves nothing. Recovery is `voicecast init` and a couple of QR
+independently preserves nothing. Recovery is `clispeak init` and a couple of QR
 scans.
 
 ### Edge cases that resolve themselves

@@ -57,8 +57,8 @@ window.__TAURI__ = {
       if (cmd === "skill_status" && reset) {
         return {
           state: "absent",
-          path: "/Users/someone/.claude/skills/voicecast/SKILL.md",
-          default_path: "/Users/someone/.claude/skills/voicecast/SKILL.md",
+          path: "/Users/someone/.claude/skills/clispeak/SKILL.md",
+          default_path: "/Users/someone/.claude/skills/clispeak/SKILL.md",
           sandboxed: false,
         };
       }
@@ -141,13 +141,13 @@ window.__TAURI__ = {
         case "skill_status":
           return {
             state: "current",
-            path: "/Users/someone/Desktop/skills/voicecast/SKILL.md",
-            default_path: "/Users/someone/.claude/skills/voicecast/SKILL.md",
+            path: "/Users/someone/Desktop/skills/clispeak/SKILL.md",
+            default_path: "/Users/someone/.claude/skills/clispeak/SKILL.md",
             sandboxed: false,
           };
         case "reset_skill_path":
           reset = true;
-          return "/Users/someone/Desktop/skills/voicecast/SKILL.md";
+          return "/Users/someone/Desktop/skills/clispeak/SKILL.md";
         default:
           return null;
       }

@@ -64,7 +64,7 @@ async function main() {
     process.exit(2);
   }
 
-  const dir = await mkdtemp(join(tmpdir(), "voicecast-ui-"));
+  const dir = await mkdtemp(join(tmpdir(), "clispeak-ui-"));
   for (const file of ["index.html", "main.js", "modal.js"]) {
     await cp(join(src, file), join(dir, file));
   }

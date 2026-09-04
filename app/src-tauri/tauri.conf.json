@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "voicecast",
+  "productName": "clispeak",
   "version": "0.1.0",
-  "identifier": "com.voicecast.app",
+  "identifier": "org.clispeak.app",
   "build": {
     "frontendDist": "../src",
     "beforeBuildCommand": "npm run build:css",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "voicecast",
+        "title": "clispeak",
         "width": 420,
         "height": 640,
         "label": "main",

@@ -1,12 +1,12 @@
-# voicecast
+# clispeak
 
 Speak text aloud on any of your devices, from the command line.
 
 ```
-$ voicecast "build finished"
-$ voicecast --to pixel "needs your input"
-$ voicecast --to all --priority high "deploy failed"
-$ cat CHANGELOG.md | voicecast --strip --to laptop
+$ clispeak "build finished"
+$ clispeak --to pixel "needs your input"
+$ clispeak --to all --priority high "deploy failed"
+$ cat CHANGELOG.md | clispeak --strip --to laptop
 ```
 
 Built for agents to notify you — on your desk, or on the phone in your pocket
@@ -19,7 +19,7 @@ and no account to create.
 app and talk to each other over the open internet, including on cellular.
 
 **macOS speaks, and installs like a Mac app.** Verified on an arm64 Mac:
-installed from the built dmg, synthesising through Piper, with the `voicecast`
+installed from the built dmg, synthesising through Piper, with the `clispeak`
 command on the PATH. Its peer-to-peer side is exercised only as far as binding
 an endpoint — pairing a Mac with another device has not been tested yet, and
 an Intel Mac has no verified Piper checksum, so it is refused rather than
@@ -50,10 +50,10 @@ moment it is installed:
 git submodule update --init                 # the manifest's shared-modules
 npm --prefix app ci
 npm --prefix app run build:css              # styles.css is generated, not committed
-cargo build --release -p voicecast-app -p voicecast-cli
+cargo build --release -p clispeak-app -p clispeak-cli
 cd packaging/flatpak
-flatpak-builder --force-clean --user --install build-dir org.voicecast.App.yml
-flatpak run org.voicecast.App
+flatpak-builder --force-clean --user --install build-dir org.clispeak.app.yml
+flatpak run org.clispeak.app
 ```
 
 The first four lines are not optional and used to be missing here. The
@@ -61,7 +61,7 @@ manifest takes the two binaries from `target/release`, so they have to exist;
 and `cargo build` — unlike `tauri build` — does not run Tailwind, so without
 the CSS step the app installs and comes up unstyled with nothing to say why.
 
-The app installs the `voicecast` command to `~/.local/bin` on first launch, and
+The app installs the `clispeak` command to `~/.local/bin` on first launch, and
 re-installs it whenever the app is updated. The command deliberately stays on
 the host rather than inside the sandbox: entering a Flatpak costs about 86ms
 against the tool's own 3ms, and an agent calls it repeatedly. They still find
@@ -72,10 +72,10 @@ command-line tool, so a drag to /Applications is the whole install:
 
 ```bash
 cargo xtask bundle
-open target/release/bundle/dmg/voicecast_0.1.0_aarch64.dmg
+open target/release/bundle/dmg/clispeak_0.1.0_aarch64.dmg
 ```
 
-As on Linux, the app installs the `voicecast` command to `~/.local/bin` on
+As on Linux, the app installs the `clispeak` command to `~/.local/bin` on
 launch and rewrites it whenever the bundled copy differs, so an update cannot
 leave a stale CLI behind. macOS builds its default PATH from `/etc/paths`,
 which names no home directory, so the app also adds a line to `~/.zprofile` —
@@ -100,19 +100,19 @@ ANDROID_HOME=~/Android/Sdk NDK_HOME=~/android-ndk-r29 \
 adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
 ```
 
-**Without the app.** `voicecastd` is a headless node for a machine with no
+**Without the app.** `clispeakd` is a headless node for a machine with no
 desktop. It needs Piper installed where the engine looks for it, which
-`cargo xtask piper` does — `~/.local/share/voicecast` on Linux,
-`~/Library/Application Support/voicecast` on macOS. Linux can instead fall
+`cargo xtask piper` does — `~/.local/share/clispeak` on Linux,
+`~/Library/Application Support/clispeak` on macOS. Linux can instead fall
 back to `espeak-ng` on `PATH`.
 
 ## Pairing
 
 ```bash
-voicecast invite             # on one device — prints a ticket, app shows a QR
-voicecast preview <ticket>   # on the other — what that code would join
-voicecast join <ticket>      # ...and join it
-voicecast devices
+clispeak invite             # on one device — prints a ticket, app shows a QR
+clispeak preview <ticket>   # on the other — what that code would join
+clispeak join <ticket>      # ...and join it
+clispeak devices
 ```
 
 The destination is written *into* the ticket by whoever minted it, so the
@@ -122,8 +122,8 @@ before deciding to use it. In the app, joining goes through the same two
 steps: paste or scan, see which space it joins, then confirm. `join --name`
 picks what to call it here.
 
-Two nodes can share one machine for testing by overriding `VOICECAST_SOCKET`
-and `VOICECAST_CONFIG_DIR`. `VOICECAST_SOCKET` is a *name*, not a path — the
+Two nodes can share one machine for testing by overriding `CLISPEAK_SOCKET`
+and `CLISPEAK_CONFIG_DIR`. `CLISPEAK_SOCKET` is a *name*, not a path — the
 platform decides where it lives, and on Linux there is no file anywhere.
 
 ## What it does
@@ -221,12 +221,12 @@ invited each member, which is what lets a device admit a peer it has never met.
 
 ## Using it from an agent
 
-`skills/voicecast/SKILL.md` is an agent skill. Install it with
+`skills/clispeak/SKILL.md` is an agent skill. Install it with
 
 ```bash
-voicecast skill --install                          # Claude Code's default location
-voicecast skill --install --path <dir>/SKILL.md    # anywhere else
-voicecast skill                                    # print it, to pipe somewhere
+clispeak skill --install                          # Claude Code's default location
+clispeak skill --install --path <dir>/SKILL.md    # anywhere else
+clispeak skill                                    # print it, to pipe somewhere
 ```
 
 or from the app's Settings tab. The agent
@@ -288,7 +288,7 @@ not staged them first, CI included.
 
 The frontend is plain HTML and JavaScript with a Tailwind build step — no
 framework and no bundler, because the interesting behaviour lives in
-`voicecast-core`, shared with the CLI.
+`clispeak-core`, shared with the CLI.
 
 ## Who can drive your node
 

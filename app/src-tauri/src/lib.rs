@@ -1,11 +1,11 @@
-//! The voicecast node, wrapped as an app.
+//! The clispeak node, wrapped as an app.
 //!
 //! Deliberately thin. Everything durable — transport, roster, queue, playback
-//! — lives in `voicecast-core`, exactly as it does for the CLI. This crate
+//! — lives in `clispeak-core`, exactly as it does for the CLI. This crate
 //! owns the window, picks the platform engine, and exposes a handful of
 //! commands the UI calls.
 //!
-//! On mobile the app *is* the node: there is no `voicecastd` on a phone, so
+//! On mobile the app *is* the node: there is no `clispeakd` on a phone, so
 //! the long-running process has to be the app itself.
 
 use std::sync::Arc;
@@ -13,14 +13,14 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{Manager, State};
 // Menus and trays are desktop-only in Tauri; a phone has neither.
+use clispeak_core::{Identity, Node, Transport};
+use clispeak_engine::SpeechEngine;
+use clispeak_proto::{DeviceInfo, Priority, Response};
 #[cfg(desktop)]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-use voicecast_core::{Identity, Node, Transport};
-use voicecast_engine::SpeechEngine;
-use voicecast_proto::{DeviceInfo, Priority, Response};
 
 /// What the UI shows in its header.
 #[derive(Serialize)]
@@ -88,15 +88,15 @@ fn cli_destination() -> Option<std::path::PathBuf> {
 
 /// The command-line tool's file name, which carries an extension on Windows.
 ///
-/// Without it the install writes a file called `voicecast` that Windows will
+/// Without it the install writes a file called `clispeak` that Windows will
 /// not execute: present on disk, in a directory that is on the PATH, and
 /// still `command not found`. That is the macOS failure this module already
 /// guards against, arriving through a different mechanism — and it would be
 /// found by an agent rather than by whoever installed the app.
 const CLI_NAME: &str = if cfg!(windows) {
-    "voicecast.exe"
+    "clispeak.exe"
 } else {
-    "voicecast"
+    "clispeak"
 };
 
 /// The copy of the CLI the app carries, if this build carries one.
@@ -109,15 +109,15 @@ const CLI_NAME: &str = if cfg!(windows) {
 /// A plain `cargo run`, or a distribution package that installed the tool
 /// itself, carries nothing and needs nothing.
 fn bundled_cli() -> Option<std::path::PathBuf> {
-    let flatpak = std::path::PathBuf::from("/app/libexec/voicecast");
+    let flatpak = std::path::PathBuf::from("/app/libexec/clispeak");
     if flatpak.exists() {
         return Some(flatpak);
     }
     if cfg!(target_os = "macos") {
-        // `Contents/MacOS/voicecast-app` sits beside `Contents/MacOS/voicecast`,
+        // `Contents/MacOS/clispeak-app` sits beside `Contents/MacOS/clispeak`,
         // which is where Tauri puts a bundled sidecar binary.
         let exe = std::env::current_exe().ok()?;
-        let beside = exe.parent()?.join("voicecast");
+        let beside = exe.parent()?.join("clispeak");
         if beside.exists() && beside != exe {
             return Some(beside);
         }
@@ -142,7 +142,7 @@ fn cli_installable() -> bool {
 /// Where the CLI is expected to be, whether or not it is there yet.
 ///
 /// Reported so the interface can say what went wrong when the automatic
-/// install failed, rather than leaving a missing `voicecast` unexplained.
+/// install failed, rather than leaving a missing `clispeak` unexplained.
 #[tauri::command]
 fn cli_expected_path() -> Option<String> {
     bundled_cli()?;
@@ -151,7 +151,7 @@ fn cli_expected_path() -> Option<String> {
 
 /// Whether the directory the CLI is installed into is on the PATH.
 ///
-/// The install can succeed and still leave `voicecast` unusable, which on
+/// The install can succeed and still leave `clispeak` unusable, which on
 /// macOS is the normal case rather than an edge one: `~/.local/bin` is not on
 /// the default PATH there. An agent would report "command not found" and
 /// nothing would explain why, so the app says so itself.
@@ -197,7 +197,7 @@ const PROFILE: &str = ".zprofile";
 /// Put the CLI's directory on the PATH for future shells.
 ///
 /// Installing the tool is not enough on macOS. The default PATH is built from
-/// `/etc/paths`, which names no home directory, so `~/.local/bin/voicecast`
+/// `/etc/paths`, which names no home directory, so `~/.local/bin/clispeak`
 /// exists and no shell can see it — and an agent, which is the whole reason
 /// the tool is installed, reports `command not found` with nothing to explain
 /// it. The alternative destination that *is* on the default PATH,
@@ -231,7 +231,7 @@ fn ensure_on_path(home: &std::path::Path, dir: &std::path::Path) -> Result<bool,
         text.push('\n');
     }
     text.push_str(&format!(
-        "\n# Added by voicecast, so the `voicecast` command is on the PATH for\n\
+        "\n# Added by clispeak, so the `clispeak` command is on the PATH for\n\
          # shells and for the agents that call it.\n\
          export PATH=\"$HOME{needle}:$PATH\"\n"
     ));
@@ -271,7 +271,7 @@ fn cli_needs_install() -> bool {
 ///
 /// Runs on every launch, and installs rather than only refreshing: the tool
 /// is how an agent reaches this node, so an app that merely offers it leaves
-/// `voicecast` missing from the PATH until someone finds the button.
+/// `clispeak` missing from the PATH until someone finds the button.
 ///
 /// A Flatpak update replaces the app but cannot touch a file already copied
 /// to the host, so the same pass rewrites a stale copy. Without that the two
@@ -472,7 +472,7 @@ pub struct VoiceOption {
 /// An invite, ready to hand to another device.
 #[derive(Serialize)]
 pub struct Invite {
-    /// The `voicecast://join/...` string.
+    /// The `clispeak://join/...` string.
     pub url: String,
     /// The same invite as a scannable SVG, or empty if it could not be drawn.
     pub qr: String,
@@ -568,7 +568,7 @@ async fn list_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, Str
 }
 
 /// The agent skill, compiled in so it can never drift from this build.
-const SKILL: &str = include_str!("../../../skills/voicecast/SKILL.md");
+const SKILL: &str = include_str!("../../../skills/clispeak/SKILL.md");
 
 /// Whether this build runs inside a Flatpak.
 ///
@@ -583,13 +583,13 @@ fn skill_default() -> Option<std::path::PathBuf> {
     Some(
         directories::BaseDirs::new()?
             .home_dir()
-            .join(".claude/skills/voicecast/SKILL.md"),
+            .join(".claude/skills/clispeak/SKILL.md"),
     )
 }
 
 /// Where a previous install put it, so it can be kept in step.
 fn skill_record() -> Option<std::path::PathBuf> {
-    voicecast_core::config_dir()
+    clispeak_core::config_dir()
         .ok()
         .map(|d| d.join("skill-destination"))
 }
@@ -676,7 +676,7 @@ fn install_skill(path: Option<String>) -> Result<String, String> {
     if !skill_writable(&destination) {
         return Err(format!(
             "this app is sandboxed and can only write to the default location. \
-             Run this instead:  voicecast skill --install --path {}",
+             Run this instead:  clispeak skill --install --path {}",
             destination.display()
         ));
     }
@@ -825,7 +825,7 @@ fn skip_speech(state: State<'_, AppState>) {
 fn history(
     state: State<'_, AppState>,
     limit: Option<usize>,
-) -> Result<Vec<voicecast_proto::HistoryEntry>, String> {
+) -> Result<Vec<clispeak_proto::HistoryEntry>, String> {
     replies::history(state.node.history(limit))
 }
 
@@ -846,7 +846,7 @@ fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 
 /// The spaces this device belongs to.
 #[tauri::command]
-async fn list_spaces(state: State<'_, AppState>) -> Result<Vec<voicecast_proto::SpaceRow>, String> {
+async fn list_spaces(state: State<'_, AppState>) -> Result<Vec<clispeak_proto::SpaceRow>, String> {
     replies::spaces(state.node.spaces().await)
 }
 
@@ -944,7 +944,7 @@ pub struct Joined {
 fn battery_ok() -> bool {
     #[cfg(target_os = "android")]
     {
-        voicecast_engine::is_battery_exempt()
+        clispeak_engine::is_battery_exempt()
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -957,7 +957,7 @@ fn battery_ok() -> bool {
 fn request_battery_exemption() -> bool {
     #[cfg(target_os = "android")]
     {
-        voicecast_engine::request_battery_exemption()
+        clispeak_engine::request_battery_exemption()
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -978,7 +978,7 @@ async fn rename_device(state: State<'_, AppState>, name: String) -> Result<Strin
 fn pending_invite() -> Option<String> {
     #[cfg(target_os = "android")]
     {
-        voicecast_engine::take_pending_invite()
+        clispeak_engine::take_pending_invite()
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -1009,7 +1009,7 @@ fn set_voice(state: State<'_, AppState>, id: String) -> Result<(), String> {
     engine.set_voice(&id).map_err(|e| e.to_string())?;
     // Remembered immediately: a preference that needs a clean shutdown to
     // stick is one that will sometimes not.
-    let _ = voicecast_core::save_voice_settings(&id, engine.rate());
+    let _ = clispeak_core::save_voice_settings(&id, engine.rate());
     Ok(())
 }
 
@@ -1018,7 +1018,7 @@ fn set_rate(state: State<'_, AppState>, rate: f32) -> Result<(), String> {
     let engine = state.node.engine();
     engine.set_rate(rate).map_err(|e| e.to_string())?;
     if let Some(voice) = engine.current_voice() {
-        let _ = voicecast_core::save_voice_settings(&voice, rate);
+        let _ = clispeak_core::save_voice_settings(&voice, rate);
     }
     Ok(())
 }
@@ -1041,7 +1041,7 @@ async fn leave_space(state: State<'_, AppState>, space: Option<String>) -> Resul
 async fn speak(state: State<'_, AppState>, text: String) -> Result<(), String> {
     // Validated here rather than in the UI so the app and the CLI reject
     // exactly the same things.
-    if let Err(rejection) = voicecast_text::validate(&text) {
+    if let Err(rejection) = clispeak_text::validate(&text) {
         return Err(rejection.to_string());
     }
     replies::spoke(state.node.speak(text, Priority::Normal, None).await)
@@ -1056,8 +1056,8 @@ async fn speak(state: State<'_, AppState>, text: String) -> Result<(), String> {
 /// A refusal is surfaced rather than swallowed. Muting is a decision worth
 /// reporting back: pressing Speak on a muted device and being told nothing
 /// looks like the button is broken.
-fn spoken_or_why(targets: &[voicecast_proto::TargetResult]) -> Result<(), String> {
-    use voicecast_proto::Status;
+fn spoken_or_why(targets: &[clispeak_proto::TargetResult]) -> Result<(), String> {
+    use clispeak_proto::Status;
     let heard = |s: &Status| matches!(s, Status::Spoken | Status::Queued | Status::Speaking);
     if targets.iter().any(|t| heard(&t.status)) {
         return Ok(());
@@ -1099,7 +1099,7 @@ fn spoken_or_why(targets: &[voicecast_proto::TargetResult]) -> Result<(), String
 /// the build rather than waiting for someone to press the button.
 mod replies {
     use super::{DeviceInfo, Invite, InvitePreview, Joined, describe, spoken_or_why};
-    use voicecast_proto::Response;
+    use clispeak_proto::Response;
 
     /// The fields `node_status` reads. `None` when the reply was not a status
     /// at all, which the caller draws as an unknown engine rather than an
@@ -1150,7 +1150,7 @@ mod replies {
         }
     }
 
-    pub(super) fn history(r: Response) -> Result<Vec<voicecast_proto::HistoryEntry>, String> {
+    pub(super) fn history(r: Response) -> Result<Vec<clispeak_proto::HistoryEntry>, String> {
         match r {
             Response::History { entries } => Ok(entries),
             other => Err(describe(other)),
@@ -1171,7 +1171,7 @@ mod replies {
         }
     }
 
-    pub(super) fn spaces(r: Response) -> Result<Vec<voicecast_proto::SpaceRow>, String> {
+    pub(super) fn spaces(r: Response) -> Result<Vec<clispeak_proto::SpaceRow>, String> {
         match r {
             Response::Spaces { spaces } => Ok(spaces),
             other => Err(describe(other)),
@@ -1196,7 +1196,7 @@ mod replies {
             Response::Invite { url, expires_in } => {
                 // A missing QR is a degraded invite, not a failed one: the
                 // code can still be copied.
-                let qr = voicecast_core::qr_svg(&url).unwrap_or_default();
+                let qr = clispeak_core::qr_svg(&url).unwrap_or_default();
                 Ok(Invite {
                     url,
                     qr,
@@ -1324,7 +1324,7 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
     {
         // `AVSpeechSynthesizer`, which is what iOS speech is — not a
         // stand-in, so its tier is `Full`.
-        return match voicecast_engine::IosEngine::new() {
+        return match clispeak_engine::IosEngine::new() {
             Ok(engine) => Arc::new(engine),
             // Its own reason, not a stand-in's. The failure this is most
             // likely to carry is the audio session refusing playback, which
@@ -1332,7 +1332,7 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
             // rather than replacing with "no engine".
             Err(e) => {
                 eprintln!("the iOS speech engine did not start: {e}");
-                Arc::new(voicecast_engine::SilentEngine::new(e.reason()))
+                Arc::new(clispeak_engine::SilentEngine::new(e.reason()))
             }
         };
     }
@@ -1342,12 +1342,12 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
         // Best available, in order. Piper is what this platform should sound
         // like; espeak is a floor where the host happens to provide one, which
         // on Linux is common and on macOS is essentially never.
-        let piper = match voicecast_engine::PiperEngine::discover() {
+        let piper = match clispeak_engine::PiperEngine::discover() {
             Ok(engine) => return Arc::new(engine),
             Err(e) => e,
         };
         eprintln!("piper unavailable: {piper}");
-        match voicecast_engine::EspeakEngine::new() {
+        match clispeak_engine::EspeakEngine::new() {
             Ok(engine) => Arc::new(engine),
             Err(e) => {
                 eprintln!("espeak-ng unavailable: {e}");
@@ -1365,10 +1365,10 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
                 // first-run path was "install Piper, be told Piper is not
                 // installed" by a node whose statement had stopped being true
                 // (#84). This keeps looking.
-                Arc::new(voicecast_engine::Rediscovering::new(
+                Arc::new(clispeak_engine::Rediscovering::new(
                     piper.reason(),
                     Box::new(|| {
-                        voicecast_engine::PiperEngine::discover()
+                        clispeak_engine::PiperEngine::discover()
                             .ok()
                             .map(|e| Arc::new(e) as Arc<dyn SpeechEngine>)
                     }),
@@ -1378,11 +1378,11 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
     }
     #[cfg(target_os = "android")]
     {
-        match voicecast_engine::AndroidEngine::new() {
+        match clispeak_engine::AndroidEngine::new() {
             Ok(engine) => Arc::new(engine),
             Err(e) => {
                 eprintln!("android speech unavailable: {e}");
-                Arc::new(voicecast_engine::SilentEngine::new(format!(
+                Arc::new(clispeak_engine::SilentEngine::new(format!(
                     "this device's speech engine could not start: {e}"
                 )))
             }
@@ -1394,11 +1394,11 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
     // the sender and an unexplained silence; see decision 22.
     #[cfg(not(unix))]
     {
-        match voicecast_engine::PiperEngine::discover() {
+        match clispeak_engine::PiperEngine::discover() {
             Ok(engine) => Arc::new(engine),
             Err(e) => {
                 eprintln!("piper unavailable: {e}");
-                Arc::new(voicecast_engine::SilentEngine::new(e.reason()))
+                Arc::new(clispeak_engine::SilentEngine::new(e.reason()))
             }
         }
     }
@@ -1406,18 +1406,18 @@ fn speech_engine() -> Arc<dyn SpeechEngine> {
 
 /// This device's key store.
 ///
-/// Desktop shares the keyring-backed store with `voicecastd`, so the app and
+/// Desktop shares the keyring-backed store with `clispeakd`, so the app and
 /// the daemon are the same device rather than two devices arguing over one
 /// roster. Mobile has no keyring backend, so the key lives in app-private
 /// storage instead.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn key_store() -> anyhow::Result<Box<dyn voicecast_core::KeyStore>> {
-    Ok(Box::new(voicecast_keystore::DesktopKeyStore::new()?))
+fn key_store() -> anyhow::Result<Box<dyn clispeak_core::KeyStore>> {
+    Ok(Box::new(clispeak_keystore::DesktopKeyStore::new()?))
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn key_store() -> anyhow::Result<Box<dyn voicecast_core::KeyStore>> {
-    Ok(Box::new(voicecast_core::FileKeyStore::default_location()?))
+fn key_store() -> anyhow::Result<Box<dyn clispeak_core::KeyStore>> {
+    Ok(Box::new(clispeak_core::FileKeyStore::default_location()?))
 }
 
 /// Build the node this app wraps.
@@ -1434,9 +1434,9 @@ async fn start_node() -> anyhow::Result<Node> {
     // healthy — the failure only surfaced at `serve()`, by which time the
     // damage was done. Desktop only: a phone has no socket and no CLI.
     #[cfg(desktop)]
-    if voicecast_core::ipc::node_is_listening().await {
+    if clispeak_core::ipc::node_is_listening().await {
         anyhow::bail!(
-            "another voicecast node is already running on this machine. \
+            "another clispeak node is already running on this machine. \
              Only one can hold this device's identity at a time — quit the \
              other one, or use the window it already has"
         );
@@ -1445,7 +1445,7 @@ async fn start_node() -> anyhow::Result<Node> {
     eprintln!("opening the key store…");
     let store = key_store()?;
     let identity = Identity::load_or_create(store.as_ref())?;
-    let name = voicecast_core::device_name();
+    let name = clispeak_core::device_name();
 
     let engine = speech_engine();
     let transport = Transport::bind(identity.secret().clone(), dns_resolver()).await?;
@@ -1486,14 +1486,30 @@ pub fn run() {
             // everything below reads it.
             //
             // Mobile has no XDG config directory, so the core has to be told
-            // about app-private storage. Desktop has one, and `voicecastd`
+            // about app-private storage. Desktop has one, and `clispeakd`
             // was already using it — overriding it here gave a single device
             // two rosters, two histories and two mute settings, sharing only
             // the identity that lives in the keyring.
             #[cfg(mobile)]
             match app.path().app_data_dir() {
-                Ok(dir) => voicecast_core::set_config_dir(dir),
+                Ok(dir) => clispeak_core::set_config_dir(dir),
                 Err(e) => eprintln!("no app data directory: {e}"),
+            }
+
+            // Bring across anything the project's previous name left behind.
+            // `ProjectDirs` derives the path from the project name, so the
+            // rename moved the config directory out from under every existing
+            // desktop install (decision 82).
+            #[cfg(desktop)]
+            match clispeak_core::migrate_from_previous_name() {
+                Ok(moved) if !moved.is_empty() => {
+                    eprintln!(
+                        "moved {} from the previous name's directory",
+                        moved.join(", ")
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => eprintln!("could not move state from the previous name: {e}"),
             }
 
             // Bring across anything an older build left in the app's own
@@ -1501,7 +1517,7 @@ pub fn run() {
             // the file that holds every device pairing.
             #[cfg(desktop)]
             if let Ok(old) = app.path().app_data_dir() {
-                match voicecast_core::migrate_from(&old) {
+                match clispeak_core::migrate_from(&old) {
                     Ok(moved) if !moved.is_empty() => {
                         eprintln!("moved {} into the config directory", moved.join(", "));
                     }
@@ -1523,7 +1539,7 @@ pub fn run() {
             // A missing tray must not stop the app. Some environments have no
             // StatusNotifier host, and the GNOME Flatpak runtime ships no
             // appindicator library at all — the node is still perfectly
-            // useful without an icon, and `voicecast show` can reach it.
+            // useful without an icon, and `clispeak show` can reach it.
             //
             // Wrapped in catch_unwind because the failure is a *panic* inside
             // the tray crate's dynamic loading, not an error it returns, so
@@ -1573,7 +1589,7 @@ pub fn run() {
                             .await;
                         }
                         // On desktop the app is the node the CLI talks to:
-                        // install it, open it, and `voicecast --to phone ...`
+                        // install it, open it, and `clispeak --to phone ...`
                         // works with no separate daemon. A phone has no CLI,
                         // so binding a local socket there would serve nobody
                         // and may not work on Android at all.
@@ -1658,7 +1674,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while running voicecast")
+        .expect("error while running clispeak")
         .run(|_app, _event| {
             // Closing the window hides it, so on macOS the app is still
             // running with no window and clicking the Dock icon is the
@@ -1687,8 +1703,8 @@ pub fn run() {
 /// included — then collapse third-party icons behind a drawer.
 #[cfg(desktop)]
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show voicecast", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit voicecast", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show clispeak", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit clispeak", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
     // Embedded rather than taken from the window icon: libayatana-appindicator
@@ -1696,9 +1712,9 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // the process simply never claims a StatusNotifierItem name.
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
 
-    TrayIconBuilder::with_id("voicecast")
+    TrayIconBuilder::with_id("clispeak")
         .icon(icon)
-        .tooltip("voicecast")
+        .tooltip("clispeak")
         .menu(&menu)
         // The menu belongs on the secondary button. A left click is how a
         // person asks for the window, and with the menu moved off it and
@@ -1746,7 +1762,7 @@ mod tests {
     /// A throwaway home directory, named so parallel tests cannot collide.
     fn scratch(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "voicecast-path-{}-{label}-{:?}",
+            "clispeak-path-{}-{label}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -1819,7 +1835,7 @@ mod tests {
 #[cfg(test)]
 mod report_tests {
     use super::PolicyView;
-    use voicecast_proto::Response;
+    use clispeak_proto::Response;
 
     #[test]
     fn a_policy_that_could_not_be_read_is_an_error_not_a_blank_one() {
@@ -1866,7 +1882,7 @@ mod report_tests {
     /// failure announced.
     #[test]
     fn a_queued_message_is_success() {
-        use voicecast_proto::{Status, TargetResult};
+        use clispeak_proto::{Status, TargetResult};
         let report = [TargetResult {
             device: "Phone".into(),
             endpoint_id: "97514a80e9425dd3".into(),
@@ -1880,7 +1896,7 @@ mod report_tests {
     /// A muted device says so rather than failing silently or lying.
     #[test]
     fn a_muted_device_says_why() {
-        use voicecast_proto::{Status, TargetResult};
+        use clispeak_proto::{Status, TargetResult};
         let report = [TargetResult {
             device: "Phone".into(),
             endpoint_id: "x".into(),
@@ -1897,25 +1913,25 @@ mod report_tests {
     /// right place; "no speech engine" sends them to install what they have.
     #[test]
     fn an_engine_failure_keeps_its_reason() {
-        use voicecast_proto::{Status, TargetResult};
+        use clispeak_proto::{Status, TargetResult};
         let report = [TargetResult {
             device: "Laptop".into(),
             endpoint_id: "x".into(),
             status: Status::NoEngine,
             took_ms: None,
-            detail: Some("Piper is not installed in any of: /app/share/voicecast".into()),
+            detail: Some("Piper is not installed in any of: /app/share/clispeak".into()),
         }];
         assert!(
             spoken_or_why(&report)
                 .unwrap_err()
-                .contains("/app/share/voicecast")
+                .contains("/app/share/clispeak")
         );
     }
 
     /// One device speaking is enough, even if another refused.
     #[test]
     fn one_device_speaking_is_not_a_failure() {
-        use voicecast_proto::{Status, TargetResult};
+        use clispeak_proto::{Status, TargetResult};
         let row = |status| TargetResult {
             device: "d".into(),
             endpoint_id: "x".into(),
@@ -1951,7 +1967,7 @@ mod startup_tests {
     /// Finder.
     #[test]
     fn the_reason_is_carried_not_summarised() {
-        let why = "another voicecast node is already running on this machine";
+        let why = "another clispeak node is already running on this machine";
         let status = status_of(&Startup::Failed(why.into()));
         assert_eq!(status.failed.as_deref(), Some(why));
         assert_eq!(
@@ -1978,8 +1994,8 @@ mod startup_tests {
 #[cfg(test)]
 mod command_tests {
     use super::*;
-    use voicecast_core::identity::FileKeyStore;
-    use voicecast_engine::SilentEngine;
+    use clispeak_core::identity::FileKeyStore;
+    use clispeak_engine::SilentEngine;
 
     /// Whether a reply was understood at all.
     ///
@@ -2007,10 +2023,10 @@ mod command_tests {
     /// directory would silently share this one's.
     #[tokio::test(flavor = "multi_thread")]
     async fn every_command_understands_what_the_node_returns() {
-        let dir = std::env::temp_dir().join(format!("voicecast-commands-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("clispeak-commands-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch directory");
-        voicecast_core::identity::set_config_dir(dir.clone());
+        clispeak_core::identity::set_config_dir(dir.clone());
 
         // A file store rather than the platform keyring: this must not touch
         // the developer's own keychain, and a file is the one store that

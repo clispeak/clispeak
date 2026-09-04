@@ -16,8 +16,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   $("tab-settings").click();
   await sleep(400);
 
-  const custom = "/Users/someone/Desktop/skills/voicecast/SKILL.md";
-  const fallback = "/Users/someone/.claude/skills/voicecast/SKILL.md";
+  const custom = "/Users/someone/Desktop/skills/clispeak/SKILL.md";
+  const fallback = "/Users/someone/.claude/skills/clispeak/SKILL.md";
 
   report.push(["the section is shown", !$("skill-section").hidden]);
   report.push(["the chosen path is in the field", $("skill-path").value === custom, $("skill-path").value]);
