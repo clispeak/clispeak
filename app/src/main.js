@@ -328,6 +328,15 @@ function seenText(device) {
  * five seconds.
  */
 function updateDeviceRow(row, device) {
+  // The name first, because it is the one that was missing. Rows are keyed by
+  // endpoint id, so a rename never builds a new row — it lands here, and until
+  // now this function did not know the name existed.
+  const name = row.querySelector('[data-part="name"]');
+  if (name && name.textContent !== device.name) name.textContent = device.name;
+  // Kept beside the text so the Remove button can read the current name at
+  // the moment it is clicked rather than the one it closed over.
+  row.dataset.name = device.name;
+
   const dot = row.querySelector('[data-part="dot"]');
   if (dot) {
     const className = dotClass(device);
@@ -341,6 +350,7 @@ function updateDeviceRow(row, device) {
 
 function deviceRow(device, space) {
   const li = document.createElement("div");
+  li.dataset.name = device.name;
   li.className =
     "flex items-center gap-3 border-t border-neutral-200 px-3 py-2.5 " +
     "dark:border-neutral-800";
@@ -358,6 +368,14 @@ function deviceRow(device, space) {
   const left = document.createElement("div");
   left.className = "min-w-0 flex-1";
   const name = document.createElement("p");
+  // Marked so `updateDeviceRow` can find it. Without the marker the name was
+  // written once, at build, and never again — rows are keyed by endpoint id,
+  // so a renamed device keeps its row and takes the update path, which
+  // rewrote the dot and the "last seen" line and left the name alone. The
+  // rename had already reached the roster and the disk; only this element
+  // disagreed, which made a working rename look like a broken one until the
+  // app was restarted.
+  name.dataset.part = "name";
   name.className = "truncate text-sm font-medium";
   name.textContent = device.name;
   // Said in words as well as shown as a dot. A tooltip needs a pointer, and
@@ -381,10 +399,17 @@ function deviceRow(device, space) {
       "hover:bg-red-50 hover:text-red-600 dark:text-neutral-400 " +
       "dark:hover:bg-red-500/10 dark:hover:text-red-400";
     remove.textContent = "Remove";
+    // Reads the row's *current* name rather than the one captured when the
+    // row was built. The same staleness that hid a rename would have sent
+    // `revoke_device` a name the roster no longer holds — asking "Remove
+    // Laptop?" about a device now called something else, and then failing to
+    // find it. Destructive and silent is the worst pairing, so the name is
+    // read at the moment it is used.
     remove.onclick = () =>
       withButton(remove, "…", async () => {
-        if (!(await ask(`Remove ${device.name} from this space?`))) return;
-        say(await call("revoke_device", { name: device.name, space }));
+        const current = li.dataset.name ?? device.name;
+        if (!(await ask(`Remove ${current} from this space?`))) return;
+        say(await call("revoke_device", { name: current, space }));
         await refresh();
       });
     li.append(remove);
