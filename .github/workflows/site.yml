@@ -58,9 +58,35 @@ jobs:
           echo "styles.css: $(wc -c < styles.css) bytes"
 
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+
+      # What `actions/upload-pages-artifact` does, written out, because that
+      # action **cannot run in this repository**. It is pinned here, but it
+      # calls `actions/upload-artifact@v4` internally, and this repository
+      # requires every action to be pinned to a full commit sha — a rule that
+      # reaches inside a composite action as well as into our own file. So a
+      # correctly pinned line failed with an error naming a version tag that
+      # appears nowhere in this workflow.
+      #
+      # The alternative was to exempt something from sha pinning, which is a
+      # protection Patrick turned on deliberately (#171). Two `run` steps are
+      # cheaper than a hole in it.
+      #
+      # The tar is the interface `actions/deploy-pages` expects: one artefact
+      # named `github-pages` holding a tar of the directory. `--dereference`
+      # because Pages serves files, not links.
+      - name: Pack the site the way Pages expects
+        run: |
+          tar --dereference --hard-dereference \
+              --directory site \
+              --exclude=.git \
+              --exclude=.github \
+              -cvf "$RUNNER_TEMP/artifact.tar" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          path: site
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
 
   publish:
     name: publish
