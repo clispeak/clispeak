@@ -720,29 +720,53 @@ jobs:
         with:
           draft: true
           files: release/*
+          # **Written for whoever downloads this, not for whoever publishes
+          # it.** The first version of these notes carried issue numbers,
+          # decision references, an explanation of GitHub's "latest" rule and
+          # an instruction to tick the right box — all of it addressed to us,
+          # on the one page a stranger reads before deciding whether to trust
+          # a binary. The publishing instructions live in the comment above
+          # this job, where the person editing the workflow will see them.
+          #
+          # Per-release specifics — what changed, what is new — are written by
+          # hand on the draft before publishing. This is the part that is true
+          # of every release.
           body: |
-            Built from ${{ github.ref_name }}.
+            clispeak speaks text aloud on your own devices — your laptop, your
+            phone, the machine across the room. Peer to peer, with no server to
+            run and no account to create. Built so an agent can drive it.
 
-            **A draft.** Read it, check the four downloads resolve, then
-            publish — and publish it as a **normal release, not a
-            pre-release**, or `/releases/latest/download/…` will not resolve
-            to it and clispeak.com's download links will 404. GitHub's
-            "latest" is the newest release that is neither a draft nor a
-            pre-release.
+            ## Downloads
 
-            **macOS and Android are signed. Windows is not.** macOS is signed
-            and notarised by Apple (#29); the Android APK is signed with the
-            release key (#31). Windows has no certificate and will not have
-            one for 1.0 (decision 109, #205), so its installer raises
-            SmartScreen and names an unknown publisher — the download page
-            says so in as many words rather than leaving people to guess.
+            | Platform | File | Notes |
+            |---|---|---|
+            | Linux | `clispeak-linux.flatpak` | carries its own voice |
+            | Windows | `clispeak-windows-setup.exe` | no administrator password needed |
+            | Android | `clispeak-android.apk` | **64-bit ARM only** |
+            | macOS | `clispeak-macos.dmg` | Apple silicon, signed and notarised |
 
             `SHA256SUMS` lists what each file should hash to and names the
-            version they were built from. It is not a signature, and it is
-            only as trustworthy as the page you read it from.
+            version they were built from. It is not a signature, and it is only
+            as trustworthy as the page you read it from.
 
-            Filenames here do not carry the version, so that
-            `/releases/latest/download/clispeak-linux.flatpak` and its four
-            siblings keep working as clispeak.com's download links without
-            the page being republished (#187). `SHA256SUMS` is how you tell
+            ## First run
+
+            Every platform says something alarming the first time. None of it
+            means the download went wrong.
+
+            - **Windows** — *"Windows protected your PC"*. Choose **More info**
+              → **Run anyway**. There is no Windows signing certificate yet.
+            - **macOS** — asks once for anything downloaded from the web. The
+              app is signed and notarised by Apple.
+            - **Android** — allow **Install unknown apps** for your browser.
+            - **Linux** — needs Flatpak, then
+              `flatpak install --bundle ./clispeak-linux.flatpak`.
+
+            One install does nothing on its own: run `clispeak invite` on one
+            device and scan or paste the code on the other.
+
+            ## For agents
+
+            `clispeak skill --install` writes the agent skill where Claude Code
+            looks for it.
             two downloads apart.
