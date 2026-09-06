@@ -17,11 +17,39 @@
   Skip to downloads
 </a>
 
-<main class="mx-auto w-full max-w-3xl px-5 py-14 sm:px-6 sm:py-20">
+<!-- A wash of the accent behind the hero only. `-z-10` and `aria-hidden`
+     because it is decoration: it must never sit above the content or be
+     announced to a screen reader. -->
+<div aria-hidden="true"
+     class="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem]
+            bg-gradient-to-b from-accent-500/10 to-transparent
+            dark:from-accent-500/[0.07]"></div>
+
+<main class="relative mx-auto w-full max-w-3xl px-5 py-14 sm:px-6 sm:py-20">
 
   <!-- 1. What it is ------------------------------------------------------ -->
   <header>
-    <h1 class="text-4xl font-semibold tracking-tight sm:text-5xl">clispeak</h1>
+    <!-- The product's own icon, inline. Not fetched: the page loads nothing
+         from anywhere, including from itself. -->
+    <svg viewBox="0 0 1024 1024" class="h-16 w-16 rounded-2xl shadow-sm sm:h-20 sm:w-20" aria-hidden="true">
+      <defs>
+        <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#10243A"/><stop offset="100%" stop-color="#06111F"/>
+        </linearGradient>
+        <linearGradient id="wave" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#27F2F2"/><stop offset="100%" stop-color="#00C7D9"/>
+        </linearGradient>
+      </defs>
+      <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#tile)"/>
+      <path d="M290 265H734C820 265 872 317 872 403V626C872 712 820 764 734 764H512L392 850V764H290C204 764 152 712 152 626V403C152 317 204 265 290 265Z"
+            fill="none" stroke="#fff" stroke-width="46" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M300 447L390 512L300 577" fill="none" stroke="#fff" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="420" y1="578" x2="505" y2="578" stroke="#fff" stroke-width="38" stroke-linecap="round"/>
+      <path d="M602 468C630 495 630 529 602 556" fill="none" stroke="url(#wave)" stroke-width="36" stroke-linecap="round"/>
+      <path d="M655 426C710 478 710 546 655 598" fill="none" stroke="url(#wave)" stroke-width="36" stroke-linecap="round"/>
+      <path d="M710 382C790 454 790 570 710 642" fill="none" stroke="url(#wave)" stroke-width="36" stroke-linecap="round"/>
+    </svg>
+    <h1 class="mt-6 text-4xl font-semibold tracking-tight sm:text-5xl">clispeak</h1>
     <p class="mt-5 text-xl leading-relaxed sm:text-2xl">
       Speak text aloud on your own devices. Peer to peer, no server, no account.
     </p>
@@ -48,64 +76,119 @@
     <div class="mt-6 grid gap-4 sm:grid-cols-2">
 
       <article id="card-linux"
-        class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
-        <h3 class="text-lg font-medium">Linux</h3>
-        <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-400">A Flatpak bundle.</p>
+        class="group relative flex flex-col rounded-2xl border border-neutral-200 bg-white p-5
+               shadow-sm transition hover:-translate-y-0.5 hover:shadow-md
+               dark:border-neutral-800 dark:bg-neutral-900">
+        <div class="flex items-center gap-3">
+          <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl
+                       bg-neutral-100 text-neutral-700
+                       dark:bg-neutral-800 dark:text-neutral-200">
+            <svg viewBox="0 0 24 24" class="h-6 w-6" fill="currentColor"
+                 stroke="currentColor" stroke-width="0" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2c-2.3 0-3.85 1.8-3.85 4.1 0 .9.1 1.7.1 2.4 0 .9-.7 1.7-1.5 2.9C5.85 12.8 5 14.2 5 15.7c0 .8.4 1.4 1 1.75-.6.6-1 1.3-1 2C5 21.15 8 22 12 22s7-.85 7-2.55c0-.7-.4-1.4-1-2 .6-.35 1-.95 1-1.75 0-1.5-.85-2.9-1.75-4.3-.8-1.2-1.5-2-1.5-2.9 0-.7.1-1.5.1-2.4C15.85 3.8 14.3 2 12 2ZM10.35 5.55a1.05 1.05 0 1 0 0 2.1 1.05 1.05 0 0 0 0-2.1ZM13.65 5.55a1.05 1.05 0 1 0 0 2.1 1.05 1.05 0 0 0 0-2.1ZM12 8.35c.8 0 1.45.45 1.45.95s-.65 1.15-1.45 1.15-1.45-.65-1.45-1.15.65-.95 1.45-.95Z"/></svg>
+          </span>
+          <h3 class="text-lg font-medium">Linux</h3>
+        </div>
+        <p class="mt-3 flex-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">A Flatpak bundle. Speaks with Piper, included.</p>
         <a data-primary
           href="https://github.com/clispeak/clispeak/releases/latest/download/clispeak-linux.flatpak"
-          class="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
-                 transition hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-          clispeak-linux.flatpak
+          class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg border
+                 border-neutral-300 px-4 py-2.5 text-sm font-medium transition
+                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/>
+          </svg>
+          <span class="font-mono text-xs">clispeak-linux.flatpak</span>
         </a>
       </article>
-
       <article id="card-macos"
-        class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
-        <h3 class="text-lg font-medium">macOS</h3>
-        <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-400">A disk image. Apple silicon.</p>
+        class="group relative flex flex-col rounded-2xl border border-neutral-200 bg-white p-5
+               shadow-sm transition hover:-translate-y-0.5 hover:shadow-md
+               dark:border-neutral-800 dark:bg-neutral-900">
+        <div class="flex items-center gap-3">
+          <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl
+                       bg-neutral-100 text-neutral-700
+                       dark:bg-neutral-800 dark:text-neutral-200">
+            <svg viewBox="0 0 24 24" class="h-6 w-6" fill="currentColor"
+                 stroke="currentColor" stroke-width="0" aria-hidden="true"><path d="M16.37 1.43c0 1.14-.47 2.2-1.24 2.98-.83.84-2.17 1.49-3.28 1.4-.13-1.1.45-2.26 1.2-3 .82-.84 2.24-1.45 3.32-1.38ZM20.5 17.1c-.55 1.28-.82 1.85-1.53 2.98-.99 1.58-2.38 3.54-4.1 3.55-1.53.02-1.92-1-4-.99-2.08.01-2.51 1.01-4.04.99-1.72-.02-3.04-1.79-4.03-3.36C-.03 15.87-.32 10.71 1.39 7.97 2.6 6.02 4.52 4.88 6.32 4.88c1.84 0 3 1.01 4.52 1.01 1.48 0 2.38-1.01 4.51-1.01 1.6 0 3.3.87 4.51 2.38-3.96 2.17-3.32 7.83.64 9.84Z"/></svg>
+          </span>
+          <h3 class="text-lg font-medium">macOS</h3>
+        </div>
+        <p class="mt-3 flex-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">A disk image, signed and notarised by Apple. Apple silicon.</p>
         <a data-primary
           href="https://github.com/clispeak/clispeak/releases/latest/download/clispeak-macos.dmg"
-          class="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
-                 transition hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-          clispeak-macos.dmg
+          class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg border
+                 border-neutral-300 px-4 py-2.5 text-sm font-medium transition
+                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/>
+          </svg>
+          <span class="font-mono text-xs">clispeak-macos.dmg</span>
         </a>
       </article>
-
       <article id="card-windows"
-        class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
-        <h3 class="text-lg font-medium">Windows</h3>
-        <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-400">An installer.</p>
+        class="group relative flex flex-col rounded-2xl border border-neutral-200 bg-white p-5
+               shadow-sm transition hover:-translate-y-0.5 hover:shadow-md
+               dark:border-neutral-800 dark:bg-neutral-900">
+        <div class="flex items-center gap-3">
+          <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl
+                       bg-neutral-100 text-neutral-700
+                       dark:bg-neutral-800 dark:text-neutral-200">
+            <svg viewBox="0 0 24 24" class="h-6 w-6" fill="currentColor"
+                 stroke="currentColor" stroke-width="0" aria-hidden="true"><path d="M3 5.4 10.3 4.4v7.1H3V5.4Zm8.6-1.2L21 3v8.5h-9.4V4.2ZM3 12.8h7.3v7.1L3 18.9v-6.1Zm8.6 0H21V21l-9.4-1.3v-6.9Z"/></svg>
+          </span>
+          <h3 class="text-lg font-medium">Windows</h3>
+        </div>
+        <p class="mt-3 flex-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">An installer. No administrator password needed.</p>
         <a data-primary
           href="https://github.com/clispeak/clispeak/releases/latest/download/clispeak-windows-setup.exe"
-          class="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
-                 transition hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-          clispeak-windows-setup.exe
+          class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg border
+                 border-neutral-300 px-4 py-2.5 text-sm font-medium transition
+                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/>
+          </svg>
+          <span class="font-mono text-xs">clispeak-windows-setup.exe</span>
         </a>
       </article>
-
       <article id="card-android"
-        class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
-        <h3 class="text-lg font-medium">Android</h3>
-        <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-          An APK. <strong class="font-medium text-neutral-900 dark:text-neutral-100">64-bit ARM phones only</strong>
-          &mdash; every phone made since about 2019, and no emulator.
-        </p>
+        class="group relative flex flex-col rounded-2xl border border-neutral-200 bg-white p-5
+               shadow-sm transition hover:-translate-y-0.5 hover:shadow-md
+               dark:border-neutral-800 dark:bg-neutral-900">
+        <div class="flex items-center gap-3">
+          <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl
+                       bg-neutral-100 text-neutral-700
+                       dark:bg-neutral-800 dark:text-neutral-200">
+            <svg viewBox="0 0 24 24" class="h-6 w-6" fill="currentColor"
+                 stroke="currentColor" stroke-width="0" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.1 9.7a5.9 5.9 0 0 1 11.8 0H6.1ZM9.1 6.35a.65.65 0 1 0 0-1.3.65.65 0 0 0 0 1.3ZM14.9 6.35a.65.65 0 1 0 0-1.3.65.65 0 0 0 0 1.3Z"/><path d="M7.02 2.86a.5.5 0 0 1 .84-.54l1 1.56a.5.5 0 1 1-.84.54l-1-1.56Z"/><path d="M16.98 2.86a.5.5 0 0 0-.84-.54l-1 1.56a.5.5 0 1 0 .84.54l1-1.56Z"/><path d="M6 10.9h12v6.4a1.1 1.1 0 0 1-1.1 1.1h-.9v2.3a1.25 1.25 0 1 1-2.5 0v-2.3h-3v2.3a1.25 1.25 0 1 1-2.5 0v-2.3h-.9A1.1 1.1 0 0 1 6 17.3v-6.4Z"/><path d="M3.25 10.9a1.25 1.25 0 0 1 2.5 0v4.9a1.25 1.25 0 0 1-2.5 0v-4.9Z"/><path d="M18.25 10.9a1.25 1.25 0 0 1 2.5 0v4.9a1.25 1.25 0 0 1-2.5 0v-4.9Z"/></svg>
+          </span>
+          <h3 class="text-lg font-medium">Android</h3>
+        </div>
+        <p class="mt-3 flex-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">An APK. <strong class="font-medium text-neutral-900 dark:text-neutral-100">64-bit ARM phones only</strong> &mdash; every phone made since about 2019, and no emulator.</p>
         <a data-primary
           href="https://github.com/clispeak/clispeak/releases/latest/download/clispeak-android.apk"
-          class="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
-                 transition hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
-          clispeak-android.apk
+          class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg border
+                 border-neutral-300 px-4 py-2.5 text-sm font-medium transition
+                 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/>
+          </svg>
+          <span class="font-mono text-xs">clispeak-android.apk</span>
         </a>
       </article>
-
     </div>
 
-    <p class="mt-4 rounded-xl border border-neutral-200 bg-white p-4 text-sm
-              text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-      <strong class="font-medium text-neutral-900 dark:text-neutral-100">iOS: coming soon.</strong>
+    <p class="mt-4 flex items-start gap-3 rounded-2xl border border-dashed border-neutral-300
+              bg-neutral-50 p-4 text-sm text-neutral-600
+              dark:border-neutral-700 dark:bg-neutral-900/50 dark:text-neutral-400">
+      <svg viewBox="0 0 24 24" class="mt-0.5 h-5 w-5 shrink-0 opacity-60" fill="currentColor" aria-hidden="true"><path d="M16.37 1.43c0 1.14-.47 2.2-1.24 2.98-.83.84-2.17 1.49-3.28 1.4-.13-1.1.45-2.26 1.2-3 .82-.84 2.24-1.45 3.32-1.38ZM20.5 17.1c-.55 1.28-.82 1.85-1.53 2.98-.99 1.58-2.38 3.54-4.1 3.55-1.53.02-1.92-1-4-.99-2.08.01-2.51 1.01-4.04.99-1.72-.02-3.04-1.79-4.03-3.36C-.03 15.87-.32 10.71 1.39 7.97 2.6 6.02 4.52 4.88 6.32 4.88c1.84 0 3 1.01 4.52 1.01 1.48 0 2.38-1.01 4.51-1.01 1.6 0 3.3.87 4.51 2.38-3.96 2.17-3.32 7.83.64 9.84Z"/></svg>
+      <span><strong class="font-medium text-neutral-900 dark:text-neutral-100">iOS: coming soon.</strong>
       There is no download yet. When there is, it will speak only while the app
       is on screen &mdash; see <a class="underline underline-offset-2 hover:text-accent-600
-      dark:hover:text-accent-400" href="#works">what works today</a>.
+      dark:hover:text-accent-400" href="#works">what works today</a>.</span>
     </p>
   </section>
 
