@@ -121,6 +121,61 @@ impl Ticket {
         self.expires_at.saturating_sub(now())
     }
 
+    /// What to say about a ticket this device thinks has expired.
+    ///
+    /// **"Expired" is not a property of the ticket.** It is a statement about
+    /// two clocks, and this one is only ever reporting its own. A freshly
+    /// minted invite read on a machine whose clock is ahead looks exactly like
+    /// one from last week, and the old message — "that invite has expired, ask
+    /// for a new one" — sent the reader to mint another that would fail
+    /// identically, for as long as they were willing to keep trying. Patrick
+    /// met that on a fresh Windows VM, whose clock was wrong, on 6 September
+    /// 2026 (#200).
+    ///
+    /// So it hands over the evidence instead of a verdict: how long ago, and
+    /// what this device believes the time is. Somebody whose clock is hours
+    /// out reads the second half and diagnoses it immediately.
+    fn expiry_objection(&self, now: u64) -> String {
+        let ago = now.saturating_sub(self.expires_at);
+        format!(
+            "that invite expired {} ago, according to this device — which \
+             believes it is now {}. If that is not close to the real time, this \
+             device's clock is wrong and the invite is fine; fix the clock here \
+             rather than asking for another invite.",
+            plain_duration(ago),
+            utc(now),
+        )
+    }
+
+    /// A message when this device's clock is provably behind the minting one.
+    ///
+    /// **This direction can be proved, and the other cannot.** A ticket is
+    /// minted with exactly [`TTL_SECS`] of life, so no honest ticket can ever
+    /// have more than that remaining. More than that means the clock reading it
+    /// is behind the clock that wrote it, by at least the difference — a fact
+    /// rather than a suspicion, and worth saying as one.
+    ///
+    /// The reverse is unprovable from the ticket alone: a clock running ahead
+    /// and a genuinely old invite produce identical bytes. That asymmetry is
+    /// kept rather than papered over, because guessing on the unprovable half
+    /// would be the same mistake in a new coat.
+    fn clock_is_behind(&self, now: u64) -> Option<String> {
+        let remaining = self.expires_at.saturating_sub(now);
+        let excess = remaining.checked_sub(TTL_SECS)?;
+        if excess == 0 {
+            return None;
+        }
+        Some(format!(
+            "this device's clock is at least {} behind the device that made \
+             this invite, so the invite cannot be checked. An invite is only \
+             ever valid for {}, and this one claims {}. Fix the clock here; the \
+             invite is fine.",
+            plain_duration(excess),
+            plain_duration(TTL_SECS),
+            plain_duration(remaining),
+        ))
+    }
+
     /// Render as a `clispeak://join/...` link.
     pub fn to_url(&self) -> Result<String> {
         let mut buf = Vec::new();
@@ -145,7 +200,12 @@ impl Ticket {
         let ticket: Self = ciborium::from_reader(&bytes[..])
             .map_err(|_| anyhow::anyhow!("that invite looks truncated, copy the whole code"))?;
         if !ticket.is_valid() {
-            bail!("that invite has expired, ask for a new one");
+            bail!("{}", ticket.expiry_objection(now()));
+        }
+        // A ticket with more life left than one can be minted with did not come
+        // from a device that agrees with this one about the time.
+        if let Some(message) = ticket.clock_is_behind(now()) {
+            bail!("{message}");
         }
         Ok(ticket)
     }
@@ -183,8 +243,116 @@ fn random_token() -> String {
 }
 
 /// Unix seconds now, or zero if the clock is before the epoch.
+/// A duration a person would say out loud, from seconds.
+///
+/// Deliberately coarse. The reader is deciding whether a number is plausible,
+/// not measuring anything: "3 hours" answers that and "10,847 seconds" does
+/// not.
+fn plain_duration(secs: u64) -> String {
+    // Rounded, not ceilinged. `div_ceil` turns 172,801 seconds into "3 days",
+    // which is wrong by most of a day in the direction that makes a correct
+    // clock look broken.
+    let round = |u: u64| (secs + u / 2) / u;
+    let (n, unit) = match secs {
+        0..=90 => (secs, "second"),
+        91..3_600 => (round(60), "minute"),
+        3_600..172_800 => (round(3_600), "hour"),
+        _ => (round(86_400), "day"),
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
+/// A unix time as something a person can compare against a clock.
+///
+/// UTC and named as such, because the point is to be checked against reality
+/// and a local rendering of a wrong clock is just the wrong time again in
+/// friendlier words.
+fn utc(secs: u64) -> String {
+    chrono::DateTime::from_timestamp(secs as i64, 0)
+        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| format!("unix time {secs}"))
+}
+
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+/// What a ticket says when the clocks disagree.
+///
+/// Pure functions over a timestamp rather than over `now()`, because the case
+/// worth testing is precisely the one where this machine's clock is not the
+/// one to trust.
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+
+    fn at(expires_at: u64) -> Ticket {
+        Ticket {
+            endpoint_id: "e".into(),
+            token: "t".into(),
+            expires_at,
+            space: None,
+            label: None,
+        }
+    }
+
+    /// A ticket read on a clock that agrees is simply expired — and the message
+    /// hands over what this device believes rather than a verdict.
+    #[test]
+    fn an_expired_invite_says_what_this_device_thinks_the_time_is() {
+        let msg = at(1_000_000).expiry_objection(1_000_000 + 7200);
+        assert!(msg.contains("2 hours ago"), "{msg}");
+        assert!(msg.contains("believes it is now"), "{msg}");
+        assert!(msg.contains("UTC"), "{msg}");
+        // The old advice sent people to mint another that would fail
+        // identically, for as long as they were willing to keep trying.
+        assert!(!msg.contains("ask for a new one"), "{msg}");
+    }
+
+    /// **The provable direction.** No honest ticket can carry more than
+    /// `TTL_SECS` of life, so more than that is a reader's clock behind the
+    /// minter's — a fact, and said as one.
+    #[test]
+    fn more_life_than_can_be_minted_proves_the_reader_is_behind() {
+        let msg = at(1_000_000 + TTL_SECS + 3600)
+            .clock_is_behind(1_000_000)
+            .expect("provably behind");
+        assert!(msg.contains("1 hour"), "{msg}");
+        assert!(msg.contains("clock"), "{msg}");
+    }
+
+    /// A ticket minted a moment ago carries exactly the full lifetime, and that
+    /// is not evidence of anything. The boundary has to be inclusive or every
+    /// fresh invite is refused as suspicious.
+    #[test]
+    fn a_ticket_with_exactly_its_full_life_is_not_an_accusation() {
+        assert_eq!(at(1_000_000 + TTL_SECS).clock_is_behind(1_000_000), None);
+    }
+
+    /// And an ordinary unexpired ticket provokes nothing.
+    #[test]
+    fn a_healthy_invite_provokes_no_message() {
+        assert_eq!(at(1_000_000 + 120).clock_is_behind(1_000_000), None);
+    }
+
+    /// The reader is judging plausibility, not measuring. Coarse units, and
+    /// singular where it matters, because "1 hours" reads as a bug in the tool
+    /// rather than a fact about the clock.
+    #[test]
+    fn durations_are_said_the_way_a_person_would() {
+        assert_eq!(plain_duration(1), "1 second");
+        assert_eq!(plain_duration(45), "45 seconds");
+        assert_eq!(plain_duration(300), "5 minutes");
+        assert_eq!(plain_duration(3600), "1 hour");
+        assert_eq!(plain_duration(7200), "2 hours");
+        assert_eq!(plain_duration(172_801), "2 days");
+    }
+
+    /// A timestamp a person can hold against a wall clock.
+    #[test]
+    fn a_time_is_rendered_as_utc() {
+        assert_eq!(utc(1_000_000_000), "2001-09-09 01:46 UTC");
+    }
 }
