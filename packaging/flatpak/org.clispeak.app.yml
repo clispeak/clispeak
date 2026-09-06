@@ -75,6 +75,25 @@ finish-args:
   # Narrower than the two grants above: one directory, ours, no executables in
   # it (#82, decision 107).
   - --filesystem=xdg-config/clispeak:create
+  # And the socket, for the same reason and the same pair of processes.
+  #
+  # **This is the other half of the wound decision 107 only half closed.**
+  # Until decision 103 the socket was a *namespaced* name, which on Linux is
+  # an abstract socket living in the network namespace — and `--share=network`
+  # already shares that, so it crossed the sandbox for free. Moving it into a
+  # private directory under `$XDG_RUNTIME_DIR` was right, and it took that
+  # away: Flatpak gives the app its own `/run/user/1000`, so the node and the
+  # host CLI both print the same path and mean different directories.
+  #
+  # Measured, both sides, before the grant existed:
+  #
+  #     host    /run/user/1000/clispeak/   empty
+  #     sandbox $XDG_RUNTIME_DIR/clispeak/ holds clispeak.sock
+  #
+  # The failure is silent and total: the CLI reports that nothing is
+  # listening while the app is plainly running, on the one package that is
+  # the Linux release (#82).
+  - --filesystem=xdg-run/clispeak:create
   # Where agents keep skills. Narrow on purpose: an unshared write inside the
   # sandbox appears to succeed and never reaches the host, so the app must be
   # able to genuinely write anywhere it offers to. Any other location goes
