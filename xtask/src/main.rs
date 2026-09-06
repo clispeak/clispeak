@@ -46,6 +46,78 @@ fn main() -> anyhow::Result<()> {
 /// running, because a gate that passed and a gate that never ran otherwise
 /// look identical in a scrollback — the same reasoning as the counts printed
 /// by `portability`.
+/// Every declared version in the workspace, and whether they are the same one.
+///
+/// **Four places, one number.** The workspace `Cargo.toml` sets it; every
+/// member inherits with `version.workspace = true`; `tauri.conf.json` carries
+/// its own copy because Tauri reads that rather than cargo, and Android
+/// derives its integer `versionCode` from it; and two internal dependencies
+/// pin a version beside their `path`.
+///
+/// That last pair is the one that bites. A path dependency is not exempt from
+/// its own version requirement — cargo checks it against the real crate
+/// version — so leaving one behind fails the build with an error about
+/// resolution rather than about the bump that caused it.
+fn versions_agree() -> anyhow::Result<()> {
+    use anyhow::{Context, bail};
+    let root = bundle::workspace_root()?;
+
+    let ws = std::fs::read_to_string(root.join("Cargo.toml"))?;
+    let want = ws
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("version = \""))
+        .and_then(|v| v.split('"').next())
+        .context("no version in the workspace Cargo.toml")?
+        .to_string();
+
+    let mut wrong: Vec<String> = Vec::new();
+
+    let tauri = root.join("app/src-tauri/tauri.conf.json");
+    let conf = std::fs::read_to_string(&tauri)?;
+    let found = conf
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("\"version\": \""))
+        .and_then(|v| v.split('"').next())
+        .context("no version in tauri.conf.json")?;
+    if found != want {
+        wrong.push(format!("tauri.conf.json says {found}"));
+    }
+
+    // Internal dependencies that pin a version beside a path.
+    for f in [
+        "app/src-tauri/Cargo.toml",
+        "crates/clispeak-core/Cargo.toml",
+    ] {
+        let text = std::fs::read_to_string(root.join(f))?;
+        for line in text.lines() {
+            if !line.contains("path = ") || !line.starts_with("clispeak-") {
+                continue;
+            }
+            let Some(v) = line
+                .split("version = \"")
+                .nth(1)
+                .and_then(|v| v.split('"').next())
+            else {
+                continue;
+            };
+            if v != want {
+                wrong.push(format!("{f} pins {v}"));
+            }
+        }
+    }
+
+    if wrong.is_empty() {
+        println!("versions ok: everything says {want}");
+        return Ok(());
+    }
+    bail!(
+        "the workspace says {want} but {}. A path dependency still checks its \
+         version requirement, so this is a failed build rather than an untidy \
+         tree",
+        wrong.join(", ")
+    )
+}
+
 fn check() -> anyhow::Result<()> {
     // Before anything cargo does, because every other gate's verdict is
     // meaningless on a tree in this state and would be *reported* anyway.
@@ -58,6 +130,13 @@ fn check() -> anyhow::Result<()> {
     // any Rust gate can see (#102).
     eprintln!("== workflows");
     workflow_run_steps()?;
+    // Cheap, and there is no other check for it. The version lives in four
+    // places and a path dependency still validates its requirement against the
+    // real crate version, so a partial bump is a failed build rather than an
+    // untidy tree — found by grepping before the 0.9.0 bump, which is the only
+    // reason it was not one (decision 112).
+    eprintln!("== versions");
+    versions_agree()?;
 
     let steps: &[(&str, &[&str])] = &[
         ("fmt", &["fmt", "--all", "--check"]),
