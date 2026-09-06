@@ -593,6 +593,32 @@ impl Node {
     pub async fn serve(&self) -> Result<()> {
         let config_dir = crate::identity::config_dir()?;
 
+        // Before anything else: is there a second copy of this device's state
+        // on this machine? Two directories can hold two rosters while sharing
+        // the one identity in the keyring, and then whichever node starts
+        // first decides which address book every peer sees. A device that
+        // answers with the wrong history does not look broken — it looks like
+        // one that has forgotten who it knows, and that is expensive to chase
+        // (#198, decision 108).
+        //
+        // Refusing is the point. The alternative is starting successfully and
+        // being subtly wrong, which is the failure this project keeps paying
+        // for. The message names both directories because the fix is to
+        // decide which one is real, and only the person can do that.
+        if let Some(other) = crate::identity::conflicting_identity(&config_dir) {
+            anyhow::bail!(
+                "two copies of this device's state are on this machine, and they \
+                 share one identity:\n  {}\n  {}\nBoth name the same keyring \
+                 entry, so both are this device — but each has its own roster, \
+                 so whichever starts first decides which devices this one \
+                 remembers. Delete the directory you do not want, or set \
+                 CLISPEAK_CONFIG_DIR to name the one you do. Nothing was \
+                 started",
+                config_dir.display(),
+                other.display(),
+            );
+        }
+
         // Ask what holds the socket *before* writing a new token, because
         // writing one destroys the only thing that could identify a node
         // already running: `install_token` replaces the file, and the running

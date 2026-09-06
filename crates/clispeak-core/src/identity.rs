@@ -177,6 +177,101 @@ pub fn config_dir() -> Result<PathBuf, IdentityError> {
     Ok(dirs.config_dir().to_path_buf())
 }
 
+/// The marker written when the identity lives in the system keyring.
+///
+/// Its presence is what makes two directories the *same device*: the keyring
+/// entry is `("clispeak", "device-identity")` with nothing in it derived from
+/// where the config lives, so every directory carrying this marker is naming
+/// one secret. A directory holding `identity.key` instead is a different
+/// device and conflicts with nobody.
+const KEYRING_MARKER: &str = "identity.in-keyring";
+
+/// The application id the Flatpak is published under.
+///
+/// A packaging detail, in the core, on purpose: this is not a platform
+/// conditional and does not compile differently anywhere. It is a path that
+/// may exist on any machine, and the alternative — the app telling the core
+/// where its other self might be — makes the check depend on the one process
+/// most likely to be the problem.
+const FLATPAK_ID: &str = "org.clispeak.app";
+
+/// Other directories on this machine where a node may keep its state.
+///
+/// Two, and they are the two shapes that exist: a Flatpak's sandboxed config,
+/// and the host's. Whichever of them we are, the other is the one to look at.
+/// Never includes `mine`.
+pub fn sibling_config_dirs(mine: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+
+    // From inside a sandbox, the host's — reachable since decision 107.
+    if let Some(host) = crate::ipc::host_config_dir() {
+        out.push(host);
+    }
+    // From the host, the sandbox's. `~/.var/app/<id>/config` is Flatpak's
+    // layout, not ours, but it is stable and public.
+    if let Some(home) = std::env::var_os("HOME") {
+        out.push(
+            PathBuf::from(home)
+                .join(".var/app")
+                .join(FLATPAK_ID)
+                .join("config")
+                .join("clispeak"),
+        );
+    }
+
+    out.retain(|d| d != mine);
+    out.dedup();
+    out
+}
+
+/// Another directory on this machine that claims the same device identity.
+///
+/// `None` when there is no ambiguity, which is every ordinary install.
+///
+/// **Why this is worth refusing to start over.** Two config directories can
+/// hold two rosters, two histories and two mute settings while sharing the
+/// one identity in the keyring — so whichever node binds the socket first
+/// decides which address book the CLI and every peer sees. The device does
+/// not look broken. It looks like a device that has forgotten who it knows,
+/// which is a far more expensive thing to debug than a refusal at startup.
+///
+/// This is not hypothetical and it is not new: the app once set its own
+/// config directory on desktop and produced exactly this, and the comment
+/// recording that is still in `app/src-tauri/src/lib.rs`. That fix removed
+/// one cause. The condition it created stayed reachable, and a user reaches
+/// it by having a Flatpak and a native build at once (#198).
+pub fn conflicting_identity(mine: &Path) -> Option<PathBuf> {
+    // A directory the caller chose is a decision already made — including the
+    // documented way to run a second node for testing, which would otherwise
+    // be refused by a check meant to protect it.
+    if std::env::var_os("CLISPEAK_CONFIG_DIR").is_some() {
+        return None;
+    }
+    let siblings = sibling_config_dirs(mine);
+    let claims: Vec<(PathBuf, bool)> = siblings
+        .into_iter()
+        .map(|d| {
+            let claimed = d.join(KEYRING_MARKER).exists();
+            (d, claimed)
+        })
+        .collect();
+    first_conflict(mine.join(KEYRING_MARKER).exists(), claims)
+}
+
+/// The decision in [`conflicting_identity`], with the filesystem read already
+/// done.
+///
+/// Separated because the case that matters cannot be produced by a test that
+/// looks at the real machine it runs on.
+fn first_conflict(i_use_the_keyring: bool, siblings: Vec<(PathBuf, bool)>) -> Option<PathBuf> {
+    if !i_use_the_keyring {
+        return None;
+    }
+    siblings
+        .into_iter()
+        .find_map(|(dir, claimed)| claimed.then_some(dir))
+}
+
 /// Everything this device keeps beside its identity.
 ///
 /// An allowlist rather than "move the directory", because the app's data
@@ -382,6 +477,75 @@ fn usable_hostname(raw: &str) -> Option<String> {
 /// Permissions are set at creation on Unix. Elsewhere the containing
 /// directory is the protection, which is why the key lives in a
 /// per-application config directory rather than anywhere shared.
+/// One machine, one address book — the rule, without the filesystem.
+#[cfg(test)]
+mod identity_conflict_tests {
+    use super::*;
+
+    /// The ordinary install: nothing beside us, nothing to refuse.
+    #[test]
+    fn one_directory_is_never_a_conflict() {
+        assert_eq!(first_conflict(true, vec![]), None);
+    }
+
+    /// A directory holding `identity.key` rather than the keyring marker is a
+    /// *different* device. It may sit beside us all it likes.
+    #[test]
+    fn a_sibling_that_does_not_use_the_keyring_is_a_different_device() {
+        assert_eq!(
+            first_conflict(true, vec![(PathBuf::from("/other"), false)]),
+            None
+        );
+    }
+
+    /// And in reverse: if *we* keep our identity in a file, another
+    /// directory's keyring identity is not ours to collide with.
+    #[test]
+    fn our_own_file_identity_collides_with_nobody() {
+        assert_eq!(
+            first_conflict(false, vec![(PathBuf::from("/other"), true)]),
+            None
+        );
+    }
+
+    /// The case this exists for. Two directories both naming the one keyring
+    /// entry, so both are this device — with two rosters between them, and
+    /// whichever starts first deciding which one every peer sees (#198).
+    #[test]
+    fn two_directories_naming_the_same_keyring_identity_conflict() {
+        assert_eq!(
+            first_conflict(true, vec![(PathBuf::from("/other"), true)]),
+            Some(PathBuf::from("/other"))
+        );
+    }
+
+    /// The message names one other directory, so it names the first that
+    /// actually claims the identity — not an arbitrary one, and not a
+    /// directory that merely exists.
+    #[test]
+    fn the_first_claiming_directory_is_the_one_reported() {
+        assert_eq!(
+            first_conflict(
+                true,
+                vec![
+                    (PathBuf::from("/a"), false),
+                    (PathBuf::from("/b"), true),
+                    (PathBuf::from("/c"), true),
+                ]
+            ),
+            Some(PathBuf::from("/b"))
+        );
+    }
+
+    /// Whatever else it reports, it never reports us. A node refusing to
+    /// start because of itself would be worse than the bug.
+    #[test]
+    fn our_own_directory_is_never_among_the_siblings() {
+        let mine = PathBuf::from("/home/p/.config/clispeak");
+        assert!(!sibling_config_dirs(&mine).contains(&mine));
+    }
+}
+
 #[cfg(test)]
 mod migration_tests {
     use super::*;
