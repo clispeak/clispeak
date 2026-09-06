@@ -137,20 +137,52 @@ pub fn bundle(root: &Path) -> Result<()> {
 /// rather than symlinked.
 fn stage_cli(root: &Path, tauri: &Path) -> Result<()> {
     println!("building the command-line tool");
-    let status = Command::new("cargo")
-        .args(["build", "--release", "-p", "clispeak-cli"])
-        .current_dir(root)
-        .status()
-        .context("running cargo")?;
-    if !status.success() {
-        bail!("the command-line tool failed to build");
-    }
 
     // `.exe` on Windows and nothing anywhere else. From the standard library
     // rather than a conditional of our own, since it is exactly this question.
     let exe = std::env::consts::EXE_SUFFIX;
+    let triple = host_triple()?;
 
-    let built = root.join(format!("target/release/clispeak{exe}"));
+    let mut cargo = Command::new("cargo");
+    cargo
+        .args(["build", "--release", "-p", "clispeak-cli"])
+        .current_dir(root);
+
+    // **On Windows the C runtime goes inside the binary.** Without this the
+    // tool imports `VCRUNTIME140.dll`, which a clean Windows install does not
+    // have — and the failure is total silence: the file is found, the process
+    // starts, and it dies before `main` with exit `0xC0000135` and no output
+    // at all. Measured on a fresh VM on 6 September 2026, and confirmed by
+    // reading the import table of the shipped `clispeak.exe` beside
+    // `clispeak-app.exe`, which needs no such library and therefore ran fine.
+    //
+    // Issue #30 wrote this failure down, to the exact exit code, about Piper.
+    // Piper is Linux-only now, so that particular risk went away — and the
+    // dependency arrived through our own binary instead, on a path nobody was
+    // watching. The lesson was about the *symptom*, not about Piper.
+    //
+    // **`--target` is not decoration.** `RUSTFLAGS` reaches build scripts and
+    // proc-macro crates as well, and a proc macro is a dynamic library that
+    // cannot be built against a static CRT. Naming the target explicitly is
+    // what confines the flag to the artefact being shipped, which is the
+    // documented way round it.
+    let built = if cfg!(windows) {
+        let mut flags = std::env::var("RUSTFLAGS").unwrap_or_default();
+        if !flags.is_empty() {
+            flags.push(' ');
+        }
+        flags.push_str("-C target-feature=+crt-static");
+        cargo.args(["--target", &triple]).env("RUSTFLAGS", flags);
+        root.join(format!("target/{triple}/release/clispeak{exe}"))
+    } else {
+        root.join(format!("target/release/clispeak{exe}"))
+    };
+
+    let status = cargo.status().context("running cargo")?;
+    if !status.success() {
+        bail!("the command-line tool failed to build");
+    }
+
     if !built.exists() {
         bail!("{} was not produced", built.display());
     }
@@ -160,7 +192,7 @@ fn stage_cli(root: &Path, tauri: &Path) -> Result<()> {
     // Tauri looks for a sidecar named for the target triple, and keeps the
     // platform's executable suffix. Without it Windows stages a file nothing
     // will run, beside a `built` path that never existed to copy from.
-    let staged = binaries.join(format!("clispeak-{}{exe}", host_triple()?));
+    let staged = binaries.join(format!("clispeak-{triple}{exe}"));
     std::fs::copy(&built, &staged).with_context(|| format!("staging {}", staged.display()))?;
     println!("staged  {}", staged.display());
     Ok(())
