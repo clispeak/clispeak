@@ -83,16 +83,18 @@ jobs:
     needs: publish
     timeout-minutes: 10
     runs-on: ubuntu-latest
-    # **Expected to fail until a version is tagged.** There are no releases, so
-    # every `releases/latest/download/…` URL 404s. The names are right and the
-    # destinations do not exist yet, which is the sequencing docs/website.md
-    # describes — a check that passed today would be checking nothing.
-    #
-    # `continue-on-error` so a page that is otherwise correct still deploys,
-    # while the run carries a visible red mark that the downloads are dead.
-    # Removing this line is part of publishing the first release.
-    continue-on-error: true
+    # The script decides for itself whether a broken download is fatal: it asks
+    # whether a release exists, warns when there is none, and fails when there
+    # is one. So there is no `continue-on-error` here to remember to delete —
+    # this becomes strict the moment the first version is tagged, without
+    # anyone doing anything. A red mark nobody can act on yet is a red mark
+    # everybody learns to ignore.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Fetch every download the page offers
+        env:
+          # `gh release list` needs only the default read permission; without
+          # a token it cannot answer, and the script treats that as "no
+          # release" rather than failing a build over a missing credential.
+          GH_TOKEN: ${{ github.token }}
         run: ./site/check-links.sh
