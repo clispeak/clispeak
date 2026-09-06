@@ -5,7 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>clispeak — speak text aloud on your own devices</title>
 <meta name="description"
-  content="Speak text aloud on your own devices. Peer to peer, no server, no account. Built so an agent can drive it." />
+  content="Speak text aloud on your own devices — laptop, phone, desktop. Peer to peer text to speech with no server and no account, built so an AI coding agent can talk to you. Linux, Windows, Android and macOS." />
+<!-- So a pasted link is a card rather than a bare URL. No image yet: #188 owes
+     the site a favicon and an Open Graph image, and pointing at one that does
+     not exist is worse than pointing at nothing. -->
+<meta property="og:title" content="clispeak — speak text aloud on your own devices" />
+<meta property="og:description"
+  content="Peer to peer text to speech across your own devices. No server, no account. Built so an agent can drive it." />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 
@@ -17,6 +25,52 @@
   Skip to downloads
 </a>
 
+<!-- The nav.
+     Sticky, because the page is long enough that the download link should
+     never be more than a glance away. `backdrop-blur` with a translucent
+     ground rather than a solid bar, so the accent wash behind the hero still
+     reads through it.
+
+     The links scroll rather than navigate: one page, so anchors are the whole
+     of it. Every section they point at sets `scroll-mt` so a heading does not
+     land underneath this bar -- which is the bug every sticky header ships
+     with. -->
+<header class="sticky top-0 z-40 border-b border-neutral-200/70 bg-neutral-50/80
+               backdrop-blur dark:border-neutral-800/70 dark:bg-neutral-950/80">
+  <nav aria-label="Sections" class="mx-auto flex w-full max-w-3xl items-center gap-4 px-5 py-3 sm:px-6">
+    <a href="#top" class="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
+      <svg viewBox="0 0 1024 1024" class="h-7 w-7 rounded-lg" aria-hidden="true">
+        <rect x="32" y="32" width="960" height="960" rx="220" fill="#0b1a2b"/>
+        <path d="M290 265H734C820 265 872 317 872 403V626C872 712 820 764 734 764H512L392 850V764H290C204 764 152 712 152 626V403C152 317 204 265 290 265Z"
+              fill="none" stroke="#fff" stroke-width="52" stroke-linejoin="round"/>
+        <path d="M300 447L390 512L300 577" fill="none" stroke="#fff" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M655 426C710 478 710 546 655 598" fill="none" stroke="#27F2F2" stroke-width="44" stroke-linecap="round"/>
+      </svg>
+      <span>clispeak</span>
+    </a>
+
+    <!-- Scrolls rather than wraps on a narrow screen: a nav that becomes two
+         rows pushes the page down for everyone to serve the few who read it. -->
+    <ul class="-mx-1 flex flex-1 items-center gap-1 overflow-x-auto text-sm
+               [scrollbar-width:none] [&amp;::-webkit-scrollbar]:hidden">
+      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#uses">Uses</a></li>
+      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#download">Download</a></li>
+      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#after">After</a></li>
+      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#pair">Pairing</a></li>
+      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#agents">For agents</a></li>
+      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#works">Status</a></li>
+    </ul>
+
+    <a href="https://github.com/clispeak/clispeak"
+       class="hidden shrink-0 items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5
+              text-sm font-medium transition hover:bg-neutral-100 sm:inline-flex
+              dark:border-neutral-700 dark:hover:bg-neutral-800">
+      <svg viewBox="0 0 16 16" class="h-4 w-4" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      Source
+    </a>
+  </nav>
+</header>
+
 <!-- A wash of the accent behind the hero only. `-z-10` and `aria-hidden`
      because it is decoration: it must never sit above the content or be
      announced to a screen reader. -->
@@ -25,7 +79,7 @@
             bg-gradient-to-b from-accent-500/10 to-transparent
             dark:from-accent-500/[0.07]"></div>
 
-<main class="relative mx-auto w-full max-w-3xl px-5 py-14 sm:px-6 sm:py-20">
+<main id="top" class="relative mx-auto w-full max-w-3xl px-5 py-14 sm:px-6 sm:py-20">
 
   <!-- 1. What it is ------------------------------------------------------ -->
   <header>
@@ -65,8 +119,96 @@
     </p>
   </header>
 
+  <!-- 1a. See it ------------------------------------------------------- -->
+  <!-- Real screenshots of the running app rather than a mockup. Width and
+       height are declared so the page does not jump as they load, and the
+       device identity is redacted: it is a public key rather than a secret,
+       but there is no reason to publish the address of somebody's laptop. -->
+  <section id="screens" class="mt-16 scroll-mt-20">
+    <div class="grid gap-6 sm:grid-cols-3">
+      <figure class="flex flex-col">
+        <img src="img/app-messages.png" width="444" height="1002" loading="lazy"
+             alt="The clispeak app showing its message history, with a spoken message and a play button."
+             class="w-full rounded-2xl border border-neutral-200 shadow-sm dark:border-neutral-800" />
+        <figcaption class="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
+          <strong class="font-medium text-neutral-900 dark:text-neutral-100">Everything it said.</strong>
+          Anything that arrived while the device was muted or quiet is kept, so
+          you can read or play it later rather than losing it.
+        </figcaption>
+      </figure>
+      <figure class="flex flex-col">
+        <img src="img/app-spaces.png" width="444" height="1002" loading="lazy"
+             alt="The clispeak app showing a space named Main with five paired devices, each marked active now."
+             class="w-full rounded-2xl border border-neutral-200 shadow-sm dark:border-neutral-800" />
+        <figcaption class="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
+          <strong class="font-medium text-neutral-900 dark:text-neutral-100">Your devices, and only yours.</strong>
+          A space is a set of devices that trust each other. Add one by scanning
+          a code; remove it whenever you like.
+        </figcaption>
+      </figure>
+      <figure class="flex flex-col">
+        <img src="img/app-settings.png" width="444" height="1002" loading="lazy"
+             alt="The clispeak app settings, showing appearance, device name, mute, quiet hours and voice speed."
+             class="w-full rounded-2xl border border-neutral-200 shadow-sm dark:border-neutral-800" />
+        <figcaption class="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
+          <strong class="font-medium text-neutral-900 dark:text-neutral-100">On your terms.</strong>
+          Mute it, give it quiet hours, change the voice and its speed. A device
+          that will not speak tells the sender which setting stopped it.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 1b. What people use it for -------------------------------------- -->
+  <!-- Concrete uses rather than adjectives, and they carry the words someone
+       would actually search for: text to speech across devices, a terminal
+       notification read aloud, an AI agent that talks. Each one is something
+       the software does today -- a page that lists aspirations is a page that
+       lies for search traffic. -->
+  <section id="uses" class="mt-16 scroll-mt-20">
+    <h2 class="text-2xl font-semibold tracking-tight">What people use it for</h2>
+    <div class="mt-6 grid gap-4 sm:grid-cols-2">
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="font-medium">Your coding agent talks to you</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          An agent working in your terminal can say &ldquo;the build finished&rdquo;
+          or ask a question out loud, on your phone, while you are in another
+          room. This is the reason clispeak exists.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="font-medium">Long jobs that finish while you are away</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          A test suite, a deploy, a render. Append one command and the machine
+          tells you it is done instead of you checking a terminal every ten
+          minutes.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="font-medium">Read something aloud on another device</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Send text from your laptop to a phone in the kitchen, or to a
+          machine across the room. Text to speech, on hardware you already own,
+          without an account.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="font-medium">Alerts you cannot miss</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          A monitor, a cron job, a wake-up. Spoken aloud rather than added to a
+          pile of notifications, with quiet hours so it respects the time.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
   <!-- 2. Download -------------------------------------------------------- -->
-  <section id="download" class="mt-16 scroll-mt-8">
+  <section id="download" class="mt-16 scroll-mt-20">
     <h2 class="text-2xl font-semibold tracking-tight">Download</h2>
     <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
       Free, and the same build on every platform.
@@ -193,7 +335,7 @@
   </section>
 
   <!-- 3. After you download ---------------------------------------------- -->
-  <section id="after" class="mt-16 scroll-mt-8">
+  <section id="after" class="mt-16 scroll-mt-20">
     <h2 class="text-2xl font-semibold tracking-tight">After you download</h2>
     <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
       Every platform has a moment where it tells you this software is dangerous.
@@ -254,7 +396,7 @@
   </section>
 
   <!-- 4. Pair two devices ------------------------------------------------ -->
-  <section id="pair" class="mt-16 scroll-mt-8">
+  <section id="pair" class="mt-16 scroll-mt-20">
     <h2 class="text-2xl font-semibold tracking-tight">Pair two devices</h2>
     <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
       One install does nothing on its own. Pairing is what makes it useful, and
@@ -291,7 +433,7 @@
   </section>
 
   <!-- 5. For agents ------------------------------------------------------ -->
-  <section id="agents" class="mt-16 scroll-mt-8">
+  <section id="agents" class="mt-16 scroll-mt-20">
     <h2 class="text-2xl font-semibold tracking-tight">For agents</h2>
     <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
       This is the reason the project exists. An agent working on your machine
@@ -319,15 +461,62 @@ $ clispeak --to Phone "the build finished"
       stopped it.
     </p>
 
-    <p class="mt-4 text-base leading-relaxed">
+    <h3 class="mt-8 text-lg font-medium">Setting it up for your agent</h3>
+    <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      clispeak ships a <em>skill</em>: a file that tells an agent when speaking
+      is worth doing, how to name itself so you know who is talking, and what
+      each exit code means. Two ways to install it, and neither needs you to
+      copy anything by hand.
+    </p>
+
+    <ol class="mt-5 space-y-3">
+      <li class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <p class="font-medium">1. Install clispeak on the machine your agent runs on</p>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          The app installs the <span class="font-mono text-xs">clispeak</span> command onto your
+          PATH the first time it opens. Open a <strong class="font-medium text-neutral-900 dark:text-neutral-100">new</strong>
+          terminal afterwards &mdash; one that was already open keeps the
+          environment it started with.
+        </p>
+      </li>
+      <li class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <p class="font-medium">2. Install the skill</p>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          From the terminal:
+        </p>
+        <p class="mt-2 overflow-x-auto rounded-lg bg-neutral-100 px-3 py-2 font-mono text-xs dark:bg-neutral-950">clispeak skill --install</p>
+        <p class="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          That writes it to <span class="font-mono text-xs">~/.claude/skills/clispeak/SKILL.md</span>,
+          where Claude Code looks. Or open the app, go to
+          <span class="font-mono text-xs">Settings</span>, and press
+          <span class="font-mono text-xs">Install</span> &mdash; the same file, and it
+          tells you if the copy on disk has fallen behind the app.
+        </p>
+        <p class="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Keeps its skills somewhere else? <span class="font-mono text-xs">clispeak skill</span>
+          with no flags prints it, so you can put it wherever your agent reads from.
+        </p>
+      </li>
+      <li class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <p class="font-medium">3. Pair the device you want to be spoken to</p>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Usually your phone &mdash; see <a class="underline underline-offset-2 hover:text-accent-600 dark:hover:text-accent-400" href="#pair">pairing</a>.
+          Then tell your agent who to talk to, in whatever words you like:
+          <em>&ldquo;speak to me on my phone when a long job finishes&rdquo;</em>.
+          The skill covers the rest.
+        </p>
+      </li>
+    </ol>
+
+    <p class="mt-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
       <a class="underline underline-offset-2 hover:text-accent-600 dark:hover:text-accent-400"
-         href="https://github.com/clispeak/clispeak/blob/main/skills/clispeak/SKILL.md">The
-      agent skill</a> &mdash; drop it in and an agent knows how to use this.
+         href="https://github.com/clispeak/clispeak/blob/main/skills/clispeak/SKILL.md">Read the
+      skill</a> before you install it &mdash; it is a text file, and it is short.
     </p>
   </section>
 
   <!-- 6. What works today ------------------------------------------------ -->
-  <section id="works" class="mt-16 scroll-mt-8">
+  <section id="works" class="mt-16 scroll-mt-20">
     <h2 class="text-2xl font-semibold tracking-tight">What works today</h2>
     <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
       The honest version. If this disagrees with the
