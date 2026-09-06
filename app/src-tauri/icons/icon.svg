@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">clispeak application icon</title>
+  <desc id="desc">A terminal prompt inside a speech bubble with three sound waves.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#10243A"/>
+      <stop offset="100%" stop-color="#06111F"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#27F2F2"/>
+      <stop offset="100%" stop-color="#00C7D9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#bg)"/>
+
+  <!-- Speech bubble -->
+  <path
+    d="M290 265
+       H734
+       C820 265 872 317 872 403
+       V626
+       C872 712 820 764 734 764
+       H512
+       L392 850
+       V764
+       H290
+       C204 764 152 712 152 626
+       V403
+       C152 317 204 265 290 265Z"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="46"
+    stroke-linejoin="round"
+    stroke-linecap="round"/>
+
+  <!-- Terminal prompt > -->
+  <path
+    d="M300 447 L390 512 L300 577"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="44"
+    stroke-linecap="round"
+    stroke-linejoin="round"/>
+
+  <!-- Terminal underscore -->
+  <line x1="420" y1="578" x2="505" y2="578"
+        stroke="#FFFFFF"
+        stroke-width="38"
+        stroke-linecap="round"/>
+
+  <!-- Sound waves -->
+  <path d="M602 468 C630 495 630 529 602 556"
+        fill="none" stroke="url(#cyan)" stroke-width="36" stroke-linecap="round"/>
+  <path d="M655 426 C710 478 710 546 655 598"
+        fill="none" stroke="url(#cyan)" stroke-width="36" stroke-linecap="round"/>
+  <path d="M710 382 C790 454 790 570 710 642"
+        fill="none" stroke="url(#cyan)" stroke-width="36" stroke-linecap="round"/>
+</svg>

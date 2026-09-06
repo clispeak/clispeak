@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#10243A"/>
+      <stop offset="100%" stop-color="#06111F"/>
+    </linearGradient>
+  </defs>
+  <!-- Full bleed and unrounded on purpose: Android applies the mask itself,
+       and a shape of our own inside its mask shows as a double edge. -->
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+</svg>
