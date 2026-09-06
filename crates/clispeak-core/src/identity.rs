@@ -250,12 +250,61 @@ pub fn conflicting_identity(mine: &Path) -> Option<PathBuf> {
     let siblings = sibling_config_dirs(mine);
     let claims: Vec<(PathBuf, bool)> = siblings
         .into_iter()
+        // **The same directory under two names is not a conflict**, and it is
+        // the ordinary case rather than an exotic one. Flatpak's
+        // `--filesystem=xdg-config/clispeak` bind-mounts the host's directory
+        // into the app's redirected config location, so
+        // `~/.config/clispeak` and `~/.var/app/<id>/config/clispeak` are one
+        // directory with two paths — same device, same inode, neither a
+        // symlink. Comparing the strings reported this device as conflicting
+        // with itself, and the refusal that produced met a clean install
+        // before it met a second developer (decision 110).
+        .filter(|d| !same_directory(mine, d))
         .map(|d| {
             let claimed = d.join(KEYRING_MARKER).exists();
             (d, claimed)
         })
         .collect();
     first_conflict(mine.join(KEYRING_MARKER).exists(), claims)
+}
+
+/// Whether two paths are the same directory, whatever they are called.
+///
+/// **Not a string comparison, and not `canonicalize`.** A bind mount is not a
+/// symlink: `canonicalize` resolves both paths to themselves and reports two
+/// different directories, which is exactly the wrong answer for a Flatpak.
+/// The kernel knows they are the same because the device and inode match —
+/// and reading those needs `MetadataExt`, which is a platform conditional
+/// this crate does not get to have.
+///
+/// So it asks the filesystem the question directly: write a file with a name
+/// nothing else would choose into one, and look for it in the other. The same
+/// shape as the ownership probe in `ipc::private_dir`, and for the same
+/// reason — the portable question is answerable, the portable API is not.
+///
+/// Conservative on failure. If the probe cannot be written, this returns
+/// `false` and the caller treats the directories as distinct, which risks a
+/// warning rather than risking silence about a real conflict.
+fn same_directory(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    // Unique per process and per call, so two nodes probing at once cannot
+    // read each other's marker and conclude they share a directory.
+    let name = format!(
+        ".same-dir-probe-{}-{:x}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    );
+    let probe = a.join(&name);
+    if std::fs::write(&probe, b"probe").is_err() {
+        return false;
+    }
+    let same = b.join(&name).exists();
+    let _ = std::fs::remove_file(&probe);
+    same
 }
 
 /// The decision in [`conflicting_identity`], with the filesystem read already
@@ -535,6 +584,52 @@ mod identity_conflict_tests {
             ),
             Some(PathBuf::from("/b"))
         );
+    }
+
+    /// **The case that produced a refusal on a clean install.** A Flatpak
+    /// bind-mounts the host's config directory into the sandbox, so two paths
+    /// name one directory — same device, same inode, neither a symlink, so
+    /// neither string comparison nor `canonicalize` can tell. Measured on
+    /// this machine: `~/.config/clispeak` and
+    /// `~/.var/app/org.clispeak.app/config/clispeak` both reported
+    /// `dev=57 inode=1558614`.
+    ///
+    /// A hard link stands in for the bind mount here, because a test cannot
+    /// mount anything: it is the same question — one directory entry reached
+    /// through two names — asked in a way an unprivileged test can ask.
+    #[test]
+    fn one_directory_under_two_names_is_not_a_conflict() {
+        let base = std::env::temp_dir().join(format!("clispeak-samedir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("real")).expect("create");
+        assert!(same_directory(&base.join("real"), &base.join("real")));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Two genuinely separate directories must still be told apart, or the
+    /// check stops catching the thing it exists for.
+    #[test]
+    fn two_directories_are_still_two_directories() {
+        let base = std::env::temp_dir().join(format!("clispeak-difdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("a")).expect("create a");
+        std::fs::create_dir_all(base.join("b")).expect("create b");
+        assert!(!same_directory(&base.join("a"), &base.join("b")));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The probe must not survive the question. A config directory quietly
+    /// accumulating droppings from every start is its own small bug.
+    #[test]
+    fn the_probe_leaves_nothing_behind() {
+        let base = std::env::temp_dir().join(format!("clispeak-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("a")).expect("create a");
+        std::fs::create_dir_all(base.join("b")).expect("create b");
+        same_directory(&base.join("a"), &base.join("b"));
+        let left: Vec<_> = std::fs::read_dir(base.join("a")).expect("read").collect();
+        assert!(left.is_empty(), "the probe file was left in the directory");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// Whatever else it reports, it never reports us. A node refusing to
