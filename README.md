@@ -95,7 +95,7 @@ drag to /Applications is the whole install:
 
 ```bash
 cargo xtask bundle
-open target/release/bundle/dmg/clispeak_0.1.0_aarch64.dmg
+open target/release/bundle/dmg/clispeak_*_aarch64.dmg
 ```
 
 As on Linux, the app installs the `clispeak` command to `~/.local/bin` on

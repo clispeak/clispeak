@@ -413,7 +413,7 @@ nothing.
 `stapler` will tell you, and it works on a `.dmg`:
 
 ```bash
-xcrun stapler validate clispeak_0.1.0_aarch64.dmg
+xcrun stapler validate clispeak_*_aarch64.dmg
 # → "does not have a ticket stapled to it"
 ```
 
@@ -490,8 +490,8 @@ about Gatekeeper's opinion of it — the tool is not broken.
 On the disk image, ask the question a downloader's Finder asks:
 
 ```bash
-spctl -a -vvv -t open --context context:primary-signature clispeak_0.1.0_aarch64.dmg
-xcrun stapler validate clispeak_0.1.0_aarch64.dmg
+spctl -a -vvv -t open --context context:primary-signature clispeak_*_aarch64.dmg
+xcrun stapler validate clispeak_*_aarch64.dmg
 ```
 
 **This page previously said `-t exec` on a `.dmg` gives an answer that does
