@@ -140,6 +140,19 @@ modules:
       # for; the 512 PNG is the fallback for anything that still cannot read
       # one. Installing a single raster size, which is what this line used to
       # do, left every other size to be produced by scaling one image (#188).
+      # The licences of what this package redistributes.
+      #
+      # **espeak-ng is GPL-3.0-or-later and travels inside the Piper archive.**
+      # We shipped it with no licence text at all, which `docs/releasing.md`
+      # had said out loud for months while nothing acted on it — the gap that
+      # kept #24 from unblocking publication. `NOTICE.md` names every
+      # component, its licence and its upstream source; the texts sit beside
+      # it.
+      - install -Dm644 -t /app/share/licenses/org.clispeak.app licenses/NOTICE.md
+      - install -Dm644 -t /app/share/licenses/org.clispeak.app licenses/espeak-ng-GPL-3.0.txt
+      - install -Dm644 -t /app/share/licenses/org.clispeak.app licenses/piper-MIT.txt
+      - install -Dm644 -t /app/share/licenses/org.clispeak.app licenses/piper-phonemize-MIT.txt
+      - install -Dm644 -t /app/share/licenses/org.clispeak.app licenses/onnxruntime-MIT.txt
       - install -Dm644 icon.svg /app/share/icons/hicolor/scalable/apps/org.clispeak.app.svg
       - install -Dm644 icon.png /app/share/icons/hicolor/512x512/apps/org.clispeak.app.png
       - install -Dm644 org.clispeak.app.desktop /app/share/applications/org.clispeak.app.desktop
@@ -153,6 +166,9 @@ modules:
         path: ../../app/src-tauri/icons/icon.png
       - type: file
         path: ../../app/src-tauri/icons/icon.svg
+      - type: dir
+        path: licenses
+        dest: licenses
       - type: file
         path: org.clispeak.app.desktop
       - type: file
