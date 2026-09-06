@@ -5,7 +5,16 @@
       <stop offset="100%" stop-color="#00C7D9"/>
     </linearGradient>
   </defs>
-  <g transform="translate(512,512) scale(0.90) translate(-512,-557.5)">
+  <!-- 0.72, and the number is measured rather than chosen.
+
+       The art's bounding box is 720 x 585, so its half-diagonal is 464px of a
+       1024 canvas - 0.453. A launcher guarantees the inner 66.7%, and on a
+       round mask that is a *circle* of radius 0.333, not a square. The first
+       attempt fitted the box to the square and used 0.90, which puts the
+       bubble's corners at 0.408 and had them shaved off on a real phone.
+
+       0.735 is the largest scale that fits; 0.72 leaves a little air. -->
+  <g transform="translate(512,512) scale(0.72) translate(-512,-557.5)">
 
   <path
     d="M290 265
