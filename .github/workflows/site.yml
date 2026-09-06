@@ -74,6 +74,20 @@ jobs:
       # The tar is the interface `actions/deploy-pages` expects: one artefact
       # named `github-pages` holding a tar of the directory. `--dereference`
       # because Pages serves files, not links.
+      # `site/CNAME` carries the custom domain into the published output.
+      #
+      # The domain is also set in the repository's Pages settings, and that is
+      # what made clispeak.com start answering. Both, deliberately: a
+      # deployment from Actions replaces the published site wholesale, and a
+      # custom domain that lives only in a settings field is a setting some
+      # future deploy can drop — at which point the domain serves GitHub's
+      # "there isn't a GitHub Pages site here" page, which is what it did for
+      # an hour today while the DNS was perfect.
+      - name: Check the domain is going with it
+        run: |
+          test -s site/CNAME || { echo "::error::site/CNAME is missing; the custom domain would be dropped"; exit 1; }
+          echo "custom domain: $(cat site/CNAME)"
+
       - name: Pack the site the way Pages expects
         run: |
           tar --dereference --hard-dereference \
