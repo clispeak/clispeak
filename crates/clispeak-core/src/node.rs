@@ -601,30 +601,29 @@ impl Node {
         // one that has forgotten who it knows, and that is expensive to chase
         // (#198, decision 108).
         //
-        // **It warns; it used to refuse, and the refusal was wrong.** It fired
-        // on a clean Flatpak install on 6 September 2026 — nothing installed,
-        // both directories deleted first, and it still reported two copies.
-        // The observed state contradicts the code: the keyring marker is
-        // written through `config_dir()`, the same function this check reads,
-        // and yet the marker landed in the *host* directory while this check
-        // believed its own was the sandbox. That is not explained yet.
+        // Refusing is the point. The alternative is starting successfully and
+        // being subtly wrong, which is the failure this project keeps paying
+        // for. The message names both directories because the fix is to
+        // decide which one is real, and only the person can do that.
         //
-        // A check that stops a node from starting for a reason nobody can
-        // account for is worse than the bug it guards, and this one would have
-        // met every new Linux user before it met a second developer (#198).
-        //
-        // So it says the thing and gets out of the way. The warning is not a
-        // softer refusal: it still names both directories and still says what
-        // goes wrong, which was always the part worth having. Restore the
-        // refusal when the two-directory behaviour is understood, not before.
+        // **This refused a clean install once**, and decision 110 downgraded
+        // it to a warning until the reason was understood rather than leaving
+        // a refusal nobody could account for in the startup path. The reason
+        // is now understood and it was not two directories at all: Flatpak
+        // bind-mounts the host's config into the sandbox, so one directory had
+        // two paths and this check reported the device as conflicting with
+        // itself. `conflicting_identity` now asks the filesystem whether two
+        // paths are the same place instead of comparing the strings, and the
+        // refusal comes back with it (decision 111).
         if let Some(other) = crate::identity::conflicting_identity(&config_dir) {
-            eprintln!(
-                "warning: two copies of this device's state are on this machine, \
-                 and they share one identity:\n  {}\n  {}\nBoth name the same \
-                 keyring entry, so both are this device — but each has its own \
-                 roster, so whichever starts first decides which devices this \
-                 one remembers. Delete the directory you do not want, or set \
-                 CLISPEAK_CONFIG_DIR to name the one you do.",
+            anyhow::bail!(
+                "two copies of this device's state are on this machine, and they \
+                 share one identity:\n  {}\n  {}\nBoth name the same keyring \
+                 entry, so both are this device — but each has its own roster, \
+                 so whichever starts first decides which devices this one \
+                 remembers. Delete the directory you do not want, or set \
+                 CLISPEAK_CONFIG_DIR to name the one you do. Nothing was \
+                 started",
                 config_dir.display(),
                 other.display(),
             );
