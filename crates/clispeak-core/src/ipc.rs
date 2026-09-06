@@ -53,6 +53,73 @@ pub fn install_token(config_dir: &std::path::Path) -> std::io::Result<Token> {
     Ok(token)
 }
 
+/// Where a **host** copy of the token belongs, when this node is not running
+/// on the host.
+///
+/// A Flatpak keeps its configuration inside the sandbox — `XDG_CONFIG_HOME`
+/// points at `~/.var/app/<id>/config` — while the command-line tool this same
+/// app installs into `~/.local/bin` runs on the host and reads `~/.config`.
+/// So the node writes its token somewhere the tool cannot look, every call
+/// fails the handshake, and the error it produces blames a socket squatter:
+/// the node is real, the socket is right, and the only thing that disagrees
+/// is which file the secret is in.
+///
+/// **The socket itself needs nothing.** `--share=network` puts the sandbox in
+/// the host's network namespace, and a namespaced name on Linux is an
+/// abstract socket, which lives there. Connecting already works. This is the
+/// one file that does not cross.
+///
+/// `None` when this is an ordinary host process, which is every platform
+/// except a sandboxed Linux app and most Linux installs too.
+pub fn host_config_dir() -> Option<std::path::PathBuf> {
+    host_config_from(
+        std::path::Path::new("/.flatpak-info").exists(),
+        std::env::var_os("HOST_XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The decision in [`host_config_dir`], with the environment passed in.
+///
+/// Split out because the interesting case cannot be reached from a test that
+/// reads the real environment, and because the fallback below is the whole
+/// reason this function has tests at all.
+fn host_config_from(
+    in_flatpak: bool,
+    host_xdg: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    if !in_flatpak {
+        return None;
+    }
+    // **`HOST_XDG_CONFIG_HOME` is not always there, and that is the trap.**
+    // Flatpak exports it only when the *host* had `XDG_CONFIG_HOME` set to
+    // something. On a machine that leaves it alone — which is most machines —
+    // it is absent inside the sandbox, so a fix that reads only this variable
+    // works on the developer's box and silently does nothing on everyone
+    // else's. Measured, not assumed: set on this machine, absent the moment
+    // the host variable is unset.
+    //
+    // `$HOME` inside the sandbox is the real home directory, so the XDG
+    // default is reachable without it.
+    let base = host_xdg
+        .map(std::path::PathBuf::from)
+        .or_else(|| home.map(|h| std::path::PathBuf::from(h).join(".config")))?;
+    Some(base.join("clispeak"))
+}
+
+/// Put a copy of the token where a host command-line tool will find it.
+///
+/// `None` when there is nowhere else to put it, which is the ordinary case.
+/// Otherwise the result of trying — **reported rather than swallowed**,
+/// because a failure here produces a working app whose own CLI cannot talk to
+/// it, and the message the CLI then prints points at the wrong cause.
+pub fn publish_token_for_host(token: &Token) -> Option<std::io::Result<std::path::PathBuf>> {
+    let dir = host_config_dir()?;
+    let path = token_path(&dir);
+    Some(crate::store::write_private(&path, token).map(|()| path))
+}
+
 /// Read the secret a running node left.
 pub fn read_token(config_dir: &std::path::Path) -> std::io::Result<Token> {
     let bytes = std::fs::read(token_path(config_dir))?;
@@ -600,6 +667,47 @@ mod tests {
             .await
             .expect_err("a closed connection cannot handshake");
         assert!(e.is::<Probe>(), "expected a probe, got: {e:#}");
+    }
+
+    /// Not in a sandbox is the ordinary case, and it must produce nothing at
+    /// all — an extra copy of the token on a host node is a second credential
+    /// nobody is tracking.
+    #[test]
+    fn an_ordinary_host_process_has_nowhere_else_to_put_it() {
+        assert_eq!(
+            host_config_from(false, Some("/anything".into()), Some("/home/p".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_sandbox_uses_the_host_config_home_when_it_has_one() {
+        assert_eq!(
+            host_config_from(true, Some("/home/p/.config".into()), Some("/home/p".into())),
+            Some(std::path::PathBuf::from("/home/p/.config/clispeak"))
+        );
+    }
+
+    /// **The case that decides whether this works for anybody but us.**
+    /// Flatpak exports `HOST_XDG_CONFIG_HOME` only when the host had
+    /// `XDG_CONFIG_HOME` set, which most machines do not. Reading only that
+    /// variable gives a fix that works on one developer's box and silently
+    /// does nothing everywhere else — and the symptom is not "no token", it
+    /// is the CLI reporting that a stranger holds the socket.
+    #[test]
+    fn a_sandbox_falls_back_to_the_xdg_default_when_the_host_had_no_variable() {
+        assert_eq!(
+            host_config_from(true, None, Some("/home/p".into())),
+            Some(std::path::PathBuf::from("/home/p/.config/clispeak"))
+        );
+    }
+
+    /// Nothing to compute from. Returning `None` means the node starts and
+    /// says so, rather than writing the token to a path built from an empty
+    /// string.
+    #[test]
+    fn no_home_and_no_host_variable_is_nowhere_rather_than_a_guess() {
+        assert_eq!(host_config_from(true, None, None), None);
     }
 
     #[test]

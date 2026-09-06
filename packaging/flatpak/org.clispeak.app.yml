@@ -58,6 +58,23 @@ finish-args:
   # Flathub will refuse `~/.local/bin` outright, so publishing there needs a
   # different answer, not a smaller version of this one.
   - --filesystem=~/.local/bin:create
+  # One file, and without it the tool above cannot talk to this app at all.
+  #
+  # The node writes an IPC token and the CLI must prove it knows it. The
+  # node's own config lives in the sandbox, because `XDG_CONFIG_HOME` points
+  # there; the CLI runs on the host and reads `~/.config/clispeak`. Same
+  # machine, same app, two directories, and the handshake fails every time.
+  #
+  # What made it expensive to find is that nothing says so. The socket needs
+  # no grant — `--share=network` puts us in the host's network namespace and a
+  # namespaced name on Linux is an abstract socket — so the CLI *connects*,
+  # then gets refused, and the error it prints blames a local process for
+  # squatting the name. The app is fine, the socket is fine, and the one file
+  # that did not cross is the one nobody looks at.
+  #
+  # Narrower than the two grants above: one directory, ours, no executables in
+  # it (#82, decision 107).
+  - --filesystem=xdg-config/clispeak:create
   # Where agents keep skills. Narrow on purpose: an unshared write inside the
   # sandbox appears to succeed and never reaches the host, so the app must be
   # able to genuinely write anywhere it offers to. Any other location goes
