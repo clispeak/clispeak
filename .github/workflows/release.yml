@@ -405,9 +405,26 @@ jobs:
           path: target/release/bundle/nsis/*.exe
           if-no-files-found: error
 
+  # The Android signing key gets the protection the Apple one already has.
+  #
+  # A repository secret is readable by any workflow run on any branch this
+  # repository will run. The environment is the boundary: the secrets live in
+  # it, only a job that *names* it can reach them, and the environment carries
+  # a required reviewer and a deployment branch policy — so a change that
+  # starts reaching for this key has to be approved by a person, on a run
+  # someone deliberately started.
+  #
+  # It matters more here than it did for Apple, and for a reason that is not
+  # about workflows at all. The Apple certificate is replaceable: revoke it,
+  # issue another, re-sign. Since decision 104 the Android key is not. Play
+  # App Signing would have made it a resettable upload key and we chose a
+  # direct download instead, so this key is the app's identity to every device
+  # that installs it, permanently, and there is no second copy to fall back
+  # to (#31).
   android:
     name: android
     if: inputs.only == null || inputs.only == 'all' || inputs.only == 'android'
+    environment: android-signing
     timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
