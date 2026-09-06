@@ -6,11 +6,17 @@
 # does not: none of it says whether a commit compiles, and all of it runs on
 # the runners that cost the most.
 #
-# The release is left as a **draft**. Nothing here should become a public
-# download until the licensing of what we bundle is understood — we ship
-# Piper, which carries espeak-ng, ONNX Runtime, a phonemiser and a voice
-# model, and the archive we redistribute contains no licence text at all.
-# See issue #24 and docs/releasing.md.
+# The release is left as a **draft** so a person reads it before it becomes a
+# public download. That used to be a licensing hold — we redistribute Piper,
+# which carries GPL-3.0 espeak-ng, and shipped no licence text at all. #24
+# named it, the voice was changed to a public-domain one, and #209 put the
+# licence texts in the package. The hold is now editorial rather than legal.
+#
+# **Publish as a normal release, not a pre-release.** GitHub resolves
+# `/releases/latest/download/…` to the newest release that is neither a draft
+# nor a pre-release, and those URLs are what clispeak.com links to (#187,
+# #25). A beta marked pre-release is a site with four dead buttons and
+# nothing anywhere saying why.
 name: Release
 
 on:
@@ -717,18 +723,23 @@ jobs:
           body: |
             Built from ${{ github.ref_name }}.
 
-            **A draft, deliberately.** Nothing here should become a public
-            download until the licensing of what these packages bundle is
-            settled — see issue #24.
+            **A draft.** Read it, check the four downloads resolve, then
+            publish — and publish it as a **normal release, not a
+            pre-release**, or `/releases/latest/download/…` will not resolve
+            to it and clispeak.com's download links will 404. GitHub's
+            "latest" is the newest release that is neither a draft nor a
+            pre-release.
 
-            **macOS is signed and notarised** (#29). **Windows and Android
-            are not.** Windows has no certificate, so its installer raises
-            SmartScreen; the Android APK is a *release* build signed with
-            whatever key the workflow was given, and #31 is where that key
-            comes from. `SHA256SUMS` lists what each file should hash to and
-            names the version these files were built from — it is not a
-            signature, and it is only as trustworthy as the page you read it
-            from.
+            **macOS and Android are signed. Windows is not.** macOS is signed
+            and notarised by Apple (#29); the Android APK is signed with the
+            release key (#31). Windows has no certificate and will not have
+            one for 1.0 (decision 109, #205), so its installer raises
+            SmartScreen and names an unknown publisher — the download page
+            says so in as many words rather than leaving people to guess.
+
+            `SHA256SUMS` lists what each file should hash to and names the
+            version they were built from. It is not a signature, and it is
+            only as trustworthy as the page you read it from.
 
             Filenames here do not carry the version, so that
             `/releases/latest/download/clispeak-linux.flatpak` and its four
