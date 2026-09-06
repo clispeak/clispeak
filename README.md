@@ -47,10 +47,16 @@ left is an NSIS installer that needs no administrator, and that puts the
 terminal afterwards, since an existing one keeps the environment it started
 with. Uninstalling takes the entry back off.
 
-**Nobody has run it.** The installer is written, its logic is unit-tested on
-Linux, and it compiles for `x86_64-pc-windows-msvc` — which is three claims
-that all stop short of the one that matters. Until somebody double-clicks it,
-treat the paragraph above as an intention.
+**Somebody has run it**, on a clean Windows VM on 6 September 2026: the
+installer runs without an administrator prompt, the app launches, it pairs
+with another device over the network, and **it speaks**. The Windows speech
+path had never been executed by a person before that afternoon.
+
+Two things broke on the way, both now fixed and neither yet re-confirmed on a
+real machine: an invite read as expired because the VM's clock was wrong and
+the message blamed the invite (#200), and `clispeak` sat on the PATH and
+printed nothing at all, because it needed a Visual C++ runtime a clean Windows
+does not have (#201).
 
 The riskiest assumption — that peer-to-peer connections survive carrier-grade
 NAT and network changes — was [measured on real hardware](docs/m0-results.md)
@@ -209,7 +215,7 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 | Linux | Piper, falling back to espeak-ng if the host has it | tray app |
 | macOS | Apple's own | tray app |
 | Android | system text-to-speech | foreground service + battery exemption |
-| Windows | SAPI 5 — built, never run | tray app |
+| Windows | SAPI 5 — launched and heard | tray app |
 | iOS | Apple's own | **foreground only** — see below |
 
 The Android build is **`arm64-v8a` only** (decision 106), which is every phone

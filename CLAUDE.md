@@ -121,11 +121,27 @@ unification and iOS does not.
 |---|---|
 | **compiled on five** | what a green matrix means |
 | **linked on four** | iOS links only a binary with no networking in it |
-| **launched on three** | Linux, Android and macOS have been started by a person |
+| **launched on four** | Linux, Android, macOS and Windows have been started by a person |
 
 Say which one you mean. "It builds on iOS" was true for months and cost three
 bugs that no gate could have caught, because nobody had run the target the
 rule counts.
+
+**Windows moved from three to four on 6 September 2026**, on a clean VM, and
+it cost two bugs in the first hour — both of the kind this file is about, and
+both invisible to every gate. An invite reported itself *expired* seconds
+after being made, because expiry is judged against the reading device's clock
+and a fresh VM's clock was wrong: the message named the ticket and the fault
+was the machine (#200). And `clispeak` was on the PATH, resolved by name, and
+printed **nothing at all** — exit `0xC0000135`, a missing `VCRUNTIME140.dll`,
+dead before `main` (#201).
+
+The second one is worth the most. It was findable from a build artefact, on a
+Linux laptop, at any time in the two days the artefact existed — the import
+table says `VCRUNTIME140.dll` and the app beside it does not. Instead it was
+found by a person resetting a virtual machine twice. **What an artefact
+contains is checkable without the platform it runs on**, and not checking it
+is how "build-verified" quietly becomes "nobody looked".
 
 ## Where things live
 
