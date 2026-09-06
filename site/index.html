@@ -6,14 +6,26 @@
 <title>clispeak — speak text aloud on your own devices</title>
 <meta name="description"
   content="Speak text aloud on your own devices — laptop, phone, desktop. Peer to peer text to speech with no server and no account, built so an AI coding agent can talk to you. Linux, Windows, Android and macOS." />
-<!-- So a pasted link is a card rather than a bare URL. No image yet: #188 owes
-     the site a favicon and an Open Graph image, and pointing at one that does
-     not exist is worse than pointing at nothing. -->
+<!-- The icon, in three forms because browsers ask for three. The SVG is the
+     source and every modern browser prefers it; the .ico carries real 16 and
+     32 pixel renderings for the ones that do not, and the PNG is what a phone
+     uses when the page is saved to a home screen. All same-origin. -->
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<link rel="alternate icon" href="favicon.ico" sizes="any" />
+<link rel="apple-touch-icon" href="img/icon-512.png" />
+
+<!-- So a pasted link is a card rather than a bare URL. Absolute, because a
+     relative path is resolved against the scraper rather than against us. -->
 <meta property="og:title" content="clispeak — speak text aloud on your own devices" />
 <meta property="og:description"
   content="Peer to peer text to speech across your own devices. No server, no account. Built so an agent can drive it." />
 <meta property="og:type" content="website" />
-<meta name="twitter:card" content="summary" />
+<meta property="og:url" content="https://clispeak.com/" />
+<meta property="og:image" content="https://clispeak.com/img/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://clispeak.com/img/og.png" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 
