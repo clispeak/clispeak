@@ -628,6 +628,29 @@ impl Node {
         let token =
             crate::ipc::install_token(&config_dir).context("writing the local socket token")?;
 
+        // And a copy where a *host* CLI will look, when this node is not
+        // running on the host. A Flatpak's configuration lives inside the
+        // sandbox while the tool it installs into `~/.local/bin` reads
+        // `~/.config`, so without this the app works, the socket is right,
+        // and every command fails the handshake with an error blaming a
+        // squatter for holding the name.
+        //
+        // Said out loud on failure rather than ignored. The whole failure is
+        // one unwritten file, and the symptom points somewhere else entirely
+        // — which is worth more than a tidy startup.
+        match crate::ipc::publish_token_for_host(&token) {
+            None => {}
+            Some(Ok(path)) => eprintln!("token for the host CLI: {}", path.display()),
+            Some(Err(e)) => {
+                eprintln!(
+                    "could not put a token where the host `clispeak` will find it: {e}\n\
+                     The app will work and the command line tool will not: every call \n\
+                     will fail saying something else holds the socket, which is not \n\
+                     what happened. A Flatpak needs --filesystem=xdg-config/clispeak:create."
+                );
+            }
+        }
+
         let listener = bind_ipc(&socket_name()).await?;
 
         let socket = socket_name();
