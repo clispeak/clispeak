@@ -1,0 +1,63 @@
+/* The site's stylesheet, sharing the app's tokens rather than inventing a
+   palette — so the page and the thing it hands you look like one product
+   without anyone maintaining two definitions of blue. */
+
+/* `source(none)` for the reason `app/src/input.css` records: without it
+   Tailwind walks the whole project, the `@source` lines below become
+   decorative, and the scan reaches directories that have nothing to do with
+   what ships. With it, this list is the source set and a file missing from it
+   is a file whose classes vanish silently — so it is a glob rather than a
+   list of names. */
+@import "tailwindcss" source(none);
+@source "./index.html";
+@source "./*.js";
+
+/* Dark mode follows the system and nothing else. The app has a three-state
+   override because a person picks a theme in its settings; a page has no
+   settings, so `prefers-color-scheme` is the whole story. */
+
+@theme {
+  /* The app's accent, copied exactly: one hue, used for the primary action
+     only, so "the button that does the thing" is never ambiguous.
+
+     All three steps are declared even though the page uses two. A missing
+     token does not warn — it emits no CSS at all and the class silently does
+     nothing, which is how `dark:text-accent-400` came to be written twice in
+     the app and render as the wrong blue. Declaring the range costs nothing
+     and removes the trap. */
+  --color-accent-400: oklch(0.70 0.13 250);
+  --color-accent-500: oklch(0.62 0.14 250);
+  --color-accent-600: oklch(0.55 0.15 250);
+}
+
+@layer base {
+  html {
+    /* Tells the browser which way to paint scrollbars, the caret and any
+       control not styled here. */
+    color-scheme: light dark;
+  }
+
+  body {
+    /* A system font stack, because nothing is fetched from anyone. The
+       product's claim is no server and no account; a page that asks Google
+       for a font argues against the software it is offering. */
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+      Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  }
+
+  /* Anything that is a command or an identity string is monospace, matching
+     the app. The stack is local fonts only, same reasoning. */
+  code, kbd, pre, samp {
+    font-family:
+      ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+      "Liberation Mono", monospace;
+  }
+
+  /* Keyboard focus has to be visible. The app gets this from Tailwind's
+     defaults on real controls; here the links are the controls. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-500);
+    outline-offset: 2px;
+  }
+}

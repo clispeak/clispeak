@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>clispeak — speak text aloud on your own devices</title>
+<meta name="description"
+  content="Speak text aloud on your own devices. Peer to peer, no server, no account. Built so an agent can drive it." />
+<link rel="stylesheet" href="styles.css" />
+</head>
+
+<body class="bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+
+<a href="#download"
+   class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50
+          focus:rounded-lg focus:bg-accent-600 focus:px-4 focus:py-2 focus:text-white">
+  Skip to downloads
+</a>
+
+<main class="mx-auto w-full max-w-3xl px-5 py-14 sm:px-6 sm:py-20">
+
+  <!-- 1. What it is ------------------------------------------------------ -->
+  <header>
+    <h1 class="text-4xl font-semibold tracking-tight sm:text-5xl">clispeak</h1>
+    <p class="mt-5 text-xl leading-relaxed sm:text-2xl">
+      Speak text aloud on your own devices. Peer to peer, no server, no account.
+    </p>
+    <p class="mt-4 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      Install it on your laptop and your phone, pair them once, and either can
+      say something out loud on the other. Nothing passes through anyone
+      else&rsquo;s machine and there is nothing to sign up for.
+    </p>
+    <p class="mt-4 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      It is built so an <strong class="font-medium text-neutral-900 dark:text-neutral-100">agent</strong>
+      can drive it &mdash; which is why it is a command-line tool with a window
+      attached rather than an app with a terminal bolted on.
+    </p>
+  </header>
+
+  <!-- 2. Download -------------------------------------------------------- -->
+  <section id="download" class="mt-16 scroll-mt-8">
+    <h2 class="text-2xl font-semibold tracking-tight">Download</h2>
+    <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+      Free, and the same build on every platform.
+      <span id="guess-note" hidden></span>
+    </p>
+
+    <div class="mt-6 grid gap-4 sm:grid-cols-2">
+
+      <article id="card-linux"
+        class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="text-lg font-medium">Linux</h3>
+        <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-400">A Flatpak bundle.</p>
+        <a data-primary
+          href="https://github.com/clispeak/clispeak/releases/latest/download/clispeak-linux.flatpak"
+          class="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
+                 transition hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          clispeak-linux.flatpak
+        </a>
+      </article>
+
+      <article id="card-macos"
+        class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="text-lg font-medium">macOS</h3>
+        <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-400">A disk image. Apple silicon.</p>
+        <a data-primary
+          href="https://github.com/clispeak/clispeak/releases/latest/download/clispeak-macos.dmg"
+          class="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
+                 transition hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          clispeak-macos.dmg
+        </a>
+      </article>
+
+      <article id="card-windows"
+        class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="text-lg font-medium">Windows</h3>
+        <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-400">An installer.</p>
+        <a data-primary
+          href="https://github.com/clispeak/clispeak/releases/latest/download/clispeak-windows-setup.exe"
+          class="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
+                 transition hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          clispeak-windows-setup.exe
+        </a>
+      </article>
+
+      <article id="card-android"
+        class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="text-lg font-medium">Android</h3>
+        <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+          An APK. <strong class="font-medium text-neutral-900 dark:text-neutral-100">64-bit ARM phones only</strong>
+          &mdash; every phone made since about 2019, and no emulator.
+        </p>
+        <a data-primary
+          href="https://github.com/clispeak/clispeak/releases/latest/download/clispeak-android.apk"
+          class="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
+                 transition hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+          clispeak-android.apk
+        </a>
+      </article>
+
+    </div>
+
+    <p class="mt-4 rounded-xl border border-neutral-200 bg-white p-4 text-sm
+              text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+      <strong class="font-medium text-neutral-900 dark:text-neutral-100">iOS: coming soon.</strong>
+      There is no download yet. When there is, it will speak only while the app
+      is on screen &mdash; see <a class="underline underline-offset-2 hover:text-accent-600
+      dark:hover:text-accent-400" href="#works">what works today</a>.
+    </p>
+  </section>
+
+  <!-- 3. After you download ---------------------------------------------- -->
+  <section id="after" class="mt-16 scroll-mt-8">
+    <h2 class="text-2xl font-semibold tracking-tight">After you download</h2>
+    <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      Every platform has a moment where it tells you this software is dangerous.
+      None of them mean the download went wrong. Here is the one you will hit.
+    </p>
+
+    <dl class="mt-6 space-y-4">
+
+      <div class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <dt class="font-medium">Windows says &ldquo;Windows protected your PC&rdquo;</dt>
+        <dd class="mt-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Choose <span class="font-mono">More info</span> &rarr;
+          <span class="font-mono">Run anyway</span>. SmartScreen shows this for any
+          installer without a Windows signing certificate, and clispeak does not
+          have one.
+        </dd>
+      </div>
+
+      <div class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <dt class="font-medium">macOS asks before opening it the first time</dt>
+        <dd class="mt-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          The app is signed and notarised by Apple. macOS still asks once, the
+          first time you open anything downloaded from the web. Open it and
+          confirm; you will not be asked again.
+        </dd>
+      </div>
+
+      <div class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <dt class="font-medium">Android will not install the APK until you allow it</dt>
+        <dd class="mt-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Your browser will offer to take you to
+          <span class="font-mono">Install unknown apps</span>; the permission is
+          granted per app, so allowing your browser does not allow anything else.
+        </dd>
+      </div>
+
+      <div class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <dt class="font-medium">Android says &ldquo;you can&rsquo;t install this app on your device&rdquo;</dt>
+        <dd class="mt-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          That message names nothing, so here is what it means: the APK is
+          <span class="font-mono">arm64-v8a</span> only. It runs on any phone
+          made since roughly 2019 and on no emulator. If you are testing in an
+          emulator, that is the reason.
+        </dd>
+      </div>
+
+      <div class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <dt class="font-medium">Linux needs Flatpak</dt>
+        <dd class="mt-1 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Fedora, Linux Mint and SteamOS ship it already; on Debian, Ubuntu and
+          Arch it is one package away. Then:
+          <span class="mt-2 block overflow-x-auto rounded-lg bg-neutral-100 px-3 py-2
+                       font-mono text-xs dark:bg-neutral-950">flatpak install --bundle ./clispeak-linux.flatpak</span>
+        </dd>
+      </div>
+
+    </dl>
+  </section>
+
+  <!-- 4. Pair two devices ------------------------------------------------ -->
+  <section id="pair" class="mt-16 scroll-mt-8">
+    <h2 class="text-2xl font-semibold tracking-tight">Pair two devices</h2>
+    <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      One install does nothing on its own. Pairing is what makes it useful, and
+      it takes about a minute.
+    </p>
+
+    <ol class="mt-6 space-y-3 text-base leading-relaxed">
+      <li class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <span class="font-medium">1.</span> Install clispeak on both devices and open it.
+      </li>
+      <li class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <span class="font-medium">2.</span> On the first, open
+        <span class="font-mono text-sm">Spaces</span> and choose
+        <span class="font-mono text-sm">Add a device</span>. You get a code and a QR.
+      </li>
+      <li class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <span class="font-medium">3.</span> On the second, scan the QR or paste
+        the code. Confirm the device name it offers.
+      </li>
+      <li class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <span class="font-medium">4.</span> Say something:
+        <span class="mt-2 block overflow-x-auto rounded-lg bg-neutral-100 px-3 py-2
+                     font-mono text-xs dark:bg-neutral-950">clispeak --to Phone "it works"</span>
+      </li>
+    </ol>
+
+    <p class="mt-4 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+      An invite carries the space it was made for, so scanning it joins the one
+      you asked for rather than whichever happened to be selected.
+      <strong class="font-medium text-neutral-900 dark:text-neutral-100">An invite
+      lasts five minutes and works once</strong> &mdash; if you go and make a
+      coffee, make a new one.
+    </p>
+  </section>
+
+  <!-- 5. For agents ------------------------------------------------------ -->
+  <section id="agents" class="mt-16 scroll-mt-8">
+    <h2 class="text-2xl font-semibold tracking-tight">For agents</h2>
+    <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      This is the reason the project exists. An agent working on your machine
+      can tell you something out loud instead of writing to a terminal you have
+      walked away from.
+    </p>
+
+    <pre class="mt-6 overflow-x-auto rounded-xl border border-neutral-200 bg-white p-5
+                font-mono text-xs leading-relaxed dark:border-neutral-800 dark:bg-neutral-900"><code>$ clispeak devices
+Laptop           5dc736e3b1b945e3  (this device)
+Phone            700945f4007d3db5
+
+$ clispeak --to Phone "the build finished"
+  Phone            spoken       2.3s</code></pre>
+
+    <p class="mt-4 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      What makes it drivable rather than merely scriptable: <strong
+      class="font-medium text-neutral-900 dark:text-neutral-100">distinct exit
+      codes</strong>, so a caller can tell &ldquo;muted&rdquo; from
+      &ldquo;unreachable&rdquo;; <strong class="font-medium text-neutral-900
+      dark:text-neutral-100">errors that carry a fix</strong> rather than a
+      diagnosis; and a receiver that <strong class="font-medium
+      text-neutral-900 dark:text-neutral-100">reports a reason</strong> instead
+      of swallowing a failure. A device that will not speak says which setting
+      stopped it.
+    </p>
+
+    <p class="mt-4 text-base leading-relaxed">
+      <a class="underline underline-offset-2 hover:text-accent-600 dark:hover:text-accent-400"
+         href="https://github.com/clispeak/clispeak/blob/main/skills/clispeak/SKILL.md">The
+      agent skill</a> &mdash; drop it in and an agent knows how to use this.
+    </p>
+  </section>
+
+  <!-- 6. What works today ------------------------------------------------ -->
+  <section id="works" class="mt-16 scroll-mt-8">
+    <h2 class="text-2xl font-semibold tracking-tight">What works today</h2>
+    <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+      The honest version. If this disagrees with the
+      <a class="underline underline-offset-2 hover:text-accent-600 dark:hover:text-accent-400"
+         href="https://github.com/clispeak/clispeak#platforms">README</a>, the README is right.
+    </p>
+
+    <div class="mt-6 overflow-x-auto rounded-xl border border-neutral-200 bg-white
+                dark:border-neutral-800 dark:bg-neutral-900">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-neutral-200 dark:border-neutral-800">
+          <tr>
+            <th scope="col" class="px-5 py-3 font-medium">Platform</th>
+            <th scope="col" class="px-5 py-3 font-medium">Speech</th>
+            <th scope="col" class="px-5 py-3 font-medium">Background</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-neutral-200 dark:divide-neutral-800">
+          <tr>
+            <th scope="row" class="px-5 py-3 font-normal">Linux</th>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">Piper, falling back to espeak-ng if the host has it</td>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">tray app</td>
+          </tr>
+          <tr>
+            <th scope="row" class="px-5 py-3 font-normal">macOS</th>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">Apple&rsquo;s own</td>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">tray app</td>
+          </tr>
+          <tr>
+            <th scope="row" class="px-5 py-3 font-normal">Android</th>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">system text-to-speech</td>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">foreground service + battery exemption</td>
+          </tr>
+          <tr>
+            <th scope="row" class="px-5 py-3 font-normal">Windows</th>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">SAPI 5 &mdash; <strong class="font-medium text-neutral-900 dark:text-neutral-100">built, never run</strong></td>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">tray app</td>
+          </tr>
+          <tr>
+            <th scope="row" class="px-5 py-3 font-normal">iOS</th>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400">Apple&rsquo;s own</td>
+            <td class="px-5 py-3 text-neutral-600 dark:text-neutral-400"><strong class="font-medium text-neutral-900 dark:text-neutral-100">foreground only</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="mt-4 max-w-2xl text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+      <strong class="font-medium text-neutral-900 dark:text-neutral-100">iOS speaks only while
+      the app is on screen</strong>, and that is the platform rather than an
+      unfinished corner. Backgrounded, it stops answering somewhere between five
+      and ten minutes. Waking a suspended iOS app needs a push server, and this
+      project deliberately has none.
+    </p>
+  </section>
+
+  <!-- Footer -------------------------------------------------------------- -->
+  <footer class="mt-16 border-t border-neutral-200 pt-6 text-sm
+                 text-neutral-600 dark:border-neutral-800 dark:text-neutral-400">
+    <p>
+      <a class="underline underline-offset-2 hover:text-accent-600 dark:hover:text-accent-400"
+         href="https://github.com/clispeak/clispeak">Source</a>
+      &middot;
+      <a class="underline underline-offset-2 hover:text-accent-600 dark:hover:text-accent-400"
+         href="https://github.com/clispeak/clispeak/issues">Issues</a>
+      &middot;
+      MIT or Apache-2.0
+    </p>
+    <p class="mt-2">No analytics, no cookies, nothing loaded from anyone else.</p>
+  </footer>
+
+</main>
+
+<script src="guess.js" defer></script>
+</body>
+</html>

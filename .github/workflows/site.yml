@@ -1,0 +1,100 @@
+# Publish clispeak.com from site/ to GitHub Pages.
+#
+# From a workflow rather than by pointing Pages at a folder. Pages will happily
+# serve `/docs`, and that is exactly the wrong answer here: `docs/` is
+# decisions, signing procedures and build plans written for us. Publishing an
+# explicit directory means what is public is a deliberate list rather than
+# whatever happens to be committed.
+name: Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/site.yml'
+  # So the page can be rebuilt without a commit — after a release is
+  # published, for instance, which is when the download links start resolving.
+  workflow_dispatch:
+
+# Read by default. Only `publish` needs more, and it gets exactly what Pages
+# requires and nothing else (#70).
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one in flight: a half-finished
+# deployment is a broken page, unlike a cancelled build which is merely absent.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # `npm ci`, never `npm install`: the fallback resolves `^` ranges fresh
+      # from the registry, so a lockfile out of step with package.json silently
+      # ships whatever Tailwind was published that morning (#70).
+      - name: Build the stylesheet
+        working-directory: site
+        run: |
+          npm ci
+          npm run build:css
+
+      # The generated stylesheet is not committed, for the same reason the
+      # app's is not — so the artefact is built from source here rather than
+      # trusted from the tree.
+      - name: Check the stylesheet was produced
+        working-directory: site
+        run: |
+          test -s styles.css || { echo "::error::styles.css is empty or missing"; exit 1; }
+          echo "styles.css: $(wc -c < styles.css) bytes"
+
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: site
+
+  publish:
+    name: publish
+    needs: build
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    # The one job that makes anything public.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+  links:
+    name: downloads resolve
+    needs: publish
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    # The script decides for itself whether a broken download is fatal: it asks
+    # whether a release exists, warns when there is none, and fails when there
+    # is one. So there is no `continue-on-error` here to remember to delete —
+    # this becomes strict the moment the first version is tagged, without
+    # anyone doing anything. A red mark nobody can act on yet is a red mark
+    # everybody learns to ignore.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Fetch every download the page offers
+        env:
+          # `gh release list` needs only the default read permission; without
+          # a token it cannot answer, and the script treats that as "no
+          # release" rather than failing a build over a missing credential.
+          GH_TOKEN: ${{ github.token }}
+        run: ./site/check-links.sh
