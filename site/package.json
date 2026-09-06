@@ -1,0 +1,13 @@
+{
+  "name": "clispeak-site",
+  "private": true,
+  "description": "The clispeak.com landing page. Tailwind and nothing else.",
+  "scripts": {
+    "build:css": "tailwindcss -i input.css -o styles.css --minify",
+    "watch:css": "tailwindcss -i input.css -o styles.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  }
+}
