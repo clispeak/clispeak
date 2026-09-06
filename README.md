@@ -63,7 +63,55 @@ NAT and network changes — was [measured on real hardware](docs/m0-results.md)
 before anything was built on top of it. It holds: 91% of connections went
 direct, and switching between wifi and cellular caused zero reconnects.
 
-## Installing
+## Get it
+
+**[clispeak.com](https://clispeak.com)** — downloads for Linux, Windows,
+Android and macOS, with a sentence for each about what the operating system
+will say when you open it, because every one of them says something alarming
+the first time.
+
+That page is where to send anybody who just wants to use this. Everything
+below is for building it yourself.
+
+## Helping
+
+The short version: the issues are real, the tests run on one platform, and the
+thing most likely to bite you is written down.
+
+**Start with [`CLAUDE.md`](CLAUDE.md).** It is addressed to agents and is the
+most useful thing in the repository for a person too — a catalogue of the ways
+this project has actually broken, each with the reason it was invisible.
+`/etc/hostname` on a Mac, a socket name too long by one byte, a build flag
+that only applies to release, a keystore read from the wrong directory. Most
+of them compiled fine and passed every gate.
+
+**The rule that matters most:** it has to compile for all five targets, and a
+green run means *compiled on five, tested on one* — `cargo test` runs on
+Linux and nowhere else. Say which claim you are making.
+
+```bash
+cargo run -p xtask -- check     # conflicts, workflows, fmt, clippy, tests, portability
+```
+
+Run that one command rather than the four it wraps; assembling the chain by
+hand has failed three times in one week, each time silently.
+
+**Where to start looking.** [Open issues](https://github.com/clispeak/clispeak/issues)
+are labelled honestly, including the ones that are decisions rather than
+tasks. If you want something self-contained: the node has no test above the
+unit level and the engine has none at all (#80), and an invite that expires
+blames the ticket when the fault is usually the reader's clock (#200).
+
+**Conventions worth knowing before your first pull request.** Open it as a
+draft and mark it ready when you want the five-target verdict — the expensive
+matrix skips drafts on purpose. Docs move with the change:
+[`docs/decisions.md`](docs/decisions.md) is append-only and records what was
+chosen, *why*, and what it cost. And no session links in commits or pull
+requests.
+
+**[`CONTRIBUTING.md`](CONTRIBUTING.md)** has the rest.
+
+## Building the packages
 
 **Linux.** Build the Flatpak, which carries Piper and a voice so it speaks the
 moment it is installed:
@@ -301,7 +349,7 @@ so it cannot quietly drift into describing a tool that has moved on.
 
 Start with `decisions.md` if you want to know *why* rather than *what*.
 
-## Building
+## The workspace
 
 Rust 1.98 or newer, and `npm install` in `app/` once.
 
