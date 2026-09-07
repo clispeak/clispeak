@@ -1558,19 +1558,6 @@ fn first_line(text: &str) -> String {
 /// perfectly healthy app — twenty seconds before the node had an answer to
 /// give (#151). `stop`, `skip`, `pause` and `resume` reach a peer the same
 /// way and had the same ten seconds.
-/// `clispeak_core::transport::PEER_CONNECT`, duplicated by hand.
-///
-/// Ninety seconds, and the number came from a measurement rather than a
-/// guess: a real phone answered in 2.1s warm and 58s cold. See the constant
-/// in `clispeak-core` for why a cold phone is the ordinary case here.
-///
-/// This crate depends on `clispeak-proto` and `clispeak-text` and nothing
-/// else, deliberately — it is what keeps startup at ~3ms — so a handful of
-/// constants are kept in step here rather than imported, as the socket name
-/// and the frame format already are. If the node's bound moves, this moves
-/// with it: being *shorter* than the node's is the bug in `patience` above.
-const PEER_CONNECT: std::time::Duration = std::time::Duration::from_secs(90);
-
 fn patience(request: &Request) -> std::time::Duration {
     use std::time::Duration;
     /// Long enough for a node busy synthesising to get round to answering,
@@ -1594,7 +1581,7 @@ fn patience(request: &Request) -> std::time::Duration {
         | Request::Skip { .. }
         | Request::Pause { .. }
         | Request::Resume { .. }
-        | Request::Join { .. } => PEER_CONNECT + MARGIN,
+        | Request::Join { .. } => mirror::PEER_CONNECT + MARGIN,
         _ => ORDINARY,
     }
 }
@@ -1731,17 +1718,6 @@ fn report(msg_id: &str, targets: &[clispeak_proto::TargetResult], json: bool) ->
     }
 }
 
-/// Socket name, duplicated rather than depending on `clispeak-core`.
-///
-/// A handful of bytes of duplication is a fair price for keeping this binary
-/// free of the node's entire dependency graph — but it must stay in step with
-/// `clispeak_core::ipc::socket_name`, including the environment override.
-/// Forgetting that here made every command talk to the first node, which
-/// looked like two unrelated bugs.
-fn clispeak_core_socket_name() -> String {
-    std::env::var("CLISPEAK_SOCKET").unwrap_or_else(|_| "clispeak.sock".to_string())
-}
-
 /// Where the node's socket is, mirroring `clispeak_core::ipc::socket_target`.
 ///
 /// **The mirror that matters most in this file.** The other duplicated
@@ -1760,7 +1736,7 @@ fn clispeak_core_socket_name() -> String {
 fn socket_target() -> std::io::Result<interprocess::local_socket::Name<'static>> {
     use interprocess::local_socket::{GenericNamespaced, ToNsName};
 
-    clispeak_core_socket_name().to_ns_name::<GenericNamespaced>()
+    mirror::socket_name().to_ns_name::<GenericNamespaced>()
 }
 
 /// [`socket_target`], on Unix: inside this device's own private directory.
@@ -1773,15 +1749,18 @@ fn socket_target() -> std::io::Result<interprocess::local_socket::Name<'static>>
         .and_then(|d| d.runtime_dir().map(std::path::Path::to_path_buf))
         .unwrap_or_else(std::env::temp_dir);
     base.join("clispeak")
-        .join(clispeak_core_socket_name())
+        .join(mirror::socket_name())
         .to_fs_name::<GenericFilePath>()
 }
 
-mod config;
 mod skill;
 
-// Frame helpers, mirroring `clispeak_core::ipc` for the same reason.
-mod frame;
+// `config`, `frame` and `mirror` live in this crate's library target rather
+// than here. Not a tidying: they are the pieces copied from `clispeak-core`
+// by hand, and a binary crate exposes nothing, so no test could ever hold the
+// two copies up against each other. See `src/lib.rs` and `tests/drift.rs`
+// (#80).
+use clispeak_cli::{config, frame, mirror};
 use frame::{read_frame, write_frame};
 
 #[cfg(test)]
@@ -1862,7 +1841,7 @@ mod display_tests {
         // Not ten, and this assertion used to say ten. A speak reaches a
         // device, the node dials before it replies whether or not anyone is
         // waiting, and waiting less than the node's own bound is #151.
-        assert!(super::patience(&speak(false, None)) > super::PEER_CONNECT);
+        assert!(super::patience(&speak(false, None)) > clispeak_cli::mirror::PEER_CONNECT);
 
         // A wait is waiting on a device speaking, not on the node, and the
         // node should be the one to time out: it knows why, and can say
@@ -1946,7 +1925,7 @@ mod display_tests {
             timeout_secs: None,
         };
         assert!(
-            super::patience(&speak) > super::PEER_CONNECT,
+            super::patience(&speak) > clispeak_cli::mirror::PEER_CONNECT,
             "a speak must outlive the dial it waits on"
         );
         for reaching in [
@@ -1965,7 +1944,7 @@ mod display_tests {
             },
         ] {
             assert!(
-                super::patience(&reaching) > super::PEER_CONNECT,
+                super::patience(&reaching) > clispeak_cli::mirror::PEER_CONNECT,
                 "{reaching:?} reaches a peer and must outlive the dial"
             );
         }
@@ -1973,7 +1952,7 @@ mod display_tests {
         // And a request the node answers out of its own state is unchanged:
         // there is nothing to dial, so waiting longer would only leave an
         // agent holding a wedged node.
-        assert!(super::patience(&Request::Status) < super::PEER_CONNECT);
+        assert!(super::patience(&Request::Status) < clispeak_cli::mirror::PEER_CONNECT);
     }
 
     #[test]

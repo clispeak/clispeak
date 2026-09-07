@@ -7,6 +7,10 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[lib]
+name = "clispeak_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "clispeak"
 path = "src/main.rs"
@@ -35,6 +39,15 @@ serde_json = "1.0.151"
 # Groups and defaults live in config.toml, as documented in docs/cli.md.
 toml = "0.9.9"
 directories = "6.0.0"
+
+# Only so `tests/drift.rs` can hold the hand-kept copies in this crate up
+# against the originals. A dev-dependency is not linked into the binary, so
+# the 3ms startup this duplication exists to protect is unaffected — and the
+# test fails the moment the two copies disagree, which is the thing that was
+# missing (#80).
+[dev-dependencies]
+clispeak-core.workspace = true
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-util"] }
 
 [lints]
 workspace = true

@@ -824,6 +824,7 @@ dependencies = [
  "blake3",
  "ciborium",
  "clap",
+ "clispeak-core",
  "clispeak-proto",
  "clispeak-text",
  "directories",
