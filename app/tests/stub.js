@@ -49,9 +49,29 @@ const device = (name, id, seen, self) => ({
   space: null,
 });
 
+/**
+ * Every command the interface has asked for, in order.
+ *
+ * A probe cannot otherwise tell "the page did not join" from "the page joined
+ * with something else" — both leave the same DOM. The arguments are kept too,
+ * because the join flow's whole contract is *which* ticket was sent.
+ */
+window.__calls = [];
+
+/**
+ * A device name for the roster, so a probe can supply a hostile one.
+ *
+ * Names come from other people's devices and are rendered on this one. A
+ * default that looks nothing like an attack is deliberate: the probe sets
+ * this, so what is being tested is visible in the probe rather than hidden in
+ * the stub.
+ */
+window.__peerName = "Phone";
+
 window.__TAURI__ = {
   core: {
-    invoke: async (cmd) => {
+    invoke: async (cmd, args) => {
+      window.__calls.push({ cmd, args: args ?? null });
       // Lets a probe make one command fail. The error path in `say()` is
       // otherwise only reachable with a broken node, and it is the path that
       // had no way out of it (#144). Cleared as it fires, so a probe arms a
@@ -110,7 +130,10 @@ window.__TAURI__ = {
         case "list_devices":
           // One self row, which never changes, and one peer that starts just
           // inside the three-minute "active" window.
-          return [device("Mac", "aaaa1111", 5, true), device("Phone", "bbbb2222", 170)];
+          return [
+            device("Mac", "aaaa1111", 5, true),
+            device(window.__peerName, "bbbb2222", 170),
+          ];
         case "now_playing": {
           const p = window.__playback;
           const active = p.held;
@@ -145,6 +168,18 @@ window.__TAURI__ = {
           };
         case "battery_ok":
           return true;
+        // The two halves of joining. `preview_invite` is what Continue calls
+        // and it commits to nothing; `join_space` is the one that does. A
+        // probe checks that the second does not happen early, and that when
+        // it does happen it carries the ticket that was previewed.
+        case "preview_invite":
+          return {
+            from: "aaaa1111bbbb2222",
+            label: "home",
+            expires_in: 240,
+          };
+        case "join_space":
+          return { space: "home", members: 2 };
         // A skill installed somewhere other than the default, which is the
         // only state in which the reset is offered at all.
         case "skill_status":
