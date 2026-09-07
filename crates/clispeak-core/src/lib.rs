@@ -36,6 +36,12 @@ pub use ticket::{Ticket, qr_svg};
 pub use transport::Transport;
 
 /// This crate's version, reported by `clispeak status`.
+///
+/// **That sentence was false for months.** Nothing called this, and nothing
+/// reported a version anywhere, so the only way to tell whether an install
+/// was current was to read a package manager's timestamp — which is how a
+/// laptop came to run a build from before the first release for a day and a
+/// half without anyone noticing. It is true now.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }

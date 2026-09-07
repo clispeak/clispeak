@@ -401,6 +401,21 @@ pub enum Response {
         fallback: bool,
         /// Messages waiting to be spoken.
         queued: usize,
+        /// What version this node is.
+        ///
+        /// **Added because nothing reported it and that cost a day.** A
+        /// laptop ran a build from eighty-four minutes before the first
+        /// release for a day and a half, and the only way anyone found out
+        /// was by reading a Flatpak's install timestamp. `clispeak_core::
+        /// version` had existed the whole time, was called by nothing, and
+        /// its own doc comment claimed it was "reported by `clispeak
+        /// status`" — which it was not (#231).
+        ///
+        /// Defaulted, so a newer CLI reading an older node's reply gets an
+        /// empty string rather than a hard error, which is the rule every
+        /// field added after v1 follows.
+        #[serde(default)]
+        version: String,
         /// Whether this device is silenced.
         #[serde(default)]
         muted: bool,
