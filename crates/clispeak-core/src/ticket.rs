@@ -37,9 +37,9 @@ pub struct Ticket {
     pub space: Option<String>,
     /// What the inviter calls that space, for the joiner to read.
     ///
-    /// `space` above is an id — `<founder>:<joined_at>` — which is exactly
-    /// right for deciding *which* roster and exactly wrong for showing to a
-    /// person. The label rides along so a joining device can say "this joins
+    /// `space` above is an id — the founder, the moment, and a nonce for the
+    /// founding itself (decision 116) — which is exactly right for deciding
+    /// *which* roster and exactly wrong for showing to a person. The label rides along so a joining device can say "this joins
     /// work" before it has spoken to anyone, which is the only moment the
     /// answer is still useful: after the round trip the join has happened.
     ///
