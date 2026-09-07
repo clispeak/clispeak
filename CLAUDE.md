@@ -218,26 +218,35 @@ evaluated the pull request as a draft and skipped the matrix, and the
 half a minute between produced one immediately, so the trigger is fine and
 the race is real. It fails the way everything in this file fails: the pull
 request reads as ready, the checks read as passing, and four of the five
-never ran. **Before merging, read the check rollup and count five named targets.**
+never ran. **Before merging, read the check rollup and count six named targets.**
 
 Count the **distinct names**, and check each one you need is there:
 
 ```
 x86_64-unknown-linux-gnu   aarch64-linux-android
 aarch64-apple-darwin       x86_64-pc-windows-msvc
-fmt · clippy · portability · test
+fmt · clippy · portability · test    frontend probes
 ```
+
+**Six since 7 September 2026**, when `frontend probes` was added. It drives
+the interface in a real headless browser and it had been sitting outside CI
+because `harness.mjs` said the build images carry no Chrome — a reason nobody
+had rechecked, and wrong: `ubuntu-latest` ships Google Chrome *and* Chromium,
+and always has. If this number moves again, move it here in the same change,
+because a merge rule that is one name out of date passes a pull request whose
+newest check never ran.
 
 Not the number of green rows. `matrix.target: SKIPPED` is the draft run's
 result and it **stays in the rollup forever**, beside the four real names on a
-fully verified pull request — and so does the draft run's own Linux job, so
-the rollup routinely shows seven rows for five jobs, two of them the same
-name. Counting rows to five is satisfied by the duplicate plus three targets
-while the fourth is still running. That is how it read green here with Android
-in flight, on a rule written the same afternoon by the person it fooled.
+fully verified pull request — and so do the draft run's own always-run jobs,
+so the rollup routinely shows more rows than there are jobs, some of them the
+same name twice. Counting rows is satisfied by the duplicates plus a subset of
+the targets while the rest are still running. That is how it read green here
+with Android in flight, on a rule written the same afternoon by the person it
+fooled.
 
 It is a history, not a status. "There is no SKIPPED row" would reject every
-correctly-verified pull request from here on. "Five green rows" passes an
+correctly-verified pull request from here on. "Six green rows" passes an
 unfinished one. Only the set of names answers the question.
 
 **And where one name has two conclusions, take the latest.** That is not a
@@ -271,7 +280,7 @@ So the rule is four parts, each learned separately and all four in one day:
    commit
 2. **mergeable**, or no runs are produced at all and zero checks looks like
    early rather than empty
-3. **five distinct names**, not five green rows
+3. **six distinct names**, not six green rows
 4. **the latest conclusion per name**, since a superseded draft run leaves
    `CANCELLED` beside `SUCCESS`
 

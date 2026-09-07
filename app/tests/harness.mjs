@@ -8,10 +8,18 @@
  * expanded message and a focused button (#74), and four dialogs claimed
  * `aria-modal` while letting Tab walk out behind the backdrop (#75).
  *
- * Manual, not CI. It needs a real Chrome, which the build images do not carry,
- * and pulling one in to run two probes is a poor trade — so this is a command
- * someone runs when touching the interface, and the PR says whether it was
- * run. Saying that plainly is better than a check that quietly never runs.
+ * **It runs in CI, and for a while it did not, for a reason that was wrong.**
+ * This file used to say the probes were manual because "it needs a real
+ * Chrome, which the build images do not carry, and pulling one in to run two
+ * probes is a poor trade". The premise was never checked. GitHub's
+ * `ubuntu-latest` image ships Google Chrome *and* Chromium preinstalled, and
+ * has throughout — so the trade being declined did not exist, and five probes
+ * written against five shipped bugs sat outside the gate on the strength of
+ * it.
+ *
+ * The pattern is the one `CLAUDE.md` is about: not a failure, an absence,
+ * wearing a reason nobody re-read. A cost that is asserted rather than
+ * measured is worth exactly as much as a test that is written but never run.
  *
  *   node app/tests/harness.mjs           # every probe
  *   node app/tests/harness.mjs lists     # one of them
@@ -35,8 +43,16 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "src");
 
-/** Where a real Chrome might be. Skipped, loudly, if none is found. */
+/**
+ * Where a real Chrome might be.
+ *
+ * `$CHROME` wins when it is set, so a machine that keeps one somewhere else —
+ * a CI image that moves it, a developer with a private build — needs no edit
+ * here. Refused loudly if none is found: a browser check that quietly does
+ * not run is worse than no check, because the pull request still shows green.
+ */
 const CHROMES = [
+  process.env.CHROME,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
   "/usr/bin/google-chrome",
@@ -49,10 +65,11 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/cs
 
 async function main() {
   const only = process.argv[2];
-  const chrome = CHROMES.find((p) => existsSync(p));
+  const chrome = CHROMES.filter(Boolean).find((p) => existsSync(p));
   if (!chrome) {
     console.error("no Chrome or Chromium found — install one, or add its path to CHROMES");
-    console.error("looked in:\n  " + CHROMES.join("\n  "));
+    console.error("looked in:\n  " + CHROMES.filter(Boolean).join("\n  "));
+    console.error("or set CHROME to the path of one");
     process.exit(2);
   }
 
