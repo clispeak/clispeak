@@ -138,7 +138,26 @@ impl Roster {
         let mut roster = Self::new();
         let me = secret.public().to_string();
         roster.insert_self_signed(secret, &me, name);
-        roster.id = roster.derived_id();
+        // The derived id names *who* founded the space and *when*. That is
+        // the right idea and "when" was too coarse to carry it: `joined_at`
+        // is unix seconds, so two spaces founded by one device inside one
+        // second derived the same id, and `Spaces::insert` is a map write —
+        // the second silently replaced the first, taking every device paired
+        // into it.
+        //
+        // Reachable three ways, all of them ordinary: `clispeak space new
+        // work` followed by `clispeak space new home`; a `rotate` on a space
+        // founded moments earlier; and any scripted or agent-driven setup at
+        // all, which is the case that hits it every time rather than
+        // occasionally.
+        //
+        // The nonce names the founding *event* rather than the second it
+        // happened in, which is what the id was always trying to say. It
+        // costs nothing elsewhere: the id is an opaque string, nothing parses
+        // it, and a joiner is told the space's id by the host and adopts it
+        // rather than deriving one. `derived_id` itself is unchanged — it is
+        // still the fallback for a roster that reaches us with no id at all.
+        roster.id = format!("{}:{}", roster.derived_id(), founding_nonce());
         roster
     }
 
@@ -547,6 +566,17 @@ impl Roster {
             .map(|d| d.join("roster.cbor"))
             .map_err(|e| RosterError::Storage(e.to_string()))
     }
+}
+
+/// A value distinguishing one founding from another.
+///
+/// Random rather than a counter: a counter would have to persist to be
+/// unique across restarts, and a space id has to stay unique for the life of
+/// the space rather than the life of the process.
+fn founding_nonce() -> String {
+    use rand::RngExt;
+    let bytes: [u8; 8] = rand::rng().random();
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Unix seconds now, or zero if the clock is before the epoch.
