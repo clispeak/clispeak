@@ -9,6 +9,9 @@
 pub mod history;
 pub mod identity;
 pub mod ipc;
+/// Nodes wired to each other in one process, for tests. Never shipped.
+#[cfg(test)]
+mod loopback;
 mod node;
 pub mod policy;
 mod queue;

@@ -198,7 +198,6 @@ fn a_rename_survives_a_merge_with_a_stale_peer() {
     // Bob adopts the space, then renames himself.
     let mut on_bob = Roster::new();
     on_bob.merge(&on_alice);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     assert!(
         on_bob.rename(&bob_id, "bob's phone"),
         "rename should change something"
@@ -229,7 +228,6 @@ fn an_older_label_does_not_overwrite_a_newer_one() {
     on_alice.invite(&alice, &bob_id, "bob");
     let stale = on_alice.clone();
 
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     on_alice.rename(&bob_id, "bob's phone");
 
     // Merging an older copy back in must not undo the rename.
@@ -723,5 +721,67 @@ fn re_inviting_a_revoked_device_clears_its_revocation() {
     assert!(
         on_carol.allows(&bob.public()),
         "the revocation must not travel alongside the membership"
+    );
+}
+
+#[test]
+fn a_rename_in_the_same_second_as_the_join_still_reaches_a_peer() {
+    // These two tests used to sleep 1100ms each, and the sleep was the whole
+    // reason they passed. `renamed_at` starts life equal to `joined_at`, both
+    // are unix *seconds*, and `merge` requires the arriving label to be
+    // strictly newer — so a rename in the same second as the record it
+    // replaces tied and lost. Nothing retries a sync, so it stayed lost until
+    // some later rename happened to land in a different second.
+    //
+    // Pairing a device and naming it in one breath is exactly that case, and
+    // anything scripted hits it every time. Waiting a second in a test is not
+    // a fix; it is the bug, held still.
+    let alice = device();
+    let bob = device();
+    let bob_id = bob.public().to_string();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob_id, "bob");
+
+    let mut on_bob = Roster::new();
+    on_bob.merge(&on_alice);
+    // No sleep. This is the point.
+    assert!(
+        on_bob.rename(&bob_id, "bob's phone"),
+        "rename changed nothing"
+    );
+
+    on_alice.merge(&on_bob);
+    assert_eq!(
+        on_alice.by_name("bob's phone").map(|m| m.name.as_str()),
+        Some("bob's phone"),
+        "a rename in the same second as the join never reached the peer, and \
+         nothing would have retried it: {:?}",
+        on_alice.members().map(|m| &m.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn two_renames_in_one_second_both_take() {
+    // The same tie, one step along: a device correcting a typo immediately
+    // used to keep the typo everywhere but on itself.
+    let alice = device();
+    let bob = device();
+    let bob_id = bob.public().to_string();
+
+    let mut on_alice = Roster::found(&alice, "alice");
+    on_alice.invite(&alice, &bob_id, "bob");
+
+    let mut on_bob = Roster::new();
+    on_bob.merge(&on_alice);
+    on_bob.rename(&bob_id, "bobs phone");
+    on_bob.rename(&bob_id, "bob's phone");
+
+    on_alice.merge(&on_bob);
+    assert_eq!(
+        on_alice.by_name("bob's phone").map(|m| m.name.as_str()),
+        Some("bob's phone"),
+        "the second rename in a second must not be swallowed: {:?}",
+        on_alice.members().map(|m| &m.name).collect::<Vec<_>>()
     );
 }

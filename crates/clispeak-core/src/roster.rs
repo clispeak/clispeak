@@ -358,8 +358,28 @@ impl Roster {
         match self.members.get_mut(endpoint_id) {
             Some(m) if m.name != name => {
                 m.name = name.to_string();
-                // Stamped so a merge can tell this apart from a stale copy.
-                m.renamed_at = now();
+                // Stamped so a merge can tell this apart from a stale copy —
+                // and never with a stamp the copy it replaces already has.
+                //
+                // `now()` alone is not enough, because these are unix
+                // *seconds* and `merge` requires the arriving label to be
+                // strictly newer. A rename in the same second as the record
+                // it replaces therefore tied, lost, and stayed lost: nothing
+                // retries a sync, so the far device went on using the old
+                // name until some later rename happened to land in a
+                // different second. `renamed_at` starts life equal to
+                // `joined_at`, so pairing a device and naming it in one
+                // breath is exactly that case, and a script or an agent
+                // doing the pairing hits it every time.
+                //
+                // A device is the authority on its own name, so moving the
+                // stamp forward to make the change take is honest rather than
+                // a fudge. Renames stay ordered by the clock at second
+                // resolution for anything further apart than that, and the
+                // bump cannot run away: `merge` reads a stamp more than
+                // `MAX_SKEW` ahead as no rename at all, which would take
+                // three hundred renames in one second to reach.
+                m.renamed_at = now().max(m.renamed_at.saturating_add(1));
                 true
             }
             _ => false,

@@ -199,21 +199,46 @@ fn path() -> Result<std::path::PathBuf, crate::IdentityError> {
     Ok(crate::config_dir()?.join("policy.json"))
 }
 
+/// The same file, under a directory the caller names.
+///
+/// See `Ticket::path_in` for why the pair exists: a node carries its own
+/// directory so two of them can run in one process without sharing state
+/// through a `OnceLock` (#80).
+fn path_in(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("policy.json")
+}
+
 /// Load this device's policies, falling back to "say everything".
 ///
 /// A missing or unreadable file is not an error: a device that has never been
 /// configured should speak, not sit silently for a reason nobody can see.
 pub fn load() -> Policies {
-    path()
+    path().ok().map(|p| load_at(&p)).unwrap_or_default()
+}
+
+/// Load from a directory the caller names.
+pub fn load_in(dir: &std::path::Path) -> Policies {
+    load_at(&path_in(dir))
+}
+
+fn load_at(path: &std::path::Path) -> Policies {
+    std::fs::read_to_string(path)
         .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
 /// Persist the policies.
 pub fn save(policy: &Policies) -> Result<(), crate::IdentityError> {
-    let p = path()?;
+    save_at(&path()?, policy)
+}
+
+/// Persist under a directory the caller names.
+pub fn save_in(dir: &std::path::Path, policy: &Policies) -> Result<(), crate::IdentityError> {
+    save_at(&path_in(dir), policy)
+}
+
+fn save_at(p: &std::path::Path, policy: &Policies) -> Result<(), crate::IdentityError> {
     if let Some(dir) = p.parent() {
         crate::store::create_dir_private(dir)
             .map_err(|e| crate::IdentityError::Store(e.to_string()))?;
@@ -222,7 +247,7 @@ pub fn save(policy: &Policies) -> Result<(), crate::IdentityError> {
         .map_err(|e| crate::IdentityError::Store(e.to_string()))?;
     // A truncated policy reads as 'nothing configured', so a muted
     // device would quietly un-mute itself.
-    crate::store::write_private(&p, text.as_bytes())
+    crate::store::write_private(p, text.as_bytes())
         .map_err(|e| crate::IdentityError::Store(e.to_string()))
 }
 

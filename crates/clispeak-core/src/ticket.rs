@@ -68,6 +68,18 @@ impl Ticket {
             .map(|d| d.join("invite.json"))
     }
 
+    /// The same file, under a directory the caller names.
+    ///
+    /// The pair exists so a node can be told where its state lives instead of
+    /// reading a process-wide global. Two nodes in one process is the point:
+    /// the global is a `OnceLock`, so the first caller wins and the second
+    /// silently shares the first one's directory — which is an identity, a
+    /// roster and an outstanding invite held in common by two devices that
+    /// are supposed to be strangers (#80).
+    fn path_in(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("invite.json")
+    }
+
     /// Remember this invite, so it survives the app being restarted.
     ///
     /// An invite lives in memory for the five minutes it is valid, and on a
@@ -80,13 +92,22 @@ impl Ticket {
     /// file lives in app-private storage.
     pub fn remember(&self) {
         let Some(path) = Self::path() else { return };
+        self.remember_at(&path);
+    }
+
+    /// Remember it under a directory the caller names.
+    pub fn remember_in(&self, dir: &std::path::Path) {
+        self.remember_at(&Self::path_in(dir));
+    }
+
+    fn remember_at(&self, path: &std::path::Path) {
         if let Some(dir) = path.parent() {
             let _ = crate::store::create_dir_private(dir);
         }
         if let Ok(text) = serde_json::to_string(self) {
             // Holds the live token: private, and atomic so a
             // crash cannot leave half a ticket to be re-read.
-            let _ = crate::store::write_private(&path, text.as_bytes());
+            let _ = crate::store::write_private(path, text.as_bytes());
         }
     }
 
@@ -97,16 +118,29 @@ impl Ticket {
         }
     }
 
+    /// Drop it from a directory the caller names.
+    pub fn forget_in(dir: &std::path::Path) {
+        let _ = std::fs::remove_file(Self::path_in(dir));
+    }
+
     /// The remembered invite, if there is one and it has not expired.
     pub fn recall() -> Option<Self> {
-        let path = Self::path()?;
-        let ticket: Self = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+        Self::recall_at(&Self::path()?)
+    }
+
+    /// The remembered invite under a directory the caller names.
+    pub fn recall_in(dir: &std::path::Path) -> Option<Self> {
+        Self::recall_at(&Self::path_in(dir))
+    }
+
+    fn recall_at(path: &std::path::Path) -> Option<Self> {
+        let ticket: Self = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
         if ticket.is_valid() {
             Some(ticket)
         } else {
             // Tidy up rather than leave a dead ticket to be re-read on every
             // start.
-            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(path);
             None
         }
     }

@@ -125,29 +125,28 @@ impl Transport {
     }
 }
 
-/// What serving a peer actually needs from a connection.
+/// What the protocol actually needs from a connection.
 ///
 /// `handle_peer` took an `iroh::endpoint::Connection`, which is a concrete
 /// type that can only be obtained by binding an endpoint and having a real
 /// device dial it. So the protocol — sixteen message arms, every join,
 /// revocation and speak decision on the receiving side — could not be driven
-/// by a test at all, and every fix to it says "verified by reading" rather
+/// by a test at all, and every fix to it said "verified by reading" rather
 /// than "verified by test" (#80).
 ///
-/// Two methods is the whole surface. The frame helpers below are already
-/// generic over `AsyncRead` and `AsyncWrite`, so the streams needed nothing;
-/// only the connection was concrete. A test supplies a pair of
-/// `tokio::io::duplex` halves and drives the same code a peer reaches.
+/// **This was two methods and is now three, and the widening is the point.**
+/// The first version covered only the *accepting* half, and its own comment
+/// said a wider abstraction would be "a design nobody had tested either".
+/// That was right at the time. What changed is that a test with two real
+/// nodes in it needs the *dialling* half too — node B's `do_join` has to
+/// reach node A, and every one of those paths went through a concrete
+/// `Transport`. So the third method is not anticipation; it is the other
+/// direction of the same conversation, added when something needed it.
 ///
-/// Deliberately not a wider abstraction. This is not "a transport" — it is
-/// the two things one function asks for, named after what it asks for. A
-/// trait that anticipated more would be a design nobody had tested either.
-pub trait PeerConnection: Send + Sync {
-    /// The writable half of an accepted stream.
-    type Send: tokio::io::AsyncWrite + Unpin + Send;
-    /// The readable half.
-    type Recv: tokio::io::AsyncRead + Unpin + Send;
-
+/// The frame helpers below are generic over `AsyncRead` and `AsyncWrite`, and
+/// tokio implements both for `Box<dyn _>`, so the boxed halves need no
+/// special handling at the call sites.
+pub trait Wire: Send + Sync {
     /// Who is on the other end.
     ///
     /// Still an `EndpointId` rather than the string the roster stores: the
@@ -156,22 +155,125 @@ pub trait PeerConnection: Send + Sync {
     /// does not need — generating a key is one line.
     fn remote(&self) -> EndpointId;
 
-    /// The next bidirectional stream, or `None` once the peer is gone.
-    fn accept_bi(
-        &self,
-    ) -> impl std::future::Future<Output = Option<(Self::Send, Self::Recv)>> + Send;
+    /// Open a bidirectional stream to the peer.
+    fn open_bi(&self) -> BoxFuture<'_, Result<Streams>>;
+
+    /// The next bidirectional stream the peer opened, or `None` once it is
+    /// gone.
+    fn accept_bi(&self) -> BoxFuture<'_, Option<Streams>>;
 }
 
-impl PeerConnection for Connection {
-    type Send = iroh::endpoint::SendStream;
-    type Recv = iroh::endpoint::RecvStream;
+/// This device's place on the network.
+///
+/// The whole of what a [`Node`] asks of a transport, which is five methods.
+/// Named for what a node needs rather than for QUIC, so an in-process pair of
+/// `tokio::io::duplex` halves satisfies it exactly as an endpoint does.
+///
+/// [`Node`]: crate::Node
+pub trait Network: Send + Sync + 'static {
+    /// This device's public key.
+    fn id(&self) -> EndpointId;
 
+    /// Resolve until this device is reachable by others.
+    fn online(&self) -> BoxFuture<'_, ()>;
+
+    /// Dial a peer by public key alone.
+    fn connect(&self, peer: EndpointId) -> BoxFuture<'_, Result<Box<dyn Wire>>>;
+
+    /// Accept the next incoming connection, or `None` once closed.
+    fn accept(&self) -> BoxFuture<'_, Option<Result<Box<dyn Wire>>>>;
+
+    /// Stop listening.
+    fn close(&self) -> BoxFuture<'_, ()>;
+}
+
+/// A boxed future, because both traits above are used as trait objects.
+///
+/// `impl Future` in a trait method is not object safe, and a node holds its
+/// network as a `dyn` so that swapping it does not make `Node` generic — a
+/// generic parameter would reach the app, the daemon and every function
+/// between, to say something only a test cares about.
+pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+/// The writable half of a stream.
+///
+/// A trait of our own rather than a bare `AsyncWrite` because QUIC has one
+/// thing a pipe does not: a sender can say it has finished without closing
+/// the connection. `AsyncWriteExt::shutdown` is *nearly* the same call, and
+/// "nearly" is how this project loses days — so the operation is named and
+/// each implementation says what it means by it.
+pub trait SendHalf: tokio::io::AsyncWrite + Unpin + Send {
+    /// Nothing further will be written on this stream.
+    fn finish(&mut self);
+}
+
+impl SendHalf for iroh::endpoint::SendStream {
+    fn finish(&mut self) {
+        // Fails only if the stream is already finished or reset, which is not
+        // something the caller can act on.
+        let _ = iroh::endpoint::SendStream::finish(self);
+    }
+}
+
+impl SendHalf for tokio::io::DuplexStream {
+    /// Nothing to do: a duplex has no half-close, and no reader here waits on
+    /// end-of-stream. Every frame is length-prefixed, so a peer reads a whole
+    /// message without needing to be told the stream ended.
+    fn finish(&mut self) {}
+}
+
+/// The writable half of an opened stream.
+pub type Writer = Box<dyn SendHalf>;
+/// The readable half.
+pub type Reader = Box<dyn tokio::io::AsyncRead + Unpin + Send>;
+/// One bidirectional stream, in whichever direction it was opened.
+pub type Streams = (Writer, Reader);
+
+impl Wire for Connection {
     fn remote(&self) -> EndpointId {
         self.remote_id()
     }
 
-    async fn accept_bi(&self) -> Option<(Self::Send, Self::Recv)> {
-        Connection::accept_bi(self).await.ok()
+    fn open_bi(&self) -> BoxFuture<'_, Result<Streams>> {
+        Box::pin(async move {
+            let (send, recv) = Connection::open_bi(self).await?;
+            Ok((Box::new(send) as Writer, Box::new(recv) as Reader))
+        })
+    }
+
+    fn accept_bi(&self) -> BoxFuture<'_, Option<Streams>> {
+        Box::pin(async move {
+            let (send, recv) = Connection::accept_bi(self).await.ok()?;
+            Some((Box::new(send) as Writer, Box::new(recv) as Reader))
+        })
+    }
+}
+
+impl Network for Transport {
+    fn id(&self) -> EndpointId {
+        self.endpoint.id()
+    }
+
+    fn online(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move { self.endpoint.online().await })
+    }
+
+    fn connect(&self, peer: EndpointId) -> BoxFuture<'_, Result<Box<dyn Wire>>> {
+        Box::pin(async move {
+            let conn = Transport::connect(self, peer).await?;
+            Ok(Box::new(conn) as Box<dyn Wire>)
+        })
+    }
+
+    fn accept(&self) -> BoxFuture<'_, Option<Result<Box<dyn Wire>>>> {
+        Box::pin(async move {
+            let conn = Transport::accept(self).await?;
+            Some(conn.map(|c| Box::new(c) as Box<dyn Wire>))
+        })
+    }
+
+    fn close(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move { Transport::close(self).await })
     }
 }
 

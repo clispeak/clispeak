@@ -468,8 +468,17 @@ pub fn device_name() -> String {
 
 /// Choose this device's label, remembering it across restarts.
 pub fn set_device_name(name: &str) -> Result<(), IdentityError> {
-    let dir = config_dir()?;
-    crate::store::create_dir_private(&dir).map_err(|e| IdentityError::Store(e.to_string()))?;
+    set_device_name_in(&config_dir()?, name)
+}
+
+/// The same, under a directory the caller names.
+///
+/// See `Ticket::path_in` for why the pair exists. This one matters more than
+/// most: a node that renamed itself through the global wrote the new name
+/// into whichever directory won the `OnceLock`, so in a two-node test the
+/// second device's rename landed in the first device's state (#80).
+pub fn set_device_name_in(dir: &Path, name: &str) -> Result<(), IdentityError> {
+    crate::store::create_dir_private(dir).map_err(|e| IdentityError::Store(e.to_string()))?;
     crate::store::write_private(&dir.join("name"), name.trim().as_bytes())
         .map_err(|e| IdentityError::Store(e.to_string()))
 }
@@ -480,7 +489,14 @@ pub fn set_device_name(name: &str) -> Result<(), IdentityError> {
 /// recreated on every start, and a preference that does not survive a restart
 /// is not a preference.
 pub fn load_voice_settings() -> Option<(String, f32)> {
-    let text = std::fs::read_to_string(config_dir().ok()?.join("voice")).ok()?;
+    load_voice_settings_in(&config_dir().ok()?)
+}
+
+/// The same, from a directory the caller names.
+///
+/// See `Ticket::path_in` for why the pair exists (#80).
+pub fn load_voice_settings_in(dir: &Path) -> Option<(String, f32)> {
+    let text = std::fs::read_to_string(dir.join("voice")).ok()?;
     let (id, rate) = text.trim().split_once('\n')?;
     Some((id.to_string(), rate.parse().ok()?))
 }

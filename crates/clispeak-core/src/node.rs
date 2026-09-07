@@ -28,8 +28,8 @@ use crate::policy::{self, Policies};
 use crate::queue::{Job, Speaker, words_in};
 use crate::roster::RosterError;
 use crate::spaces::Spaces;
-use crate::transport::{read_msg, write_msg};
-use crate::{Identity, Roster, Ticket, Transport};
+use crate::transport::{Network, Wire, read_msg, write_msg};
+use crate::{Identity, Roster, Ticket};
 
 /// Bind the local socket, reclaiming one a dead node left behind.
 ///
@@ -100,6 +100,20 @@ pub type WindowHook = Arc<dyn Fn() + Send + Sync>;
 struct Shared {
     engine: Arc<dyn SpeechEngine>,
     identity: Identity,
+    /// Where this node keeps its state.
+    ///
+    /// Carried rather than read from `identity::config_dir()` at each use.
+    /// That global is a `OnceLock`: the first caller wins, so a second node
+    /// in the same process silently gets the first one's directory and the
+    /// two share an identity, a roster, a policy and an outstanding invite
+    /// while believing they are strangers. Every test above the unit level
+    /// needs two nodes at once, which is why #80 called this the one
+    /// investment that unlocks the rest.
+    ///
+    /// The hosts are unaffected: `Node::new` still resolves the global and
+    /// hands it here, so there is one directory in production and the
+    /// difference exists only for callers that name their own.
+    config_dir: PathBuf,
     /// This device's own label.
     ///
     /// Behind a lock because it can change while the node runs, and because
@@ -147,7 +161,12 @@ struct Shared {
 /// The running node.
 pub struct Node {
     shared: Arc<Shared>,
-    transport: Arc<Transport>,
+    /// Held as a trait object rather than a concrete `Transport`.
+    ///
+    /// A generic parameter would have reached `Node`, the app, the daemon and
+    /// every function between them, to express something only a test cares
+    /// about. See [`Network`].
+    transport: Arc<dyn Network>,
 }
 
 /// Make this device's own roster entries agree with the name it advertises.
@@ -195,21 +214,41 @@ fn adopt_own_name(spaces: &mut Spaces, me: &str, name: &str) -> bool {
 
 impl Node {
     /// Start a node with the given engine, identity and transport.
+    ///
+    /// State goes wherever [`crate::identity::config_dir`] points, which is
+    /// what every host wants. [`Node::new_in`] is the same thing with the
+    /// directory named explicitly.
     pub async fn new(
         engine: Arc<dyn SpeechEngine>,
         identity: Identity,
-        transport: Transport,
+        transport: impl Network,
+        name: String,
+    ) -> Result<Self> {
+        let dir = crate::identity::config_dir().context("locating the config directory")?;
+        Self::new_in(dir, engine, identity, transport, name).await
+    }
+
+    /// Start a node keeping its state in the directory given.
+    ///
+    /// The only difference from [`Node::new`] is where the state lives — and
+    /// that difference is what lets two nodes run in one process, which every
+    /// test above the unit level needs (#80).
+    pub async fn new_in(
+        config_dir: PathBuf,
+        engine: Arc<dyn SpeechEngine>,
+        identity: Identity,
+        transport: impl Network,
         name: String,
     ) -> Result<Self> {
         // Apply a remembered voice before anything can be spoken with the
         // wrong one.
-        if let Some((voice, rate)) = crate::load_voice_settings() {
+        if let Some((voice, rate)) = crate::identity::load_voice_settings_in(&config_dir) {
             let _ = engine.set_voice(&voice);
             let _ = engine.set_rate(rate);
         }
 
-        let spaces_path = Spaces::default_path().context("locating spaces")?;
-        let legacy = Roster::default_path().context("locating roster")?;
+        let spaces_path = config_dir.join("spaces.cbor");
+        let legacy = config_dir.join("roster.cbor");
         // Whether this device has been through the migration yet. Persisted
         // eagerly below so it happens exactly once, rather than being redone
         // from a roster file that nothing writes to any more.
@@ -231,8 +270,7 @@ impl Node {
             spaces.save(&spaces_path).context("saving spaces")?;
         }
 
-        let history_path = History::default_path()
-            .ok_or_else(|| anyhow::anyhow!("no config directory for the history"))?;
+        let history_path = config_dir.join("history.json");
         let history = std::sync::Mutex::new(History::load(&history_path));
         let history_saver = Saver::spawn(history_path);
 
@@ -276,12 +314,13 @@ impl Node {
             spaces_path,
             // An invite outstanding when the app last stopped is still
             // valid if it has not expired.
-            pending: Mutex::new(Ticket::recall()),
+            pending: Mutex::new(Ticket::recall_in(&config_dir)),
             speaker,
             history,
             history_saver,
             last_seen: Mutex::new(std::collections::HashMap::new()),
-            policy: std::sync::Mutex::new(policy::load()),
+            policy: std::sync::Mutex::new(policy::load_in(&config_dir)),
+            config_dir,
             on_show: Mutex::new(None),
             on_quit: Mutex::new(None),
         });
@@ -553,7 +592,7 @@ impl Node {
                     if let Ok(id) = peer.parse()
                         && let Ok(conn) = node.transport.connect(id).await
                     {
-                        let _ = sync_roster(&node.shared, &conn, &space).await;
+                        let _ = sync_roster(&node.shared, conn.as_ref(), &space).await;
                     }
                 }
             }
@@ -573,7 +612,7 @@ impl Node {
             match conn {
                 Ok(conn) => {
                     tokio::spawn(async move {
-                        if let Err(e) = handle_peer(&shared, conn).await {
+                        if let Err(e) = handle_peer(&shared, conn.as_ref()).await {
                             eprintln!("peer: {e:#}");
                         }
                     });
@@ -591,7 +630,7 @@ impl Node {
 
     /// Run both loops until one of them fails.
     pub async fn serve(&self) -> Result<()> {
-        let config_dir = crate::identity::config_dir()?;
+        let config_dir = self.shared.config_dir.clone();
 
         // Before anything else: is there a second copy of this device's state
         // on this machine? Two directories can hold two rosters while sharing
@@ -739,7 +778,7 @@ impl Node {
                     match conn {
                         Ok(conn) => {
                             tokio::spawn(async move {
-                                if let Err(e) = handle_peer(&shared, conn).await {
+                                if let Err(e) = handle_peer(&shared, conn.as_ref()).await {
                                     eprintln!("peer: {e:#}");
                                 }
                             });
@@ -761,7 +800,7 @@ impl Node {
 /// Serve one CLI connection.
 async fn handle_cli(
     shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     mut s: Stream,
     token: &crate::ipc::Token,
 ) -> Result<()> {
@@ -950,7 +989,7 @@ fn status(shared: &Arc<Shared>) -> Response {
 /// Always answers with a per-target report. Without `wait` those say `queued`
 /// — accepted, not yet spoken — which is the honest thing to claim when the
 /// sound has not happened yet.
-async fn speak(shared: &Arc<Shared>, transport: &Arc<Transport>, ask: SpeakRequest) -> Response {
+async fn speak(shared: &Arc<Shared>, transport: &Arc<dyn Network>, ask: SpeakRequest) -> Response {
     let SpeakRequest {
         text,
         priority,
@@ -1388,7 +1427,7 @@ fn device_names(spaces: &Spaces, own: &str) -> String {
 /// they happened to finish, so repeated runs read the same way.
 async fn deliver(
     shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     outgoing: &Outgoing,
     targets: Vec<Target>,
 ) -> Vec<TargetResult> {
@@ -1435,7 +1474,7 @@ async fn deliver(
 /// Send to one peer and turn the outcome into a result row.
 async fn to_peer(
     shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     name: &str,
     peer_id: &str,
     space: &str,
@@ -1644,7 +1683,7 @@ async fn speak_here(
 /// concurrently rather than one after another.
 async fn control(
     shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     to: Option<String>,
     control: Control,
 ) -> Response {
@@ -1785,7 +1824,7 @@ fn both(a: Option<String>, b: Option<String>) -> Option<String> {
 
 /// Ask a peer to do it.
 async fn send_control(
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     peer_id: &str,
     _space: &str,
     control: &Control,
@@ -1800,7 +1839,7 @@ async fn send_control(
         },
     )
     .await?;
-    send.finish().ok();
+    send.finish();
     match read_msg(&mut recv).await? {
         PeerMessage::Report { status, detail } => Ok((status, detail)),
         other => anyhow::bail!("unexpected reply: {other:?}"),
@@ -1854,7 +1893,7 @@ fn forget_policy(shared: &Arc<Shared>, space: &str) {
         return;
     }
     p.forget(space);
-    let _ = policy::save(&p);
+    let _ = policy::save_in(&shared.config_dir, &p);
 }
 
 /// Which policy a request is editing: the device's, or one space's.
@@ -1898,7 +1937,7 @@ async fn set_mute(shared: &Arc<Shared>, muted: bool, space: Option<&str>) -> Res
                 p.set_space(id, over);
             }
         }
-        if let Err(e) = policy::save(&p) {
+        if let Err(e) = policy::save_in(&shared.config_dir, &p) {
             return Response::error(format!("could not save the policy: {e}"));
         }
     }
@@ -1945,7 +1984,7 @@ async fn set_quiet(
                 p.set_space(id, over);
             }
         }
-        if let Err(e) = policy::save(&p) {
+        if let Err(e) = policy::save_in(&shared.config_dir, &p) {
             return Response::error(format!("could not save the policy: {e}"));
         }
     }
@@ -2062,11 +2101,7 @@ fn refusal_detail(status: &Status) -> Option<String> {
 /// other when there is something to say, and that is exactly when a stale
 /// roster would be noticed. Without this, a rename or a newly joined device
 /// never reaches anyone — which is what `clispeak rename` had to warn about.
-async fn sync_roster(
-    shared: &Arc<Shared>,
-    conn: &iroh::endpoint::Connection,
-    space: &str,
-) -> Result<()> {
+async fn sync_roster(shared: &Arc<Shared>, conn: &dyn Wire, space: &str) -> Result<()> {
     let (mut send, mut recv) = conn.open_bi().await.context("opening roster stream")?;
     let mine = {
         let spaces = shared.spaces.lock().await;
@@ -2081,7 +2116,7 @@ async fn sync_roster(
         }
     };
     write_msg(&mut send, &mine).await?;
-    send.finish().ok();
+    send.finish();
 
     match read_msg(&mut recv).await? {
         PeerMessage::RosterSync {
@@ -2110,7 +2145,7 @@ async fn sync_roster(
         // real tombstone. What it no longer does is act on one refusal as
         // though it were a decision every device should adopt.
         PeerMessage::JoinRefused { .. } => {
-            let peer = conn.remote_id().to_string();
+            let peer = conn.remote().to_string();
             let mut spaces = shared.spaces.lock().await;
             // The space this sync was about, not whichever one this peer
             // happens to share with us first. Being dropped from one space
@@ -2118,7 +2153,7 @@ async fn sync_roster(
             // default before anything else — so a peer leaving a second
             // space was removed from the one it was still a member of (#51).
             if let Some(roster) = spaces.get_mut(space)
-                && roster.allows(&conn.remote_id())
+                && roster.allows(&conn.remote())
                 && roster.forget(&peer)
             {
                 spaces.save(&shared.spaces_path)?;
@@ -2132,7 +2167,7 @@ async fn sync_roster(
         }
         other => anyhow::bail!("unexpected reply to roster sync: {other:?}"),
     }
-    mark_seen(shared, &conn.remote_id().to_string()).await;
+    mark_seen(shared, &conn.remote().to_string()).await;
     Ok(())
 }
 
@@ -2161,7 +2196,7 @@ async fn merge_from_peer(
 /// Open a stream to a peer and stream the message down it.
 async fn send_to_peer(
     shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     peer_id: &str,
     space: &str,
     outgoing: &Outgoing,
@@ -2172,7 +2207,7 @@ async fn send_to_peer(
     // Piggyback a roster exchange: this is the moment both sides are known to
     // be reachable, so it costs one extra stream and keeps names and
     // membership converging without any background chatter.
-    if let Err(e) = sync_roster(shared, &conn, space).await {
+    if let Err(e) = sync_roster(shared, conn.as_ref(), space).await {
         eprintln!("roster sync with {peer_id}: {e:#}");
     }
 
@@ -2232,7 +2267,7 @@ async fn invite(shared: &Arc<Shared>, space: Option<&str>) -> Response {
     let expires_in = ticket.remaining();
     // Written down as well as held, so restarting the app mid-pairing does
     // not silently invalidate a code someone is looking at.
-    ticket.remember();
+    ticket.remember_in(&shared.config_dir);
     *shared.pending.lock().await = Some(ticket);
     Response::Invite { url, expires_in }
 }
@@ -2240,7 +2275,7 @@ async fn invite(shared: &Arc<Shared>, space: Option<&str>) -> Response {
 /// Join a space using someone else's ticket.
 async fn join(
     shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     raw: &str,
     label: Option<String>,
 ) -> Response {
@@ -2331,7 +2366,7 @@ fn join_verification_failed(offered: usize, rejected: &[RosterError]) -> String 
 
 async fn do_join(
     shared: &Arc<Shared>,
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     t: &Ticket,
     wanted: Option<&str>,
 ) -> Result<(usize, String)> {
@@ -2467,7 +2502,7 @@ async fn rename(shared: &Arc<Shared>, name: &str) -> Response {
     if let Some(message) = name_objection(name) {
         return Response::error(message);
     }
-    if let Err(e) = crate::set_device_name(name) {
+    if let Err(e) = crate::identity::set_device_name_in(&shared.config_dir, name) {
         return Response::error(e.to_string());
     }
     // Before the rosters, so a sync racing this cannot write the old name
@@ -2543,7 +2578,11 @@ async fn revoke(shared: &Arc<Shared>, name: &str, space: Option<&str>) -> Respon
 ///
 /// Telling them is best-effort; the local removal is not. Leaving must work
 /// with no network at all.
-async fn leave(shared: &Arc<Shared>, transport: &Arc<Transport>, space: Option<&str>) -> Response {
+async fn leave(
+    shared: &Arc<Shared>,
+    transport: &Arc<dyn Network>,
+    space: Option<&str>,
+) -> Response {
     cancel_open_invite(shared).await;
     let space = match space_named(shared, space).await {
         Ok(id) => id,
@@ -2685,7 +2724,7 @@ const MAX_MESSAGE_CHARS: usize = 100_000;
 /// lock or the two orders meet in the middle.
 async fn cancel_open_invite(shared: &Arc<Shared>) {
     shared.pending.lock().await.take();
-    Ticket::forget();
+    Ticket::forget_in(&shared.config_dir);
 }
 
 /// The panic button. Revocation is eventually consistent, so a device that
@@ -2916,7 +2955,7 @@ async fn rename_space(shared: &Arc<Shared>, label: &str, to: &str) -> Response {
 
 /// Push a roster carrying our own tombstone to one peer.
 async fn announce_departure(
-    transport: &Arc<Transport>,
+    transport: &Arc<dyn Network>,
     peer_id: &str,
     space: &str,
     farewell: &Roster,
@@ -2933,7 +2972,7 @@ async fn announce_departure(
         },
     )
     .await?;
-    send.finish().ok();
+    send.finish();
     Ok(())
 }
 
@@ -2992,10 +3031,7 @@ async fn devices(shared: &Arc<Shared>) -> Response {
 }
 
 /// Serve one peer connection.
-async fn handle_peer<C: crate::transport::PeerConnection>(
-    shared: &Arc<Shared>,
-    conn: C,
-) -> Result<()> {
+async fn handle_peer(shared: &Arc<Shared>, conn: &dyn Wire) -> Result<()> {
     let remote = conn.remote();
     // Anything reaching us proves that peer is alive right now.
     mark_seen(shared, &remote.to_string()).await;
@@ -3256,7 +3292,7 @@ async fn accept_join(
     };
     if !ticket.is_valid() {
         *pending = None;
-        Ticket::forget();
+        Ticket::forget_in(&shared.config_dir);
         return PeerMessage::JoinRefused {
             reason: "that invite has expired; show a new one on the inviting device".into(),
         };
@@ -3272,7 +3308,7 @@ async fn accept_join(
     // Single use: consumed here so a ticket seen over a shoulder, or left in
     // scrollback, cannot be replayed.
     *pending = None;
-    Ticket::forget();
+    Ticket::forget_in(&shared.config_dir);
     drop(pending);
 
     let mut spaces = shared.spaces.lock().await;
@@ -3979,179 +4015,314 @@ mod tests {
 /// second device dial it. Every fix to the receiving side — including the
 /// join check below, which is a security fix — was therefore verified by
 /// reading. This drives the same code with a pair of in-memory pipes.
+/// Two real nodes, in one process, talking to each other.
+///
+/// **What changed to make this possible.** Every one of these paths reached a
+/// concrete `iroh::endpoint::Connection`, obtainable only by binding an
+/// endpoint and having a real device dial it — so the protocol could not be
+/// driven by a test at all, and every fix to it said "verified by reading"
+/// (#80). Two things were in the way and both are gone: the connection is now
+/// a [`Wire`], and a node carries its own config directory instead of reading
+/// a process-wide `OnceLock` that gave the second node the first one's
+/// identity, roster and outstanding invite.
+///
+/// The tests below drive the real `serve_peers`, the real `do_join`, the real
+/// `send_to_peer` and the real `sync_roster`. What they replace is a
+/// `Transport`, and nothing else.
 #[cfg(test)]
 mod peer_tests {
     use super::*;
-    use crate::transport::{PeerConnection, read_msg, write_msg};
-    use tokio::io::DuplexStream;
+    use crate::loopback::Switchboard;
+    use crate::transport::{Network, read_msg, write_msg};
+    use clispeak_engine::{EngineError, Tier, Voice};
 
-    /// A connection that hands over one stream pair and then ends.
+    /// A scratch directory that removes itself, however the test ends.
     ///
-    /// One rather than a loop because `handle_peer` runs until the peer goes
-    /// away: a fake that kept yielding streams would never return, and the
-    /// test would hang rather than fail.
-    struct OneExchange {
-        peer: iroh::EndpointId,
-        streams: std::sync::Mutex<Option<(DuplexStream, DuplexStream)>>,
-    }
+    /// On drop rather than at the end of the body: a failing assertion is a
+    /// panic, and the tidy-up line after it never runs. The old version left
+    /// a directory behind for every failure, which is a slow leak in `/tmp`
+    /// that nothing reports.
+    struct Scratch(PathBuf);
 
-    impl PeerConnection for OneExchange {
-        type Send = DuplexStream;
-        type Recv = DuplexStream;
-
-        fn remote(&self) -> iroh::EndpointId {
-            self.peer
-        }
-
-        async fn accept_bi(&self) -> Option<(Self::Send, Self::Recv)> {
-            self.streams.lock().expect("streams").take()
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
-    /// Held for the whole of any test that builds a node.
+    /// An engine that speaks into a `Vec`, so a test can read what arrived.
     ///
-    /// `node_for` sets the process-wide config directory, and that is a
-    /// `OnceLock`: the first caller wins and every later one silently gets
-    /// the first one's directory back. So two of these running at once share
-    /// an identity, a roster and a pending invite, and one deletes the
-    /// directory while the other is still using it.
-    ///
-    /// That was invisible while there was exactly one test here. Adding a
-    /// second made it fail in the suite and pass on its own, which is the
-    /// least useful shape a failure has. A `tokio` mutex rather than a `std`
-    /// one because it is held across `await`.
-    static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    /// `SilentEngine` refuses everything, which is right for a device with no
+    /// speech and useless for asking whether a message crossed. The
+    /// distinction matters: a receiver that reports `no_engine` has still
+    /// authorised, queued and accepted the message, so a test using it cannot
+    /// tell delivery from refusal.
+    #[derive(Default)]
+    struct Recorder {
+        said: std::sync::Mutex<Vec<String>>,
+    }
 
-    /// A node on a scratch directory, and the shared state `handle_peer` takes.
-    ///
-    /// One directory per process, not per test, because the config directory
-    /// can only be set once: a per-test path would be accepted for the first
-    /// test and quietly ignored for the rest. The label is only for the
-    /// caller to read.
-    async fn node_for(_label: &str) -> (Node, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("clispeak-peer-{}", std::process::id()));
+    impl Recorder {
+        fn heard(&self) -> Vec<String> {
+            self.said.lock().expect("said").clone()
+        }
+    }
+
+    impl SpeechEngine for Recorder {
+        fn ready(&self) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        fn speak(&self, chunk: &str) -> Result<(), EngineError> {
+            self.said.lock().expect("said").push(chunk.to_string());
+            Ok(())
+        }
+
+        fn voices(&self) -> Vec<Voice> {
+            vec![Voice {
+                id: "test".into(),
+                name: "Test".into(),
+            }]
+        }
+
+        fn stop(&self) {}
+
+        fn tier(&self) -> Tier {
+            Tier::Full
+        }
+    }
+
+    /// A device: its own directory, its own identity, its own place on the
+    /// board, and a background task serving peers.
+    struct Device {
+        node: Arc<Node>,
+        engine: Arc<Recorder>,
+        serving: tokio::task::JoinHandle<()>,
+        _scratch: Scratch,
+    }
+
+    impl Device {
+        /// Everything this device's engine was asked to say.
+        fn heard(&self) -> Vec<String> {
+            self.engine.heard()
+        }
+
+        /// The membership of this device's current space, as names.
+        async fn roster_names(&self) -> Vec<String> {
+            let spaces = self.node.shared.spaces.lock().await;
+            let mut names: Vec<String> =
+                spaces.current().members().map(|m| m.name.clone()).collect();
+            names.sort();
+            names
+        }
+
+        async fn shut_down(self) {
+            self.serving.abort();
+            self.node.close().await;
+        }
+    }
+
+    /// A counter, so two devices in one test never share a directory.
+    fn unique_dir(label: &str) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::env::temp_dir().join(format!("clispeak-{label}-{}-{n}", std::process::id()))
+    }
+
+    /// Build a device and start serving peers on it.
+    async fn device(board: &Switchboard, name: &str) -> Device {
+        let dir = unique_dir(name);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch directory");
-        crate::identity::set_config_dir(dir.clone());
 
         let store = crate::identity::FileKeyStore::at(dir.join("identity.key"));
         let identity = crate::identity::Identity::load_or_create(&store).expect("identity");
-        let transport = Transport::bind(identity.secret().clone(), None)
+        let net = board.endpoint(identity.id());
+        let engine = Arc::new(Recorder::default());
+        let node = Arc::new(
+            Node::new_in(
+                dir.clone(),
+                Arc::clone(&engine) as Arc<dyn SpeechEngine>,
+                identity,
+                net,
+                name.to_string(),
+            )
             .await
-            .expect("transport");
-        let engine = Arc::new(clispeak_engine::SilentEngine::new("no engine in a test"));
-        let node = Node::new(engine, identity, transport, "Test".into())
-            .await
-            .expect("node");
-        (node, dir)
-    }
+            .expect("node"),
+        );
 
-    /// A real join, driven end to end on the receiving side.
-    ///
-    /// The accept path — ticket check, `invite`, the reply, and the roster
-    /// the joiner builds from it — had no test above the unit level (#80).
-    /// The roster tests sign and verify records they made themselves; this
-    /// takes the record the *host* hands out and runs the joiner's own
-    /// `adopt` over it, so a break between the two halves is a named failure
-    /// rather than an empty roster reported as a successful join.
-    ///
-    /// **It does not catch the break that made this worth writing**, and it
-    /// is worth saying so rather than letting the name imply otherwise. The
-    /// rename changed the domain separator in `Member::signed_payload`, and
-    /// both ends of this test call that same function — so it agrees with
-    /// itself whatever the constant says. Tried, with the constant put back
-    /// to `voicecast-join-v1`: this test still passes. Only a written down
-    /// expected value disagrees, which is
-    /// `signed_payload_tests::the_signed_payload_is_a_fixed_shape_that_past_signatures_depend_on`
-    /// in `clispeak-proto`, added beside this for exactly that reason.
-    ///
-    /// What this one does catch is the same-build half: a host that signs
-    /// with one thing and verifies with another, a name that arrives under a
-    /// different label than the joiner advertised, or a join that leaves one
-    /// side a member and the other not.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_join_produces_a_membership_that_verifies() {
-        // Poison-tolerant: one failing test must not turn the other into a
-        // second failure that says nothing about itself.
-        let _one_at_a_time = ONE_AT_A_TIME.lock().await;
-        let (node, dir) = node_for("accept").await;
-
-        // An invite has to be outstanding, which is the state `invite` puts
-        // the node in — driven rather than constructed, so a change to what
-        // a ticket holds is caught here too.
-        let ticket = match node.invite(None).await {
-            Response::Invite { url, .. } => Ticket::parse(&url).expect("a minted ticket"),
-            other => panic!("invite did not produce one: {other:?}"),
+        let serving = {
+            let node = Arc::clone(&node);
+            tokio::spawn(async move {
+                let _ = node.serve_peers().await;
+            })
         };
 
-        let (node_recv, mut test_send) = tokio::io::duplex(64 * 1024);
-        let (node_send, mut test_recv) = tokio::io::duplex(64 * 1024);
-        let joiner = iroh::SecretKey::generate().public();
+        Device {
+            node,
+            engine,
+            serving,
+            _scratch: Scratch(dir),
+        }
+    }
+
+    /// Pair two devices the way a person does: one invites, the other joins.
+    ///
+    /// Driven through the public calls rather than by assembling a roster, so
+    /// what is under test is the join, not a reconstruction of it.
+    async fn pair(host: &Device, joiner: &Device) {
+        let url = match host.node.invite(None).await {
+            Response::Invite { url, .. } => url,
+            other => panic!("invite did not produce one: {other:?}"),
+        };
+        match joiner.node.join(&url, None).await {
+            Response::Joined { .. } => {}
+            other => panic!("join failed: {other:?}"),
+        }
+    }
+
+    /// The headline: two devices pair, and both hold the other.
+    ///
+    /// The old version of this test faked the joiner — it wrote a
+    /// `JoinRequest` down a pipe with a freshly generated key, called
+    /// `handle_peer` directly, and then ran `Roster::adopt` by hand over the
+    /// reply. That checked the host's half twice and the joiner's half never,
+    /// because both sides of the comparison were the test's own code.
+    ///
+    /// This runs `do_join` on a second real node. A break between the two
+    /// halves is now a failure here rather than something a person meets
+    /// while pairing a phone.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_devices_pair_and_each_holds_the_other() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let phone = device(&board, "Phone").await;
+
+        pair(&laptop, &phone).await;
+
+        assert_eq!(
+            laptop.roster_names().await,
+            vec!["Laptop".to_string(), "Phone".to_string()],
+            "the inviting device has to record the member it just vouched for"
+        );
+        assert_eq!(
+            phone.roster_names().await,
+            vec!["Laptop".to_string(), "Phone".to_string()],
+            "a join that leaves the joiner with an empty roster is not a join (#145)"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+    }
+
+    /// A message crosses, and the far device is the one that says it.
+    ///
+    /// Nothing above the unit level had ever asserted this. Every spoken
+    /// message in the project's history was verified by a person hearing it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_message_reaches_the_other_device_and_is_spoken_there() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let phone = device(&board, "Phone").await;
+        pair(&laptop, &phone).await;
+
+        let sent = laptop
+            .node
+            .speak(
+                "the build finished".into(),
+                Priority::Normal,
+                Some("Phone".into()),
+            )
+            .await;
+        // `Queued` rather than `Spoken`: the far device answers when it has
+        // taken the message, not when it has finished saying it. Asserting
+        // `Spoken` here would be asserting on a race, which is what `settle`
+        // below is for.
+        match &sent {
+            Response::Report { targets, .. } => {
+                assert_eq!(targets.len(), 1, "one addressee, one result: {sent:?}");
+                assert!(
+                    matches!(targets[0].status, Status::Queued | Status::Spoken),
+                    "the paired device refused the message: {sent:?}"
+                );
+                assert_eq!(targets[0].device, "Phone");
+            }
+            other => panic!("sending to a paired device should report on it: {other:?}"),
+        }
+
+        settle(|| !phone.heard().is_empty()).await;
+        assert_eq!(
+            phone.heard(),
+            vec!["the build finished".to_string()],
+            "the receiving device speaks what was sent"
+        );
+        assert!(
+            laptop.heard().is_empty(),
+            "a message addressed to one device must not also be said here"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+    }
+
+    /// An unpaired device cannot make this one speak.
+    ///
+    /// Authorisation is the roster of the space the message was sent in, and
+    /// the check existed and had never been executed. Driven from a bare
+    /// endpoint rather than a second node, because a stranger is exactly a
+    /// device that never joined.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stranger_cannot_make_this_device_speak() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+
+        let stranger_key = iroh::SecretKey::generate();
+        let stranger = board.endpoint(stranger_key.public());
+        let conn = stranger
+            .connect(laptop.node.transport.id())
+            .await
+            .expect("dialling");
+        let (mut send, mut recv) = conn.open_bi().await.expect("a stream");
 
         write_msg(
-            &mut test_send,
-            &PeerMessage::JoinRequest {
-                endpoint_id: joiner.to_string(),
-                display_name: "Phone".into(),
-                token: ticket.token.clone(),
+            &mut send,
+            &PeerMessage::SpeakBegin {
+                msg_id: "m1".into(),
+                priority: Priority::Normal,
+                wait: false,
+                voice: None,
+                space: None,
+                timeout_secs: None,
             },
         )
         .await
-        .expect("writing the request");
+        .expect("writing");
+        write_msg(
+            &mut send,
+            &PeerMessage::Chunk {
+                seq: 0,
+                text: "say something".into(),
+            },
+        )
+        .await
+        .expect("writing");
+        write_msg(&mut send, &PeerMessage::SpeakEnd)
+            .await
+            .expect("writing");
 
-        let conn = OneExchange {
-            peer: joiner,
-            streams: std::sync::Mutex::new(Some((node_send, node_recv))),
-        };
-        handle_peer(&node.shared, conn).await.expect("handle_peer");
-
-        let (member, members) = match read_msg(&mut test_recv).await.expect("a reply") {
-            PeerMessage::JoinAccepted {
-                member, members, ..
-            } => (member, members),
-            other => panic!("a valid join was not accepted: {other:?}"),
-        };
-
-        // The joiner's side of it. `Roster::adopt` is what a real joiner
-        // runs, and it now says what it refused — so a signature the host
-        // produced and the joiner cannot check is a named failure here
-        // rather than an empty roster reported as a successful join.
-        let offered = members.len() + 1;
-        let (adopted, refused) = crate::Roster::adopt(
-            members
-                .into_iter()
-                .chain(std::iter::once(member.clone()))
-                .collect::<Vec<_>>(),
-        );
+        match read_msg(&mut recv).await.expect("a reply") {
+            PeerMessage::Report { status, .. } => assert!(
+                !matches!(status, Status::Spoken | Status::Queued),
+                "a stranger's message was accepted: {status:?}"
+            ),
+            other => panic!("unexpected reply: {other:?}"),
+        }
         assert!(
-            refused.is_empty(),
-            "the host signed {} record(s) its own joiner cannot verify: {refused:?}",
-            refused.len()
-        );
-        assert!(
-            adopted.holds(&joiner.to_string()),
-            "a join has to leave the joiner a member of the space it joined"
-        );
-        assert_eq!(
-            adopted.name_of(&joiner.to_string()),
-            Some("Phone"),
-            "the name the joiner advertised is the name it is recorded under"
-        );
-        assert_eq!(adopted.members().count(), offered - 1, "host and joiner");
-
-        // And the host holds it too, so the membership is not one-sided.
-        assert!(
-            node.shared
-                .spaces
-                .lock()
-                .await
-                .current()
-                .holds(&joiner.to_string()),
-            "the inviting device has to record the member it just vouched for"
+            laptop.heard().is_empty(),
+            "nothing a stranger sent may be spoken"
         );
 
-        node.close().await;
-        let _ = std::fs::remove_dir_all(&dir);
+        laptop.shut_down().await;
     }
 
     /// Issue #52, driven rather than read.
@@ -4160,23 +4331,23 @@ mod peer_tests {
     /// connection, not for whoever the message names. Where those differ is
     /// the whole attack: a ticket holder enrolling a *third* key it does not
     /// hold, leaving a member that revoking the device in front of you does
-    /// not remove. Until now the check compiled and nothing executed it.
+    /// not remove.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_join_naming_another_device_is_refused() {
-        let _one_at_a_time = ONE_AT_A_TIME.lock().await;
-        let (node, dir) = node_for("join").await;
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
 
-        // Two pipes: one each way. `handle_peer` is handed the node's ends.
-        let (node_recv, mut test_send) = tokio::io::duplex(64 * 1024);
-        let (node_send, mut test_recv) = tokio::io::duplex(64 * 1024);
-
-        let dialer = iroh::SecretKey::generate().public();
+        let dialer_key = iroh::SecretKey::generate();
+        let dialer = board.endpoint(dialer_key.public());
         let someone_else = iroh::SecretKey::generate().public();
 
-        // Written before the handler runs, so the pipe already holds the
-        // request and `handle_peer` reads it without a second task.
+        let conn = dialer
+            .connect(laptop.node.transport.id())
+            .await
+            .expect("dialling");
+        let (mut send, mut recv) = conn.open_bi().await.expect("a stream");
         write_msg(
-            &mut test_send,
+            &mut send,
             &PeerMessage::JoinRequest {
                 endpoint_id: someone_else.to_string(),
                 display_name: "Impostor".into(),
@@ -4186,13 +4357,7 @@ mod peer_tests {
         .await
         .expect("writing the request");
 
-        let conn = OneExchange {
-            peer: dialer,
-            streams: std::sync::Mutex::new(Some((node_send, node_recv))),
-        };
-        handle_peer(&node.shared, conn).await.expect("handle_peer");
-
-        match read_msg(&mut test_recv).await.expect("a reply") {
+        match read_msg(&mut recv).await.expect("a reply") {
             PeerMessage::JoinRefused { reason } => assert!(
                 reason.contains("different device"),
                 "refused for the wrong reason: {reason}"
@@ -4202,7 +4367,122 @@ mod peer_tests {
             }
         }
 
-        node.close().await;
-        let _ = std::fs::remove_dir_all(&dir);
+        laptop.shut_down().await;
+    }
+
+    /// Issue #62, and the bug a person found on real hardware in September.
+    ///
+    /// A rename has to reach the other device. It travels on the roster sync
+    /// that piggybacks the next message, so this sends one and then asks the
+    /// far device what it calls this one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rename_reaches_the_other_device() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let phone = device(&board, "Phone").await;
+        pair(&laptop, &phone).await;
+
+        match laptop.node.rename("Workstation").await {
+            Response::Renamed { .. } => {}
+            other => panic!("rename failed: {other:?}"),
+        }
+
+        // Contact is what carries it: the sync rides the next message rather
+        // than a background heartbeat, which is the design and is also why
+        // the rename appeared not to propagate until something else happened.
+        let _ = laptop
+            .node
+            .speak("anything".into(), Priority::Normal, Some("Phone".into()))
+            .await;
+
+        settle(|| !phone.heard().is_empty()).await;
+        assert_eq!(
+            phone.roster_names().await,
+            vec!["Phone".to_string(), "Workstation".to_string()],
+            "the far device still calls this one by its old name"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+    }
+
+    /// Issue #166: a refused sync must cost one device, not the space.
+    ///
+    /// A peer answering as though we are not a member used to mint a
+    /// tombstone, and tombstones travel — so a single refusal removed that
+    /// device everywhere, and two devices refusing each other in the same
+    /// minute took the whole space apart in thirty seconds, founder included.
+    /// The fix was to forget rather than revoke. This is that, driven: a
+    /// stranger claiming not to know us leaves the rest of the space intact.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_peer_that_denies_us_does_not_dissolve_the_space() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let phone = device(&board, "Phone").await;
+        let tablet = device(&board, "Tablet").await;
+        pair(&laptop, &phone).await;
+        pair(&laptop, &tablet).await;
+
+        assert_eq!(
+            laptop.roster_names().await.len(),
+            3,
+            "all three should be in one space before the interesting part"
+        );
+
+        // The phone leaves, which is the honest version of "does not know
+        // us": it announces its departure and stops answering.
+        match phone.node.leave(None).await {
+            Response::Left { .. } => {}
+            other => panic!("leave failed: {other:?}"),
+        }
+        phone.shut_down().await;
+
+        // The laptop reaches for everyone. The phone is gone; the tablet is
+        // not, and is what must survive.
+        // `all`, not `None`. A bare send goes to this device only — there is
+        // deliberately no selector meaning "every device everywhere", and
+        // `all` is scoped to one space.
+        let sent = laptop
+            .node
+            .speak("still here".into(), Priority::Normal, Some("all".into()))
+            .await;
+        assert!(
+            matches!(sent, Response::Report { .. }),
+            "a send to the whole space should report per device: {sent:?}"
+        );
+        settle(|| !tablet.heard().is_empty()).await;
+
+        assert!(
+            laptop.roster_names().await.contains(&"Tablet".to_string()),
+            "one departing device must not take the others with it (#166)"
+        );
+        assert_eq!(
+            tablet.heard(),
+            vec!["still here".to_string()],
+            "the device that never left has to still receive"
+        );
+
+        laptop.shut_down().await;
+        tablet.shut_down().await;
+    }
+
+    /// Wait for a condition, or give up loudly.
+    ///
+    /// Delivery is asynchronous — the sender is answered when the message is
+    /// accepted, not when it has been said — so a test that asserts
+    /// immediately is asserting on a race. A fixed `sleep` would be the other
+    /// way to lose: too short is flaky, too long is a suite nobody runs.
+    ///
+    /// Two seconds is far past anything in-memory needs and is still a bound,
+    /// so a genuine hang fails rather than hanging the suite.
+    async fn settle(mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("waited two seconds and it never happened");
     }
 }
