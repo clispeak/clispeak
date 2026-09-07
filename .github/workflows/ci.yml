@@ -190,8 +190,20 @@ jobs:
         # made this file stop parsing, which the `workflows` gate caught
         # before it reached GitHub, where it would have been an absence
         # rather than an error (#102).
+        #
+        # **The name is checked for, not just the exit code.** A filter that
+        # matches nothing exits 0: `test result: ok. 0 passed; 139 filtered
+        # out` is a green job that ran no test at all. So a typo here, or a
+        # module renamed later, would leave this step passing while proving
+        # nothing — which is the exact failure this whole file is about, and
+        # it would be sitting inside the step added to prevent it.
+        shell: bash
         run: |
-          cargo test -p clispeak-core --lib "ipc::" --target ${{ matrix.target }}
+          cargo test -p clispeak-core --lib "ipc::" --target ${{ matrix.target }} | tee result.txt
+          grep -q "this_user_can_open_the_pipe_it_just_created ... ok" result.txt || {
+            echo "::error::the Windows pipe access-rule test did not run — the filter matches nothing"
+            exit 1
+          }
 
       # xtask is host-only tooling and is never cross-compiled;
       # clispeak-daemon links a desktop keyring and is superseded on a phone
