@@ -59,6 +59,41 @@ jobs:
       - run: cargo run -p xtask -- portability
       - run: cargo test --workspace
 
+  # The interface, driven in a real browser.
+  #
+  # **Its own job, and always, like the gate above.** These probes were
+  # written against five shipped bugs and each was confirmed to fail before
+  # its fix — the best-evidenced tests in the repository — and they sat
+  # outside CI because `harness.mjs` said the build images carry no Chrome.
+  # Nobody had checked. `ubuntu-latest` ships Google Chrome *and* Chromium,
+  # and has throughout.
+  #
+  # Cheap enough not to filter by path: no cargo, no build, a few seconds of
+  # node and a headless browser. A path filter is somewhere an absence hides,
+  # and this job exists because of one.
+  frontend:
+    name: frontend probes
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Resolved rather than hardcoded: which of the preinstalled browsers is
+      # where is the image's business, not ours, and a path baked in here
+      # would fail as an "install one" message on a machine that has three.
+      - name: Find a browser
+        run: |
+          for c in google-chrome google-chrome-stable chromium chromium-browser; do
+            if command -v "$c" >/dev/null; then
+              echo "CHROME=$(command -v "$c")" >> "$GITHUB_ENV"
+              echo "using $(command -v "$c")"
+              exit 0
+            fi
+          done
+          echo "no browser on this image; the harness cannot run" >&2
+          exit 1
+      - name: Drive the interface
+        run: node app/tests/harness.mjs
+
   build:
     name: ${{ matrix.target }}
     # Not on a draft. The five-target rule is unchanged — nothing merges
