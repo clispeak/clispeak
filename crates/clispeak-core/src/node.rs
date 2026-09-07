@@ -4102,6 +4102,11 @@ mod peer_tests {
     }
 
     impl Device {
+        /// This device's public key, as the roster spells it.
+        fn id(&self) -> String {
+            self.node.id()
+        }
+
         /// Everything this device's engine was asked to say.
         fn heard(&self) -> Vec<String> {
             self.engine.heard()
@@ -4479,6 +4484,308 @@ mod peer_tests {
 
         laptop.shut_down().await;
         tablet.shut_down().await;
+    }
+
+    // --------------------------------------------------- refusing a join
+    //
+    // Every branch of `accept_join` that says no. #80 listed these as driven
+    // by nothing, and two of them are fixes for closed issues whose code has
+    // never been executed by a test — #50 in particular, where an invite
+    // outliving a rotation could admit someone to the very space the rotation
+    // existed to protect.
+
+    /// Send a join request over a raw wire and return whatever comes back.
+    ///
+    /// A bare endpoint rather than a second node, because these are all cases
+    /// where the *asking* device is doing something a well-behaved joiner
+    /// would not.
+    async fn ask_to_join(board: &Switchboard, host: &Device, token: &str) -> PeerMessage {
+        let key = iroh::SecretKey::generate();
+        let caller = board.endpoint(key.public());
+        let conn = caller
+            .connect(host.node.transport.id())
+            .await
+            .expect("dialling");
+        let (mut send, mut recv) = conn.open_bi().await.expect("a stream");
+        write_msg(
+            &mut send,
+            &PeerMessage::JoinRequest {
+                endpoint_id: key.public().to_string(),
+                display_name: "Caller".into(),
+                token: token.into(),
+            },
+        )
+        .await
+        .expect("writing the request");
+        read_msg(&mut recv).await.expect("a reply")
+    }
+
+    /// The reason must be written for the joiner, who is the one reading it.
+    fn refusal(reply: PeerMessage) -> String {
+        match reply {
+            PeerMessage::JoinRefused { reason } => reason,
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_join_with_no_invite_open_is_refused() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+
+        let reason = refusal(ask_to_join(&board, &laptop, "anything").await);
+        assert!(
+            reason.contains("inviting device"),
+            "the reason is read on the *joining* device, so it has to point \
+             at the other one: {reason}"
+        );
+        assert_eq!(
+            laptop.roster_names().await,
+            vec!["Laptop".to_string()],
+            "nobody was admitted"
+        );
+
+        laptop.shut_down().await;
+    }
+
+    /// A wrong token must not burn the invite.
+    ///
+    /// It is a single-use secret, and consuming it on a failed guess would
+    /// let anyone who can reach the socket cancel a pairing that is in
+    /// progress — a denial of service with no credential at all.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_wrong_token_is_refused_and_leaves_the_invite_usable() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let phone = device(&board, "Phone").await;
+
+        let url = match laptop.node.invite(None).await {
+            Response::Invite { url, .. } => url,
+            other => panic!("invite did not produce one: {other:?}"),
+        };
+
+        let reason = refusal(ask_to_join(&board, &laptop, "not-the-token").await);
+        assert!(
+            reason.contains("not valid"),
+            "a wrong token is refused: {reason}"
+        );
+
+        // The real joiner still gets in, which is the whole point.
+        match phone.node.join(&url, None).await {
+            Response::Joined { .. } => {}
+            other => panic!("a wrong guess consumed the invite: {other:?}"),
+        }
+        assert!(
+            laptop.roster_names().await.contains(&"Phone".to_string()),
+            "the invited device has to be admitted after a failed guess"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_expired_invite_is_refused_and_thrown_away() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+
+        // Placed directly: minting one and waiting five minutes is not a
+        // test, and the branch under examination is what happens when the
+        // clock has already passed `expires_at`.
+        let stale = Ticket {
+            endpoint_id: laptop.id(),
+            token: "stale".into(),
+            expires_at: now_secs().saturating_sub(1),
+            space: None,
+            label: None,
+        };
+        *laptop.node.shared.pending.lock().await = Some(stale);
+
+        let reason = refusal(ask_to_join(&board, &laptop, "stale").await);
+        assert!(
+            reason.contains("expired"),
+            "say it expired rather than that it is invalid — those send the \
+             reader to different places: {reason}"
+        );
+        assert!(
+            laptop.node.shared.pending.lock().await.is_none(),
+            "a dead ticket is cleared rather than left to be re-read on every \
+             later attempt"
+        );
+
+        laptop.shut_down().await;
+    }
+
+    /// Issue #50, driven for the first time.
+    ///
+    /// A ticket names the space it was minted for. When that space is gone,
+    /// falling back to the default admits the joiner to *a* space — and after
+    /// a rotation the default is the new space the rotation existed to
+    /// protect, so the device being locked out walks straight back in.
+    ///
+    /// Driven directly rather than through `rotate`, and that is worth saying:
+    /// `rotate` and `leave_space` both cancel any open invite first, so this
+    /// branch is a second line of defence behind that one. Testing it means
+    /// putting the node in the state the first line is there to prevent.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_invite_for_a_space_that_is_gone_admits_nobody() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+
+        let orphan = Ticket {
+            endpoint_id: laptop.id(),
+            token: "orphan".into(),
+            expires_at: now_secs() + 300,
+            space: Some("a-space-this-device-does-not-hold".into()),
+            label: Some("work".into()),
+        };
+        *laptop.node.shared.pending.lock().await = Some(orphan);
+
+        let reason = refusal(ask_to_join(&board, &laptop, "orphan").await);
+        assert!(
+            reason.contains("no longer on this device"),
+            "the joiner needs to know the invite is stale rather than wrong: {reason}"
+        );
+        assert_eq!(
+            laptop.roster_names().await,
+            vec!["Laptop".to_string()],
+            "an invite for a space that is gone must admit nobody anywhere — \
+             falling back to the default is the whole of #50"
+        );
+
+        laptop.shut_down().await;
+    }
+
+    /// Single use: a ticket seen over a shoulder, or left in scrollback,
+    /// cannot be replayed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_used_invite_cannot_be_used_again() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let phone = device(&board, "Phone").await;
+
+        let url = match laptop.node.invite(None).await {
+            Response::Invite { url, .. } => url,
+            other => panic!("invite did not produce one: {other:?}"),
+        };
+        let token = Ticket::parse(&url).expect("a minted ticket").token;
+        match phone.node.join(&url, None).await {
+            Response::Joined { .. } => {}
+            other => panic!("the first join should succeed: {other:?}"),
+        }
+
+        // The same token, from a device that was never invited.
+        let reason = refusal(ask_to_join(&board, &laptop, &token).await);
+        assert!(
+            reason.contains("no invite open") || reason.contains("inviting device"),
+            "a replayed ticket is refused because the invite is spent: {reason}"
+        );
+        assert_eq!(
+            laptop.roster_names().await,
+            vec!["Laptop".to_string(), "Phone".to_string()],
+            "the replay admitted a third device"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+    }
+
+    /// Issue #51, driven for the first time.
+    ///
+    /// A peer that names a space is answered about that space or not at all.
+    /// The fallback is for peers too old to name one, and letting it fire for
+    /// a space we no longer hold merged one space's membership into another:
+    /// a device that left `work` had every work device land in its `home`
+    /// roster, after which they could speak to it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_message_naming_a_space_we_have_left_is_refused() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let desk = device(&board, "Desk").await;
+
+        // The desk is in both spaces, which is what makes the fallback
+        // dangerous: with it, a message about the space we left would be
+        // answered about the space we kept.
+        pair(&laptop, &desk).await;
+        laptop.node.new_space("work").await;
+        pair_in(&laptop, &desk, Some("work")).await;
+        laptop.node.default_space("main").await;
+
+        let work_id = {
+            let spaces = laptop.node.shared.spaces.lock().await;
+            spaces.by_label("work").expect("the work space")
+        };
+        match laptop.node.leave_space("work").await {
+            Response::Spaces { .. } => {}
+            other => panic!("leave_space failed: {other:?}"),
+        }
+
+        let conn = desk
+            .node
+            .transport
+            .connect(laptop.node.transport.id())
+            .await
+            .expect("dialling");
+        let (mut send, mut recv) = conn.open_bi().await.expect("a stream");
+        write_msg(
+            &mut send,
+            &PeerMessage::SpeakBegin {
+                msg_id: "m1".into(),
+                priority: Priority::Normal,
+                wait: false,
+                voice: None,
+                space: Some(work_id),
+                timeout_secs: None,
+            },
+        )
+        .await
+        .expect("writing the header");
+        // The whole message, not just the header — and this is not tidiness.
+        //
+        // A refused header is answered immediately and the rest is never
+        // read, so sending only the header passes. But if the refusal ever
+        // stops happening, the node accepts and then waits for chunks that
+        // never arrive while this waits for a reply that never comes: the
+        // test *hangs* instead of failing, and a hang in CI is a timeout with
+        // no name on it. Confirmed by reintroducing the fallback: with only
+        // the header it hung, and with the whole message it fails and says
+        // which status it got.
+        //
+        // Write errors are ignored for the reason the stranger test explains:
+        // being refused mid-message is correct, and insisting on the writes
+        // makes the test depend on losing that race.
+        let _ = write_msg(
+            &mut send,
+            &PeerMessage::Chunk {
+                seq: 0,
+                text: "work business".into(),
+            },
+        )
+        .await;
+        let _ = write_msg(&mut send, &PeerMessage::SpeakEnd).await;
+
+        match read_msg(&mut recv).await.expect("a reply") {
+            PeerMessage::Report { status, detail } => {
+                assert!(
+                    !matches!(status, Status::Spoken | Status::Queued),
+                    "a message about a space this device left was accepted: \
+                     {status:?} {detail:?}"
+                );
+            }
+            other => panic!("unexpected reply: {other:?}"),
+        }
+        assert!(
+            laptop.heard().is_empty(),
+            "nothing about a space we left may be spoken"
+        );
+        assert_eq!(
+            laptop.roster_names().await,
+            vec!["Desk".to_string(), "Laptop".to_string()],
+            "the space we kept must be exactly as it was"
+        );
+
+        laptop.shut_down().await;
+        desk.shut_down().await;
     }
 
     // ------------------------------------------------------------ resolve
