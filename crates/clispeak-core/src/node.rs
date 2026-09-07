@@ -4301,19 +4301,29 @@ mod peer_tests {
             },
         )
         .await
-        .expect("writing");
-        write_msg(
+        .expect("writing the header");
+
+        // The rest is offered and may not be taken, and that is the correct
+        // behaviour rather than a tolerance: a device that is not a member is
+        // refused on the header alone, and the handler moves to the next
+        // stream without ever reading the payload. Draining an unauthorised
+        // peer's message first would be the bug — it is unbounded input from
+        // someone with no standing to send it.
+        //
+        // So these writes race a stream the node has already finished with.
+        // Insisting they succeed is what made this test pass on a laptop and
+        // fail on CI: locally the pipe buffer swallowed them before the far
+        // end was dropped, and on a slower machine it did not. The reply is
+        // the assertion; the writes are not.
+        let _ = write_msg(
             &mut send,
             &PeerMessage::Chunk {
                 seq: 0,
                 text: "say something".into(),
             },
         )
-        .await
-        .expect("writing");
-        write_msg(&mut send, &PeerMessage::SpeakEnd)
-            .await
-            .expect("writing");
+        .await;
+        let _ = write_msg(&mut send, &PeerMessage::SpeakEnd).await;
 
         match read_msg(&mut recv).await.expect("a reply") {
             PeerMessage::Report { status, .. } => assert!(
