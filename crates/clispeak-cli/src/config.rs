@@ -22,6 +22,9 @@ pub struct Config {
     /// Named sets of devices.
     #[serde(default)]
     pub groups: BTreeMap<String, Vec<String>>,
+    /// How this user wants to be spoken to. See [`crate::prefs`].
+    #[serde(default)]
+    pub agent: Option<crate::prefs::Agreement>,
 }
 
 /// Where the config lives.
@@ -74,33 +77,139 @@ pub fn load() -> Config {
 /// by it. Comments do not survive, which is the honest limit of doing this
 /// without a format-preserving parser.
 pub fn write_groups(groups: &BTreeMap<String, Vec<String>>) -> anyhow::Result<PathBuf> {
+    amend(|doc| {
+        if groups.is_empty() {
+            doc.remove("groups");
+        } else {
+            let table: toml::Table = groups
+                .iter()
+                .map(|(name, devices)| {
+                    let list = devices
+                        .iter()
+                        .map(|d| toml::Value::String(d.clone()))
+                        .collect();
+                    (name.clone(), toml::Value::Array(list))
+                })
+                .collect();
+            doc.insert("groups".into(), toml::Value::Table(table));
+        }
+        Ok(())
+    })
+}
+
+/// Remove the `[agent]` table, leaving every other key as it was.
+pub fn remove_agent() -> anyhow::Result<PathBuf> {
+    amend(|doc| {
+        doc.remove("agent");
+        Ok(())
+    })
+}
+
+/// Read the file, change one part of it, and put it back atomically.
+///
+/// **Atomically, which the first version was not.** A plain write truncates
+/// and then fills, so an interrupted one leaves a file that is neither the
+/// old contents nor the new — and this file now holds the working agreement,
+/// which nobody has a copy of anywhere else. The node's own state has been
+/// written this way since #56; the config was left behind because one person
+/// edits groups rarely. Several agents writing preferences makes it ordinary.
+///
+/// The read happens here rather than in the caller for the same reason. Two
+/// agents recording a rule in the same moment would otherwise lose one, which
+/// is the shape of the two bugs this project found on 7 September.
+pub(crate) fn amend(
+    change: impl FnOnce(&mut toml::Table) -> anyhow::Result<()>,
+) -> anyhow::Result<PathBuf> {
     let p = path().ok_or_else(|| anyhow::anyhow!("no config directory on this platform"))?;
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+
+    // Held across the read *and* the write. Re-reading immediately before
+    // writing is not enough and this was measured, not reasoned: twenty
+    // concurrent `prefs add` calls recorded fourteen rules and silently lost
+    // six. Two agents writing in the same second is the ordinary case under
+    // this design, so a lost write is a preference the user stated and the
+    // machine forgot — the exact failure the whole change exists to end.
+    let _lock = Lock::take(&p)?;
+
     let mut doc: toml::Table = std::fs::read_to_string(&p)
         .ok()
         .and_then(|t| t.parse().ok())
         .unwrap_or_default();
+    change(&mut doc)?;
 
-    if groups.is_empty() {
-        doc.remove("groups");
-    } else {
-        let table: toml::Table = groups
-            .iter()
-            .map(|(name, devices)| {
-                let list = devices
-                    .iter()
-                    .map(|d| toml::Value::String(d.clone()))
-                    .collect();
-                (name.clone(), toml::Value::Array(list))
-            })
-            .collect();
-        doc.insert("groups".into(), toml::Value::Table(table));
-    }
-
-    if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&p, toml::to_string_pretty(&doc)?)?;
+    let text = toml::to_string_pretty(&doc)?;
+    // A sibling, so the rename below cannot cross a filesystem boundary. The
+    // process id keeps two agents writing at once from sharing a temporary.
+    let tmp = p.with_extension(format!("toml.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, text.as_bytes())?;
+    std::fs::rename(&tmp, &p)?;
     Ok(p)
+}
+
+/// Exclusive access to the config file, for as long as this value lives.
+///
+/// `create_new` is the portable primitive here: it is atomic on every
+/// platform this ships to, needs no `unsafe`, and this workspace forbids
+/// `unsafe`. `flock` would be tidier on Unix and has no Windows twin that can
+/// be reached without Win32 calls.
+struct Lock(PathBuf);
+
+impl Lock {
+    /// How long to keep trying before giving up.
+    const PATIENCE: std::time::Duration = std::time::Duration::from_secs(3);
+    /// A lock older than this is treated as abandoned.
+    ///
+    /// A process killed between taking the lock and releasing it would
+    /// otherwise wedge every later write forever, and the thing wedged is the
+    /// file holding preferences nobody has another copy of. Ten seconds is
+    /// far longer than a write of a few hundred bytes can honestly take and
+    /// short enough that nobody waits on a dead process.
+    const STALE: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn take(config: &std::path::Path) -> anyhow::Result<Self> {
+        let path = config.with_extension("toml.lock");
+        let deadline = std::time::Instant::now() + Self::PATIENCE;
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(Self(path)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if Self::abandoned(&path) {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        anyhow::bail!(
+                            "another clispeak has held {} for {}s. Delete it if \
+                             nothing is running",
+                            path.display(),
+                            Self::PATIENCE.as_secs()
+                        );
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+
+    fn abandoned(path: &std::path::Path) -> bool {
+        std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .and_then(|t| t.elapsed().map_err(std::io::Error::other))
+            .is_ok_and(|age| age > Self::STALE)
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// Expand any group names in a selector into the devices they stand for.

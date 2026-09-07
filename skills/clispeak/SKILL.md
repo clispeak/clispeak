@@ -1,6 +1,6 @@
 ---
 name: clispeak
-description: Speak messages aloud on the user's own devices — phone, laptop, desk — instead of writing to a terminal they may not be looking at. Use when the user has asked to be told something by voice, when a long task finishes and they have walked away, or when you need an answer and they are not at the screen. Also covers setting clispeak up, pairing devices, and agreeing with the user how and when they want to be spoken to.
+description: Speak messages aloud on the user's own devices — phone, laptop, desk — instead of writing to a terminal they may not be looking at. Use when the user has asked to be told something by voice, when a long task finishes and they have walked away, or when you need an answer and they are not at the screen. Also covers setting clispeak up, pairing devices, and how they want to be spoken to.
 ---
 
 # clispeak
@@ -15,90 +15,124 @@ is the whole point of the tool and it should shape everything you send. Speech
 cannot be skimmed, scrolled back, or re-read. It arrives whether or not it is
 wanted.
 
-## Before anything else: say who you are
+## Start by asking the tool, not your memory
+
+```bash
+clispeak prefs
+```
+
+That prints how this person wants to be spoken to. **Read it rather than
+recalling it.** The agreement lives in a file on this machine, shared by every
+agent that runs here, so it is current even if you have never seen it, even if
+this session was compacted an hour ago, and even if the last agent to talk to
+them was a different one entirely.
+
+This matters more than it sounds. Reading is idempotent and remembering is
+not: an agent that forgets to read simply reads again, while an agent that
+forgets to *write something down* has lost it permanently. So nothing here
+asks you to hold the agreement in your head.
+
+If it says nothing has been recorded, the machine is not unconfigured in a way
+that needs fixing — it means nobody has told anyone anything yet. Use the
+defaults it describes and let the first correction become the first rule. **Do
+not interview them.**
+
+## Recording what they tell you
+
+When they state a preference — "stop telling me about builds", "always use my
+phone", "keep it short" — write it down **in the same turn**, then say what
+you recorded in one sentence.
+
+```bash
+clispeak prefs add speak-when "the nightly build breaks"
+clispeak prefs remove speak-when 3      # by the number `prefs` showed
+clispeak prefs set output brief
+clispeak prefs set address-me-as Patrick
+```
+
+**The read-back is not optional.** Nobody opens this file — you are the only
+way they ever learn what is stored. A rule you got wrong and said out loud is
+corrected in the same breath; one you got wrong silently is invisible and
+permanent.
+
+**Only durable preferences.** "That was annoying" might mean *never again* or
+might mean *not right now*, and recording the standing version of a passing
+remark makes the tool quietly do less for a reason nobody can see. When it is
+ambiguous, ask. One short question is cheaper than a wrong rule.
+
+`clispeak prefs` shows who added each rule and when, so "why does it keep
+telling me about that?" has an answer, and "take that off" is the next command.
+
+## Output: where your answer goes
+
+`clispeak prefs` reports one of four modes. It decides how you split a response
+between the terminal and the voice.
+
+| Mode | Terminal | Voice |
+|---|---|---|
+| `terminal` | everything | nothing — speaking is refused |
+| `brief` | everything | a short summary, about forty words |
+| `full` | everything | the same text |
+| `speech` | keep it minimal | everything |
+
+Under `terminal` and `brief`, the `speak_when` rules decide whether a moment is
+worth a message at all. Under `speech` they do not — "say everything" is the
+instruction, and filtering on top of it would silently drop things.
+
+## Say who you are
 
 The user may have several agents that can reach the same devices. A voice from
 a pocket that does not say whose it is forces them to guess.
-
-**Every spoken message opens by naming the user and yourself:**
 
 ```
 clispeak --to Phone "Patrick, this is Claude. The deploy finished and the
 smoke tests passed."
 ```
 
-Keep it to a few words — `"<Name>, this is <your name>."` — then the message.
-Both names come from the working agreement below. If you have not established
-one yet, set it up before you speak anything.
+Where a name has been recorded, **the tool enforces this**: a message that does
+not open by naming them is refused with the corrected line, which you send as
+given. Under `speech` it is not required, because constant messages make it a
+tic rather than a courtesy.
 
-Do not drop the identification because you spoke a minute ago. Each message
-arrives on its own with no context around it.
-
-## The working agreement
-
-Establish this **once**, in conversation with the user, then write it to your
-memory. Until it exists you do not know enough to use this tool well, and
-guessing produces exactly the noise that gets an agent muted.
-
-Ask, in roughly this order, and keep it short:
-
-1. **What should I call myself when I speak?** Their agents need distinct
-   names. Suggest one if they have no preference.
-2. **What should I call you?** Usually their first name.
-3. **Which device by default?** Run `clispeak devices` first and offer the
-   real names. A phone suits "you need to know now"; a desk machine suits
-   "you will see this when you are back".
-4. **When should I speak rather than print?** This is the important one, and
-   worth pushing on. Reasonable starting points: a long task finishing, a
-   question that blocks progress, something failing that they asked to be told
-   about. Not: routine progress, things they can see on screen, anything they
-   did not ask to hear.
-5. **Anything I should never speak?** Secrets, customer names, anything they
-   would not want said out loud in a room.
-
-Then **write it to memory** so it survives this session. One memory, of the
-kind that records how the user wants you to work, containing:
-
-- the name you speak under, and the name you address them by
-- the default device, and when to use others
-- the agreed threshold for speaking rather than printing
-- anything they said not to speak
-
-Read it back to them in a sentence and let them correct it. Preferences stated
-once and misremembered are worse than none.
-
-**Revisit it when they push back.** If they say a message was unnecessary,
-that is a change to the threshold, not a one-off — update the memory.
+Do not drop it because you spoke a minute ago. Each message arrives on its own.
 
 ## Speaking
 
 ```bash
-clispeak "Patrick, this is Claude. The build finished."          # this machine
-clispeak --to Phone "..."                                        # one device
-clispeak --to Phone,Laptop "..."                                 # several
-clispeak --to all "..."                                          # every device in the space
-clispeak --to phones "..."                                       # a group the user defined
+clispeak "Patrick, this is Claude. The build finished."     # this machine
+clispeak --to Phone "..."                                   # one device
+clispeak --to Phone,Laptop "..."                            # several
+clispeak --to all "..."                                     # everything in the space
+clispeak --to phones "..."                                  # a group they defined
+clispeak --to work/laptop "..."                             # a device in a named space
+clispeak --to work/all "..."                                # a whole space
 ```
 
-Useful flags:
+**A bare name resolves in the default space.** If the same name exists in two
+others, the error asks you to qualify it as `space/device` and names the
+spaces. If two devices share a name inside *one* space, qualifying cannot
+separate them and the error says so — one of them has to be renamed on the
+device itself.
 
 | Flag | Use it when |
 |---|---|
-| `--wait` | You need to know it was actually heard, not merely accepted. Blocks. |
-| `--priority high` | It should interrupt whatever is playing. Use sparingly — see below. |
+| `--wait` | You need to know it was heard, not merely accepted. Blocks. |
+| `--priority high` | It should interrupt what is playing. Sparingly. |
 | `--priority low` | Chatter. Dropped if a queue has built up. |
 | `--json` | You are going to branch on the result. Implies `--wait`. |
 | `--file` | The text is long and already in a file. |
 | `--dry-run` | Check where a message *would* go without sending it. |
 
-`--priority high` interrupts what the device is saying and the interrupted
-message then resumes. It does **not** override mute, and it overrides quiet
-hours only if that device has been set to allow it. Mark something urgent when
-it is urgent to *them*, not when it is the end of your task. An agent that
-marks everything urgent makes the setting meaningless and it gets turned off.
+`--priority high` interrupts and the interrupted message then resumes. It does
+**not** override mute, and overrides quiet hours only where that device allows
+it. Mark something urgent when it is urgent to *them*, not when it is the end
+of your task. An agent that marks everything urgent makes the setting
+meaningless and it gets turned off.
 
-Length is your judgement, not the tool's. It has no limit. A person listening
-has one.
+**Put flags before the text.** Speech can start with a hyphen — "- item one",
+"-5 degrees" — so everything after the text is read as more text, including a
+real flag. The error names the flag and prints the corrected command; run it
+as given.
 
 ## What the exit code is telling you
 
@@ -107,112 +141,114 @@ Branch on it. The codes are distinct precisely so you can.
 | Code | Meaning | What to do |
 |---|---|---|
 | `0` | Accepted, or spoken if you waited | Nothing |
-| `6` | Text rejected — markdown or a bare URL | **The error usually contains a rewrite. Send that, verbatim.** Do not paraphrase it yourself. When it says there is no automatic rewrite, say the thing in words instead, or pass `--raw` |
-| `4` | No device spoke it | Read the reason before reacting — see below |
-| `3` | Some devices spoke, some did not | Say which ones did not. Do not resend to everyone |
-| `2` | The selector matched no device | The command was fine, the name was not. Run `clispeak devices` and use one of those, or `here` |
-| `5` | No node running, or it stopped or wedged mid-request | Ask the user to open the clispeak app. Do not retry |
-| `1` | Usage error | Fix the command. If a flag ended up after the text, the error prints the corrected line — run that |
+| `6` | Text refused — markdown, a bare URL, or a missing opener | **The error contains a rewrite. Send it verbatim.** Do not compose your own |
+| `4` | Nothing spoke it | Read the reason first — see below |
+| `3` | Some devices spoke, some did not | Say which did not. Do not resend to everyone |
+| `2` | The selector matched no device | The command was fine, the name was not. `clispeak devices` |
+| `5` | No node running, or it wedged | Ask them to open the clispeak app. Do not retry |
+| `1` | Usage error | Fix the command; the error often prints the fixed line |
 
-**Exit 4 is usually not a failure.** Check the status:
+**Exit 4 is usually not a failure.** Read the status:
 
-- `muted` or `quiet hours` — the message arrived and the device chose not to
-  say it. **Do not retry, and do not route around it to another device.** The
-  person deliberately made that device quiet. It is kept in the device's
-  history for them to read later, so nothing is lost.
-- `unreachable` — that device is off or offline. Worth mentioning, worth
-  trying another device if it matters.
-- `no engine` — that device cannot speak at all. Tell the user; it needs
-  fixing on that device.
+- `muted`, `quiet hours`, or an agreement set to `terminal` — it arrived and
+  the device, or the person, chose silence. **Do not retry and do not route to
+  another device.** It is in that device's history for them to read.
+- `unreachable` — off or offline. Worth mentioning; worth another device if it
+  matters.
+- `no engine` — that device cannot speak at all. Tell them; it needs fixing
+  there.
 
 ## Writing text that reads well aloud
 
 The tool refuses markdown and bare URLs rather than mangling them, because a
 listener hears asterisks and slashes.
 
-- Write plain sentences. No bullet lists, no headings, no code fences.
-- Spell out what a URL is instead of reading it: "the pull request page"
-  rather than the address.
+- Plain sentences. No bullets, headings or code fences.
+- Say what a URL is — "the pull request page" — not the address.
 - Numbers, file names and short identifiers are fine.
-- If you genuinely need to speak marked-up text, `--strip` converts it and
-  `--raw` skips checking entirely. Prefer writing it properly.
+- `--strip` converts marked-up text; `--raw` skips every check including the
+  agreement. Prefer writing it properly: `--raw` is a decision, and it shows.
 
-A `rejected` *status* is different from exit 6: it comes from the receiving
-device, and its reason says which of two things happened — that device is not
-in the space you sent to, or the message was over 100,000 characters, which is
-the most it will speak in one go. Split a long one and send the parts.
+A `rejected` *status* is different from exit 6 — it comes from the receiving
+device, and says either that you are not in the space you sent to, or that the
+message was over 100,000 characters. Split a long one.
 
-**Put flags before the text.** `clispeak --to Phone "hello"`, not
-`clispeak "hello" --to Phone`. Speech can legitimately start with a hyphen —
-"- item one", "-5 degrees" — so everything after the text is read as more
-text, including a real flag. Getting it wrong is not silent: the error names
-the flag and prints the corrected command, which you can run as given.
+## Pairing a device
 
-When text is rejected you get the offending span and a suggested rewrite.
-**Send the suggestion unchanged** — it is what the tool will accept.
-
-## Setting up
-
-**Is it working here?**
+This is real setup with steps, unlike the agreement above.
 
 ```bash
-clispeak status     # device id, engine, whether it is muted
-clispeak devices    # who is in this space
+clispeak status      # device id, engine, whether it is muted
+clispeak devices     # who is in this space
 ```
 
-Exit 5 means no node is running on this machine: the user needs to open the
-clispeak app, which is the node. On Linux it is a Flatpak, on macOS an app in
-/Applications, on Android an installed app.
-
-**Adding a device.** On one device:
-
-```bash
-clispeak invite
-```
-
-That prints a ticket and the app shows a QR code. On the other device:
+On one device `clispeak invite` prints a ticket and the app shows a QR code.
+On the other:
 
 ```bash
 clispeak preview <ticket>   # what it would join, without joining
 clispeak join <ticket>      # ...and join it
 ```
 
-**Always `preview` before `join` when helping someone set up.** Which space a
-ticket joins was decided by whoever minted it, not by the device using it, so
-`join` on its own is a command whose effect neither of you can see beforehand.
-`preview` is local — it contacts nobody and does not spend the ticket — and it
-reports the same failures `join` would: expired, truncated, not an invite. Read
-the space name back to the user before joining; a space joined by mistake has
-to be left on both devices.
+**Always `preview` before `join`.** Which space a ticket joins was decided by
+whoever minted it, so `join` alone has an effect neither of you can see
+beforehand. `preview` contacts nobody, spends nothing, and reports the same
+failures. Read the space name back before joining — a space joined by mistake
+has to be left on both devices.
 
-Add `--name` to `join` if the user wants it called something else here. The
-name is local to the device it is set on.
+`join --name` calls it something else here. Invites are single use and last
+five minutes; if one is refused saying no invite is open, it was used, expired,
+or the inviting app restarted.
 
-Invites are single use and last five minutes. If a join is refused saying no
-invite is open, the ticket was used, expired, or the inviting app restarted —
-ask for a fresh one.
+**Nothing being heard?** In order: `clispeak status` for `muted` or a quiet
+window; `clispeak devices` to check it is still in the space; `clispeak
+history` on the receiving device, which records every message whether or not it
+was spoken.
 
-**Nothing is being heard.** In order: `clispeak status` on that device for
-`muted` or a quiet window; `clispeak devices` to check it is still in the
-space; `clispeak history` on the receiving device, which records every
-message whether or not it was spoken.
+**Playback.** `stop`, `skip`, `pause` and `resume` take `--to`. `queue`,
+`status`, `history`, `mute` and `unmute` do not — they are about this device,
+and passing `--to` is refused rather than ignored.
 
-**Controlling playback.** `clispeak stop`, `skip`, `pause` and `resume` take
-`--to`, so a device talking in another room can be quieted from here.
+## Keeping yourself current
 
-`queue` does **not** — it reports this device only, as do `status`, `history`,
-`mute` and `unmute`. Passing `--to` to any of those is refused rather than
-ignored: it used to be accepted in silence, so `clispeak --to Phone mute`
-muted the machine it ran on and reported success.
+```bash
+clispeak skill --check            # does the installed skill match this build?
+clispeak skill --install --hook   # write it, and the hook that keeps prefs in context
+```
+
+Run the check before helping with setup. A skill installed months ago
+describes a tool that has moved, and it is confident while doing so — offer to
+update it first.
+
+**The hook is worth asking for.** It runs `clispeak prefs --brief` on every
+prompt, so the agreement is in front of you even after this conversation has
+been compacted. It edits their agent settings, so ask before installing it.
+
+## What is not yours to run
+
+`revoke`, `rotate`, `leave` and `quit` change who can reach whom, or stop the
+node. They are the user's decisions. Explain them, offer the command, and let
+them run it.
+
+## Undoing all of this
+
+```bash
+clispeak forget                # remove the skill and the hook
+clispeak forget --everything   # ...and the agreement too
+```
+
+The agreement is kept by default because other agents on this machine share
+it. **Whatever you wrote in your own notes, you must delete yourself** — no
+tool can reach inside your memory, and this one will not pretend to. Then tell
+them what you removed, including which of your own notes went.
 
 ## Staying out of the way
 
 The failure worth avoiding is not a missed message. It is being muted, after
 which every later message is missed too.
 
-- Speak because the user needs it away from the screen, not to mark your own
-  progress.
+- Speak because they need it away from the screen, not to mark your progress.
 - One message, not three. Gather the outcome and say it once.
 - Say the answer, not where to find it. "The tests failed on the auth module"
   is useful; "check the terminal" wastes the trip.
-- If they are at the keyboard and talking to you, write — do not speak.
+- If they are at the keyboard talking to you, write — do not speak.
