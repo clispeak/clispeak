@@ -158,14 +158,29 @@ is how "build-verified" quietly becomes "nobody looked".
 | `app/src` | Frontend. Plain HTML and JS, Tailwind build step | — |
 
 `clispeak-cli` depending on only two crates is deliberate — it keeps startup
-at ~3ms, which is the whole premise of the thin-client design. Do not reach
-for `clispeak-core` from it; duplicate the handful of bytes instead, as
-`frame.rs` and the socket name already do, and keep them in step by hand.
+at about 2ms, which is the whole premise of the thin-client design. Do not
+reach for `clispeak-core` from it; duplicate the handful of bytes instead, as
+`frame.rs`, `mirror.rs` and the config path already do.
+
+**They are no longer kept in step by hand alone.** `crates/clispeak-cli/tests/
+drift.rs` holds every copy up against its original — both socket names, both
+config paths with their overrides, the framing in both directions, the frame
+cap, the token file, the handshake, and `PEER_CONNECT`. `clispeak-core` is a
+`[dev-dependencies]` entry, which is built for that test and linked into
+nothing else: the release binary contains zero iroh symbols, measured.
+
+A failure there does not mean the CLI is wrong. It means the two are no longer
+the same — read both, decide which is right, change the other. The duplication
+stays; what has gone is nobody being told when it drifts (#80, decision 117).
+
+The startup number is measured rather than remembered: 2.0ms mean over 200
+runs of the release binary. If it moves, measure it again rather than adjusting
+the sentence.
 
 ## Checks
 
 ```bash
-cargo run -p xtask -- check     # conflicts, workflows, fmt, clippy, tests, portability
+cargo run -p xtask -- check     # conflicts, workflows, versions, fmt, clippy, tests, portability
 cd app && npx tailwindcss -i src/input.css -o src/styles.css --minify
 ```
 
@@ -414,11 +429,24 @@ done: if the tests were not run, say so.
 
 ## Testing on real devices
 
-Linux and Android get real runtime testing; the rest are build-verified. The
-things no CI can cover are exactly the ones that have bitten: NAT traversal,
-Android doze, network switching, audio actually coming out of a speaker, and
-sockets left behind by a node that died. When a change touches those, test it
-on hardware and say which hardware.
+Linux, Android and Windows get real runtime testing; macOS and iOS are
+build-verified. Windows joined that list on 6 September 2026 and cost two bugs
+in the first hour — see the three claims above, which this sentence used to
+contradict by still saying "Linux and Android" a day after Windows had been
+paired, spoken through and installed from a release artefact.
+
+The things no CI can cover are exactly the ones that have bitten: NAT
+traversal, Android doze, network switching, audio actually coming out of a
+speaker, and sockets left behind by a node that died. When a change touches
+those, test it on hardware and say which hardware.
+
+**And two nodes talking is no longer one of them.** Since 7 September a
+`loopback` network carries frames between nodes inside one process, so
+pairing, roster sync, revocation, refusal and delivery are covered by tests
+that need no network at all (#80, decision 114). That is not a substitute for
+hardware — it models no latency, loss, reordering or hole punching — but "a
+multi-node roster merge can only be reproduced with four real devices" was
+true for a year and is not any more.
 
 **Test the build you intend to ship.** Android's release build minifies and its
 debug build does not, so for months "tested on a phone" meant a build nobody
