@@ -14,7 +14,6 @@ use clispeak_proto::{
 };
 use clispeak_text::chunk;
 use interprocess::local_socket::{
-    ListenerOptions,
     tokio::{Listener as TokioListener, Stream},
     // Anonymous: `connect` and `accept` are wanted, but the trait names
     // themselves would collide with the concrete types above.
@@ -46,11 +45,15 @@ use crate::{Identity, Roster, Ticket};
 /// displace a running one, which is the very thing the error exists to
 /// prevent.
 async fn bind_ipc(socket: &str) -> Result<TokioListener> {
-    // One place decides where the socket is; this used to spell it out and
-    // so did the CLI and the probe, which is three chances to disagree.
+    // One place decides where the socket is *and* who may open it; this used
+    // to spell out the name here and again in the CLI and the probe, which is
+    // three chances to disagree. The access rules travel with it for the same
+    // reason — set on the ordinary bind and forgotten on the reclaim below
+    // would protect a normal start and not a recovery (#128).
     let name = || crate::ipc::socket_target(socket);
+    let options = || crate::ipc::listener_for(socket);
 
-    let refused = match ListenerOptions::new().name(name()?).create_tokio() {
+    let refused = match options()?.create_tokio() {
         Ok(listener) => return Ok(listener),
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             // Nothing answering means the name outlived its node.
@@ -83,8 +86,7 @@ async fn bind_ipc(socket: &str) -> Result<TokioListener> {
     }
 
     eprintln!("removing the socket a previous node left at {socket}");
-    ListenerOptions::new()
-        .name(name()?)
+    options()?
         .try_overwrite(true)
         .create_tokio()
         .context("reclaiming the local socket")
@@ -3736,10 +3738,14 @@ mod tests {
         // Exactly what a squatter is: something holding the name that has
         // never seen the token. A bare listener answers connections and can
         // produce no proof.
-        let _squatter = ListenerOptions::new()
+        let _squatter = interprocess::local_socket::ListenerOptions::new()
             // The same resolver the node uses, so the squatter takes
             // the place a node would actually look rather than a name that
             // merely resembles it.
+            //
+            // Deliberately *not* `ipc::listener_for`: a squatter is somebody
+            // else's process and gets no help from our access rules. Using
+            // them here would be a test of the node against itself.
             .name(crate::ipc::socket_target(&socket).expect("name"))
             .create_tokio()
             .expect("taking the name first");
