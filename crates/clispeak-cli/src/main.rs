@@ -47,6 +47,12 @@ struct Cli {
     /// Device to speak on. A name, a group, `all`, `here`, or a
     /// comma-separated list of those.
     ///
+    /// Qualify with a space to be explicit: `work/laptop`, or `work/all` for
+    /// everything in one space. A bare name resolves in the default space and
+    /// otherwise anywhere it is unique — the resolver's error tells you to
+    /// qualify when it cannot decide, and this is where you learn that is
+    /// possible.
+    ///
     /// Defaults to `default_target` from the config, then this machine.
     #[arg(short, long, global = true)]
     to: Option<String>,
@@ -164,6 +170,37 @@ enum GroupAction {
     },
     /// List the groups defined on this machine.
     List,
+}
+
+#[derive(clap::Subcommand)]
+enum PrefsAction {
+    /// Record a rule the user has just stated.
+    ///
+    /// Only for a standing preference. A reaction to one message — "that was
+    /// annoying" — is not a rule, and recording the durable version of a
+    /// passing remark makes the tool quietly do less for a reason nobody can
+    /// see. When it is ambiguous, ask; one short question is cheaper than a
+    /// wrong rule.
+    Add {
+        /// Which list.
+        list: prefs::List,
+        /// The rule, in the user's own terms.
+        text: String,
+    },
+    /// Drop a rule, by the number `prefs` gave it.
+    Remove {
+        /// Which list.
+        list: prefs::List,
+        /// The number shown by `clispeak prefs`.
+        index: usize,
+    },
+    /// Set what to call the user, or where responses go.
+    Set {
+        /// Which setting.
+        field: prefs::Field,
+        /// The value. For `output`: terminal, brief, full or speech.
+        value: String,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -300,6 +337,23 @@ enum Command {
         /// which device to speak on, and clap cannot hold both meanings.
         #[arg(long, value_name = "PATH")]
         path: Option<std::path::PathBuf>,
+        /// Say whether the installed copy matches this build, and stop.
+        ///
+        /// For an agent to run before helping someone set up: a skill
+        /// installed months ago describes a tool that has moved, and nothing
+        /// otherwise says so. Compared by content rather than a version
+        /// string, because the question is whether it says what this build
+        /// says (#231).
+        #[arg(long, conflicts_with = "install")]
+        check: bool,
+        /// Also install the hook that keeps the agreement in context.
+        ///
+        /// Opt-in, because it edits the agent's own settings file and that
+        /// should be something the user was asked about rather than something
+        /// that happened. It is the only part of this design that survives a
+        /// compaction, so it is worth asking for.
+        #[arg(long, requires = "install")]
+        hook: bool,
     },
     /// Show recent messages, spoken or not.
     ///
@@ -356,6 +410,48 @@ enum Command {
     },
     /// List the groups defined on this machine.
     Groups,
+    /// Remove the skill and its hook, and be told what you must forget yourself.
+    ///
+    /// The hook rides in the skill's frontmatter, so deleting the skill takes
+    /// it too — an uninstall that left one behind would run this binary on
+    /// every prompt of a machine that no longer has it.
+    Forget {
+        /// Also clear the working agreement.
+        ///
+        /// Kept by default: the agreement is machine-level and other agents
+        /// are still using it, so wiping it because one agent was uninstalled
+        /// would be a loss with no way back.
+        #[arg(long)]
+        everything: bool,
+        /// Where the skill was written, if not the default.
+        #[arg(long, value_name = "PATH")]
+        path: Option<std::path::PathBuf>,
+    },
+    /// Show or change how this user wants to be spoken to.
+    ///
+    /// **Called by an agent, not typed by a person.** The user says "stop
+    /// telling me about builds" and the agent records it here, then reads the
+    /// result back in a sentence — that read-back is the only way they ever
+    /// see what is stored, so it is not optional (#231).
+    Prefs {
+        #[command(subcommand)]
+        action: Option<PrefsAction>,
+        /// One line, for a hook that runs every turn. Silent when nothing is
+        /// recorded.
+        #[arg(long)]
+        brief: bool,
+        /// Which agent to record as having made this change.
+        ///
+        /// Falls back to `CLISPEAK_AGENT`, then to "an agent". Provenance is
+        /// what makes "why does it keep doing that?" answerable, since nobody
+        /// opens the file.
+        ///
+        /// Global so it works *after* the subcommand. Clap otherwise demands
+        /// `prefs --by Claude add ...`, which is the wrong way round from how
+        /// anyone writes a command and would be got wrong every time.
+        #[arg(long, value_name = "NAME", global = true)]
+        by: Option<String>,
+    },
     /// Show, set, or clear quiet hours, for this device or one space.
     Quiet {
         /// `22:00-07:00`, or `off`. Omit to show the current window.
@@ -468,8 +564,32 @@ acts on this device."
 
     // Neither does the skill: it is compiled in, so printing or installing
     // it needs nothing running.
-    if let Some(Command::Skill { install, path }) = &cli.command {
-        return Ok(run_skill(*install, path.as_deref()));
+    if let Some(Command::Skill {
+        install,
+        path,
+        check,
+        hook,
+    }) = &cli.command
+    {
+        if *check {
+            return Ok(check_skill(path.as_deref(), cli.json));
+        }
+        let code = run_skill(*install, path.as_deref());
+        if code == exit::OK && *hook {
+            match skill::install_hook() {
+                Ok(p) => println!(
+                    "installed the hook in {} — it runs `clispeak prefs --brief` \
+                     on every prompt,\nso the agreement survives a compaction. \
+                     `clispeak forget` takes it out again.",
+                    p.display()
+                ),
+                Err(e) => {
+                    err(&format!("error: could not install the hook: {e}"));
+                    return Ok(exit::USAGE);
+                }
+            }
+        }
+        return Ok(code);
     }
 
     // Group commands never reach the node: groups are this machine's own
@@ -483,6 +603,17 @@ acts on this device."
             return Ok(list_groups(&config));
         }
         Some(Command::Group { action }) => return Ok(edit_groups(config, action)),
+        // Preferences never reach the node either, and that matters more than
+        // it looks: the hook that keeps them in an agent's context runs on
+        // every prompt, including when the app is closed. If this needed a
+        // running node it would be silent exactly when the user is away from
+        // the machine, which is the case the whole tool exists for.
+        Some(Command::Prefs { action, brief, by }) => {
+            return Ok(run_prefs(action.as_ref(), *brief, by.as_deref(), cli.json));
+        }
+        Some(Command::Forget { everything, path }) => {
+            return Ok(forget(*everything, path.as_deref()));
+        }
         _ => {}
     }
 
@@ -587,7 +718,11 @@ acts on this device."
             ticket: ticket.clone(),
         },
         // Handled above, before the node is contacted.
-        Some(Command::Group { .. }) | Some(Command::Groups) | Some(Command::Skill { .. }) => {
+        Some(Command::Group { .. })
+        | Some(Command::Groups)
+        | Some(Command::Prefs { .. })
+        | Some(Command::Forget { .. })
+        | Some(Command::Skill { .. }) => {
             unreachable!("local commands")
         }
         Some(Command::Say { text }) => match build_speak(&cli, &config, text)? {
@@ -881,6 +1016,11 @@ fn ignores_to(command: &Option<Command>) -> Option<&'static str> {
         Some(Command::Skill { .. }) => Some("skill"),
         Some(Command::Group { .. }) => Some("group"),
         Some(Command::Groups) => Some("groups"),
+        // The agreement is this machine's, not a device's. `--to` here would
+        // read as "set the preferences on the phone", which is not a thing
+        // that exists and is exactly the misunderstanding #121 was about.
+        Some(Command::Prefs { .. }) => Some("prefs"),
+        Some(Command::Forget { .. }) => Some("forget"),
 
         // About spaces and membership, which are not a device to speak on.
         Some(Command::Invite { .. }) => Some("invite"),
@@ -999,6 +1139,34 @@ fn build_speak(
             }
         }
     };
+
+    // The two halves of the working agreement a machine can actually check.
+    //
+    // Everything else in it — when to speak at all, what never to say — is
+    // judgement, and a tool that pretended otherwise would refuse "the
+    // credentials test passed" for containing the word credentials. These two
+    // are checkable, so they do not depend on an agent remembering anything,
+    // which is the point: a rule the tool enforces survives compaction, a
+    // fresh session and a different harness (#231).
+    if !cli.raw
+        && let Err(refusal) = prefs::allows(&prefs::load(), &text)
+    {
+        err(&refusal.message);
+        if let Some(instead) = &refusal.instead {
+            err("");
+            err("  send this instead:");
+            err(&format!("  {instead}"));
+        }
+        // Mapped here, where the codes live. `Silenced` is a 4 because it is
+        // the same situation a muted device produces — the message was not
+        // spoken and the person chose that — and the skill already says not
+        // to retry or reroute a 4. `NeedsOpener` is a 6 because that is
+        // exactly what 6 means: text refused with a rewrite attached.
+        return Ok(Err(match refusal.kind {
+            prefs::Kind::Silenced => exit::ALL_FAILED,
+            prefs::Kind::NeedsOpener => exit::REJECTED,
+        }));
+    }
 
     // Resolution order for all of these: the flag, then the config, then the
     // built-in default. Groups expand here rather than in the node, so what
@@ -1586,6 +1754,177 @@ fn patience(request: &Request) -> std::time::Duration {
     }
 }
 
+/// Say whether the installed skill matches this build.
+///
+/// Prints a word rather than inventing an exit code. The codes this tool
+/// returns all mean something went wrong, and "your skill is a version
+/// behind" is not that — it is an answer to a question, and answers belong on
+/// stdout where the agent can branch on them.
+fn check_skill(path: Option<&std::path::Path>, json: bool) -> u8 {
+    let target = path
+        .map(std::path::Path::to_path_buf)
+        .or_else(skill::default_destination);
+    let Some(target) = target else {
+        err("error: no skills directory on this platform; pass --path");
+        return exit::USAGE;
+    };
+    let target = skill::expand_home(&target);
+    let state = skill::state(&target);
+
+    let hook = if skill::hook_installed() {
+        "the hook is installed"
+    } else {
+        "the hook is not installed — `clispeak skill --install --hook` adds it, \
+         and it is what keeps the agreement in context after a compaction"
+    };
+
+    let (word, what) = match state {
+        skill::State::Current => ("current", "matches this build; nothing to do"),
+        skill::State::Stale => (
+            "stale",
+            "was installed from a different build. Offer to update it with              `clispeak skill --install` before helping with anything else — a              skill describing a tool that has moved is worse than none,              because it is confident",
+        ),
+        skill::State::Absent => (
+            "absent",
+            "is not installed here. `clispeak skill --install` writes it",
+        ),
+    };
+
+    if json {
+        let body = serde_json::json!({
+            "state": word,
+            "path": target.display().to_string(),
+            "hook": skill::hook_installed(),
+        });
+        println!("{body}");
+    } else {
+        println!("{word}: the skill at {} {what}", target.display());
+        println!("{hook}");
+    }
+    exit::OK
+}
+
+/// Show or change the working agreement.
+///
+/// Every mutation prints the result. That is not a convenience — under this
+/// design nobody opens the file, so the agent reading this back to the user
+/// is the only way they ever learn what was stored (#231).
+fn run_prefs(action: Option<&PrefsAction>, brief: bool, by: Option<&str>, json: bool) -> u8 {
+    if brief {
+        let line = prefs::brief(&prefs::load());
+        if !line.is_empty() {
+            println!("{line}");
+        }
+        return exit::OK;
+    }
+
+    let changed = match action {
+        None => Ok(prefs::load()),
+        Some(PrefsAction::Add { list, text }) => prefs::add(*list, text, &agent_name(by)),
+        Some(PrefsAction::Remove { list, index }) => prefs::remove(*list, *index),
+        Some(PrefsAction::Set { field, value }) => prefs::set(*field, value),
+    };
+
+    let agreement = match changed {
+        Ok(a) => a,
+        Err(e) => {
+            err(&format!("error: {e}"));
+            return exit::USAGE;
+        }
+    };
+
+    if json {
+        let body = serde_json::json!({
+            "configured": agreement.configured(),
+            "agreement": agreement,
+        });
+        println!("{body}");
+    } else {
+        print!("{}", prefs::render(&agreement));
+        if action.is_some() {
+            // Said out loud rather than left for the agent to infer. A wrong
+            // rule that is read back gets corrected in the same breath; one
+            // that is not is invisible and permanent.
+            eprintln!("\nRead this back to them in one sentence.");
+        }
+    }
+    exit::OK
+}
+
+/// Which agent is recording a change.
+fn agent_name(by: Option<&str>) -> String {
+    by.map(str::to_string)
+        .or_else(|| std::env::var("CLISPEAK_AGENT").ok())
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "an agent".into())
+}
+
+/// Remove the skill and its hook, and say what the tool cannot remove.
+///
+/// **The honest half is the last paragraph.** Whatever an agent wrote about
+/// clispeak in its own notes is inside a harness this binary does not know
+/// the shape of, and reaching into one would be fragile and an overreach. So
+/// this says plainly what it cannot do and names who must finish the job —
+/// to the agent that is running it and reading the output.
+fn forget(everything: bool, path: Option<&std::path::Path>) -> u8 {
+    let target = path
+        .map(std::path::Path::to_path_buf)
+        .or_else(skill::default_destination);
+    let Some(target) = target else {
+        err("error: no skills directory on this platform; pass --path");
+        return exit::USAGE;
+    };
+    let target = skill::expand_home(&target);
+
+    match std::fs::remove_file(&target) {
+        Ok(()) => println!("removed the skill at {}", target.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("no skill at {}", target.display());
+        }
+        Err(e) => {
+            err(&format!(
+                "error: could not remove {}: {e}",
+                target.display()
+            ));
+            return exit::USAGE;
+        }
+    }
+    // Removed explicitly, because it lives in the agent's settings file
+    // rather than in the skill. An uninstall that left it behind would run
+    // this binary on every prompt of a machine that no longer has the skill —
+    // which is the kind of leftover nobody ever tracks down.
+    match skill::remove_hook() {
+        Ok(true) => println!("removed the hook from the agent's settings"),
+        Ok(false) => println!("no hook was installed"),
+        Err(e) => {
+            err(&format!("error: could not remove the hook: {e}"));
+            return exit::USAGE;
+        }
+    }
+
+    if everything {
+        match prefs::clear() {
+            Ok(()) => println!("cleared the working agreement"),
+            Err(e) => {
+                err(&format!("error: could not clear the agreement: {e}"));
+                return exit::USAGE;
+            }
+        }
+    } else {
+        println!(
+            "\nThe working agreement is kept, because other agents on this \
+             machine use it.\nUse `clispeak forget --everything` to clear it too."
+        );
+    }
+
+    println!(
+        "\nNow delete anything you wrote down about clispeak yourself — this \
+         tool cannot reach\nyour memory, and will not pretend to. Then tell \
+         the user what you removed, including\nwhich of your own notes went."
+    );
+    exit::OK
+}
+
 /// Whether this reply already has a JSON shape written for it.
 ///
 /// Those three are promised in `docs/cli.md` with named fields, so they are
@@ -1760,7 +2099,7 @@ mod skill;
 // by hand, and a binary crate exposes nothing, so no test could ever hold the
 // two copies up against each other. See `src/lib.rs` and `tests/drift.rs`
 // (#80).
-use clispeak_cli::{config, frame, mirror};
+use clispeak_cli::{config, frame, mirror, prefs};
 use frame::{read_frame, write_frame};
 
 #[cfg(test)]

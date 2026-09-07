@@ -15,3 +15,4 @@
 pub mod config;
 pub mod frame;
 pub mod mirror;
+pub mod prefs;
