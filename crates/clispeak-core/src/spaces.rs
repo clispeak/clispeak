@@ -320,25 +320,24 @@ mod tests {
 
     #[test]
     fn two_spaces_founded_by_one_device_are_still_two_spaces() {
-        // Rotating produces exactly this: same founder, different space.
+        // Rotating produces exactly this: same founder, different space. So
+        // does `clispeak space new work` followed by `clispeak space new
+        // home`, which is the case that used to lose one of them.
+        //
+        // This test used to reach into the second roster and add a second to
+        // every `joined_at`, under a comment reading "force a different
+        // founding moment, which is what distinguishes them". That was the
+        // bug, written down as a given: the id derived from unix seconds, so
+        // two foundings inside one second produced one id and `insert`
+        // overwrote the first. Founding now carries a nonce, and nothing here
+        // has to be forced.
         let mut spaces = Spaces::default();
         let first = spaces.insert(a_space(1, "laptop"), "home");
-        let mut second = a_space(1, "laptop");
-        // Force a different founding moment, which is what distinguishes them.
-        second = Roster::from_parts(
-            second
-                .members()
-                .map(|m| {
-                    let mut m = m.clone();
-                    m.joined_at += 1;
-                    m
-                })
-                .collect(),
-            Vec::new(),
-        )
-        .0;
-        let second = spaces.insert(second, "work");
-        assert_ne!(first, second);
+        let second = spaces.insert(a_space(1, "laptop"), "work");
+        assert_ne!(
+            first, second,
+            "two spaces founded in one second are still two spaces"
+        );
         assert_eq!(spaces.list("").len(), 2);
     }
 

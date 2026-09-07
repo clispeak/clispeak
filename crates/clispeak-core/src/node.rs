@@ -4171,7 +4171,12 @@ mod peer_tests {
     /// Driven through the public calls rather than by assembling a roster, so
     /// what is under test is the join, not a reconstruction of it.
     async fn pair(host: &Device, joiner: &Device) {
-        let url = match host.node.invite(None).await {
+        pair_in(host, joiner, None).await;
+    }
+
+    /// The same, into a space the host names.
+    async fn pair_in(host: &Device, joiner: &Device, space: Option<&str>) {
+        let url = match host.node.invite(space).await {
             Response::Invite { url, .. } => url,
             other => panic!("invite did not produce one: {other:?}"),
         };
@@ -4296,19 +4301,29 @@ mod peer_tests {
             },
         )
         .await
-        .expect("writing");
-        write_msg(
+        .expect("writing the header");
+
+        // The rest is offered and may not be taken, and that is the correct
+        // behaviour rather than a tolerance: a device that is not a member is
+        // refused on the header alone, and the handler moves to the next
+        // stream without ever reading the payload. Draining an unauthorised
+        // peer's message first would be the bug — it is unbounded input from
+        // someone with no standing to send it.
+        //
+        // So these writes race a stream the node has already finished with.
+        // Insisting they succeed is what made this test pass on a laptop and
+        // fail on CI: locally the pipe buffer swallowed them before the far
+        // end was dropped, and on a slower machine it did not. The reply is
+        // the assertion; the writes are not.
+        let _ = write_msg(
             &mut send,
             &PeerMessage::Chunk {
                 seq: 0,
                 text: "say something".into(),
             },
         )
-        .await
-        .expect("writing");
-        write_msg(&mut send, &PeerMessage::SpeakEnd)
-            .await
-            .expect("writing");
+        .await;
+        let _ = write_msg(&mut send, &PeerMessage::SpeakEnd).await;
 
         match read_msg(&mut recv).await.expect("a reply") {
             PeerMessage::Report { status, .. } => assert!(
@@ -4464,6 +4479,334 @@ mod peer_tests {
 
         laptop.shut_down().await;
         tablet.shut_down().await;
+    }
+
+    // ------------------------------------------------------------ resolve
+    //
+    // `resolve` is the most intricate function in the crate and #80 recorded
+    // it as having no tests at all — only `push_target` and `also_answers_to`,
+    // the two helpers it calls. Every selector rule below is a rule somebody
+    // wrote down in a comment and nothing executed.
+    //
+    // These build real spaces by pairing real devices rather than assembling
+    // a `Spaces` by hand, so what is under test is the resolver over state the
+    // rest of the system actually produces.
+
+    /// The device names a selector resolved to, in order, for readable
+    /// assertions. `Here` is reported under this device's own label.
+    async fn resolved(of: &Device, selector: &str) -> Result<Vec<String>, String> {
+        let mine = of.node.name();
+        resolve(&of.node.shared, selector).await.map(|targets| {
+            targets
+                .into_iter()
+                .map(|t| match t {
+                    Target::Here { .. } => mine.clone(),
+                    Target::Peer { name, .. } => name,
+                })
+                .collect()
+        })
+    }
+
+    /// A laptop in two spaces: `main` with a phone, `work` with a desk.
+    async fn two_spaces(board: &Switchboard) -> (Device, Device, Device) {
+        let laptop = device(board, "Laptop").await;
+        let phone = device(board, "Phone").await;
+        let desk = device(board, "Desk").await;
+
+        pair(&laptop, &phone).await;
+        match laptop.node.new_space("work").await {
+            Response::Spaces { .. } => {}
+            other => panic!("new_space failed: {other:?}"),
+        }
+        pair_in(&laptop, &desk, Some("work")).await;
+        // Creating a space makes it the default, so say which one this
+        // fixture means rather than inheriting whichever was made last. Every
+        // assertion below about a *bare* selector is an assertion about the
+        // default, and leaving that implicit is how a test ends up describing
+        // the fixture instead of the rule.
+        match laptop.node.default_space("main").await {
+            Response::Spaces { .. } => {}
+            other => panic!("default_space failed: {other:?}"),
+        }
+        (laptop, phone, desk)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn here_and_a_bare_name_reach_what_they_say() {
+        let board = Switchboard::new();
+        let (laptop, phone, _desk) = two_spaces(&board).await;
+
+        assert_eq!(resolved(&laptop, "here").await, Ok(vec!["Laptop".into()]));
+        assert_eq!(resolved(&laptop, "Phone").await, Ok(vec!["Phone".into()]));
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+        _desk.shut_down().await;
+    }
+
+    /// `all` is scoped to one space, and there is deliberately no selector
+    /// meaning "every device everywhere" — a work message arriving on the
+    /// family tablet is what separate spaces exist to prevent.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn all_is_one_space_and_never_every_space() {
+        let board = Switchboard::new();
+        let (laptop, phone, desk) = two_spaces(&board).await;
+
+        let mut here = resolved(&laptop, "all").await.expect("all resolves");
+        here.sort();
+        assert_eq!(
+            here,
+            vec!["Laptop".to_string(), "Phone".to_string()],
+            "bare `all` is the default space only"
+        );
+
+        let mut work = resolved(&laptop, "work/all").await.expect("work/all");
+        work.sort();
+        assert_eq!(
+            work,
+            vec!["Desk".to_string(), "Laptop".to_string()],
+            "a qualified `all` must include this device, or `work/all` reaches \
+             nothing on a machine whose default has moved on"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+        desk.shut_down().await;
+    }
+
+    /// `--to all,pixel` must not make the phone say it twice.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn duplicates_collapse() {
+        let board = Switchboard::new();
+        let (laptop, phone, desk) = two_spaces(&board).await;
+
+        let got = resolved(&laptop, "all,Phone,here,Phone").await.expect("ok");
+        assert_eq!(
+            got.len(),
+            2,
+            "one device per addressee however many times it was named: {got:?}"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+        desk.shut_down().await;
+    }
+
+    /// A name only in a non-default space still resolves, unqualified.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_name_unique_outside_the_default_space_still_resolves() {
+        let board = Switchboard::new();
+        let (laptop, phone, desk) = two_spaces(&board).await;
+
+        assert_eq!(resolved(&laptop, "Desk").await, Ok(vec!["Desk".into()]));
+        assert_eq!(
+            resolved(&laptop, "work/Desk").await,
+            Ok(vec!["Desk".into()]),
+            "qualifying a name that already resolved must not change it"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+        desk.shut_down().await;
+    }
+
+    /// An unknown name is an error naming every name that *is* known.
+    ///
+    /// Partial delivery from a typo is the failure worth preventing: reaching
+    /// two devices out of three looks like it worked.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unknown_name_lists_the_known_ones() {
+        let board = Switchboard::new();
+        let (laptop, phone, desk) = two_spaces(&board).await;
+
+        let err = resolved(&laptop, "Pixel").await.expect_err("should refuse");
+        assert!(
+            err.contains("Pixel"),
+            "the error must name what failed: {err}"
+        );
+        assert!(
+            err.contains("Phone") && err.contains("Desk"),
+            "an agent needs the alternatives to correct itself: {err}"
+        );
+
+        // And nothing partial: one bad element refuses the whole selector.
+        assert!(
+            resolved(&laptop, "Phone,Pixel").await.is_err(),
+            "a typo beside a good name must not deliver to the good one"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+        desk.shut_down().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unknown_space_lists_the_known_ones() {
+        let board = Switchboard::new();
+        let (laptop, phone, desk) = two_spaces(&board).await;
+
+        let err = resolved(&laptop, "home/Desk")
+            .await
+            .expect_err("should refuse");
+        assert!(err.contains("home"), "name the space that failed: {err}");
+        assert!(err.contains("work"), "and the ones that exist: {err}");
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+        desk.shut_down().await;
+    }
+
+    /// Issue #39, the half that had no test.
+    ///
+    /// Two devices sharing a name *inside one space* were told to "Qualify it:
+    /// work/twin  or  work/twin" — the same command twice, and the one that
+    /// had just failed. An agent following that suggestion loops forever, and
+    /// neither device is addressable by any selector this resolver accepts.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_devices_with_one_name_in_one_space_are_not_told_to_qualify() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let twin_a = device(&board, "Twin").await;
+        let twin_b = device(&board, "Twin").await;
+        pair(&laptop, &twin_a).await;
+        pair(&laptop, &twin_b).await;
+
+        let err = resolved(&laptop, "Twin").await.expect_err("ambiguous");
+        assert!(
+            err.contains("same space"),
+            "the message has to say why qualifying cannot help: {err}"
+        );
+        assert!(
+            !err.contains('/'),
+            "suggesting a qualified selector here is advice that cannot work, \
+             and an agent will loop on it: {err}"
+        );
+        assert!(
+            err.contains("rename"),
+            "the only way out is renaming one of them, so say so: {err}"
+        );
+
+        laptop.shut_down().await;
+        twin_a.shut_down().await;
+        twin_b.shut_down().await;
+    }
+
+    /// A name in two *different* spaces can be separated, and is.
+    ///
+    /// The default space has to hold no `TV` for this to arise at all: a name
+    /// present in the default wins outright and is never ambiguous, which is
+    /// the next test. So the ambiguity is between two *other* spaces, which is
+    /// exactly the case qualifying was invented for.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn one_name_in_two_spaces_asks_to_be_qualified() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let phone = device(&board, "Phone").await;
+        let home_tv = device(&board, "TV").await;
+        let work_tv = device(&board, "TV").await;
+
+        pair(&laptop, &phone).await;
+        laptop.node.new_space("work").await;
+        pair_in(&laptop, &work_tv, Some("work")).await;
+        laptop.node.new_space("home").await;
+        pair_in(&laptop, &home_tv, Some("home")).await;
+        laptop.node.default_space("main").await;
+
+        let err = resolved(&laptop, "TV").await.expect_err("ambiguous");
+        assert!(
+            err.contains('/'),
+            "here qualifying *does* separate them, so it must be offered: {err}"
+        );
+        assert_eq!(
+            resolved(&laptop, "work/TV").await,
+            Ok(vec!["TV".into()]),
+            "and the advice it gave has to actually work"
+        );
+
+        laptop.shut_down().await;
+        phone.shut_down().await;
+        home_tv.shut_down().await;
+        work_tv.shut_down().await;
+    }
+
+    /// The default space wins outright, so setting a default decides
+    /// something.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_default_space_wins_a_shared_name_without_an_error() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let home_tv = device(&board, "TV").await;
+        let work_tv = device(&board, "TV").await;
+
+        pair(&laptop, &home_tv).await;
+        laptop.node.new_space("work").await;
+        pair_in(&laptop, &work_tv, Some("work")).await;
+
+        // With `work` as the default, a bare `TV` is no longer ambiguous.
+        match laptop.node.default_space("work").await {
+            Response::Spaces { .. } => {}
+            other => panic!("default_space failed: {other:?}"),
+        }
+        let got = resolved(&laptop, "TV").await.expect("no longer ambiguous");
+        assert_eq!(got, vec!["TV".to_string()]);
+        assert_eq!(
+            resolve(&laptop.node.shared, "TV").await.unwrap().len(),
+            1,
+            "the default space decides it rather than reaching both"
+        );
+
+        laptop.shut_down().await;
+        home_tv.shut_down().await;
+        work_tv.shut_down().await;
+    }
+
+    /// Issue #39, the other half: this device's own label wins, and the peers
+    /// it beat are named rather than silently dropped.
+    ///
+    /// A one-row report saying "spoken" reads as a clean send whether or not a
+    /// second machine answered to the name, which is why the shadowed ids are
+    /// carried out of the resolver at all.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn our_own_name_wins_but_the_peers_it_beat_are_reported() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let impostor = device(&board, "Laptop").await;
+        pair(&laptop, &impostor).await;
+
+        let targets = resolve(&laptop.node.shared, "Laptop")
+            .await
+            .expect("our own name always resolves");
+        match targets.as_slice() {
+            [Target::Here { shadowed }] => {
+                assert_eq!(
+                    shadowed.len(),
+                    1,
+                    "the peer answering to the same name has to be carried out \
+                     of the resolver, or the send reads as clean"
+                );
+                assert!(
+                    also_answers_to(shadowed).is_some_and(|s| s.contains("not sent to")),
+                    "and it has to reach the report in words"
+                );
+            }
+            other => panic!("our own name should resolve to this device alone: {other:?}"),
+        }
+
+        // `here` is unambiguous by construction and reports nothing.
+        match resolve(&laptop.node.shared, "here")
+            .await
+            .unwrap()
+            .as_slice()
+        {
+            [Target::Here { shadowed }] => assert!(
+                shadowed.is_empty(),
+                "`here` names no one else, so it shadows no one"
+            ),
+            other => panic!("here should be this device: {other:?}"),
+        }
+
+        laptop.shut_down().await;
+        impostor.shut_down().await;
     }
 
     /// Wait for a condition, or give up loudly.
