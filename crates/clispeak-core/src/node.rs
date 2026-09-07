@@ -970,6 +970,10 @@ fn status(shared: &Arc<Shared>) -> Response {
         engine_reason: shared.engine.ready().err().map(|e| e.reason().to_string()),
         fallback: shared.engine.tier() == clispeak_engine::Tier::Fallback,
         queued: shared.speaker.depth(),
+        // The node's own version, which is what a person means when they ask
+        // "is this up to date" — not the CLI's, which can be a different
+        // build entirely on a machine where the app has not been restarted.
+        version: crate::version().to_string(),
         muted: policy.muted,
         quiet: policy.quiet.map(|q| {
             format!(

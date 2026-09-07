@@ -1374,7 +1374,25 @@ async fn send_with(
             muted,
             quiet,
             engine_reason,
+            version,
         } => {
+            // First, because it is the question someone is usually here to
+            // answer, and because both halves are worth seeing at once: the
+            // node's build and this binary's can differ on a machine where
+            // the app has been updated and not restarted.
+            let mine = env!("CARGO_PKG_VERSION");
+            // Three cases, and they want different sentences. An empty string
+            // is a node from before this field existed, which is not a
+            // mismatch to act on; a *different* version is one, and it is
+            // almost always an app updated and not restarted.
+            let line = if version.is_empty() {
+                format!("older than {mine} (it does not report one)")
+            } else if version == mine {
+                version.clone()
+            } else {
+                format!("{version}  (this tool is {mine} — restart the app if it was just updated)")
+            };
+            out(&format!("version: {line}"));
             out(&format!("device:  {device_id}"));
             out(&format!("keys:    {key_store}"));
             out(&format!(
