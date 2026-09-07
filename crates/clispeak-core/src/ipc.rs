@@ -10,6 +10,9 @@
 //! a newer node degrades rather than misparses.
 
 use anyhow::{Context, Result, bail};
+// Not conditional: both platforms build a listener, and only *where* it lives
+// and who may open it differ. See `listener_for`.
+use interprocess::local_socket::ListenerOptions;
 // portability-exception: a named pipe is a namespaced name and a Unix socket
 // is a path, so the two platforms cannot import the same resolver
 #[cfg(windows)]
@@ -403,11 +406,80 @@ fn private_dir() -> std::io::Result<std::path::PathBuf> {
 // them in; Unix has a filesystem socket and must have one
 #[cfg(windows)]
 pub fn socket_target(name: &str) -> std::io::Result<interprocess::local_socket::Name<'static>> {
-    // Unprotected, still: a named pipe needs a security descriptor on the
-    // listener, which `ListenerOptions` supports and nobody has written
-    // (#128). Named here so the gap is visible in the code rather than only
-    // in an issue.
     name.to_string().to_ns_name::<GenericNamespaced>()
+}
+
+/// Who may open this machine's pipe: this user, and nobody else.
+///
+/// `D:P` is a protected DACL — nothing is inherited and nothing can be
+/// inherited into it. Then three grants of `GA`, generic all:
+///
+/// - `OW` is the **Owner Rights** SID, `S-1-3-4`. Windows evaluates it
+///   against whoever owns the object, which for a pipe this process created
+///   is the account running it. That is what makes this work without looking
+///   up a SID — which would mean Win32 calls, and this workspace forbids
+///   `unsafe`.
+/// - `SY` is LOCAL SYSTEM, which can reach any object anyway; saying so keeps
+///   the DACL honest rather than pretending otherwise.
+/// - `BA` is the built-in Administrators group. An administrator can take
+///   ownership of anything on the machine, so refusing them buys nothing and
+///   costs an app that will not talk to its own CLI when one side is
+///   elevated and the other is not.
+///
+/// What is *not* here is the point: no `WD` (Everyone), no `AU`
+/// (Authenticated Users), no `IU` (Interactive). Another ordinary account on
+/// this machine cannot open the pipe at all.
+///
+/// **This does not stop squatting, and nothing can.** The Windows pipe
+/// namespace is global and first come — any account may create
+/// `clispeak.sock` before we do. That is why the startup path identifies what
+/// holds the name and says so, rather than assuming a node (#128). This is
+/// defence in depth behind the token handshake, not a replacement for it.
+// portability-exception: SDDL is a Windows access-control language and has no
+// meaning on a platform where a directory mode does the same job
+#[cfg(windows)]
+const PIPE_DACL: &str = "D:P(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)";
+
+/// A listener for this machine's socket, restricted to this user.
+///
+/// One function so the restriction cannot be applied in one place and
+/// forgotten in another — `bind_ipc` reclaims a stale socket on a second path,
+/// and a descriptor set on only the first would protect the ordinary start and
+/// not the recovery.
+// portability-exception: a Windows named pipe has no directory to be private
+// in, so the restriction is a descriptor on the listener instead
+#[cfg(windows)]
+pub fn listener_for(name: &str) -> std::io::Result<ListenerOptions<'static>> {
+    use interprocess::os::windows::{
+        local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
+    };
+
+    let sddl = widestring::U16CString::from_str(PIPE_DACL)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    // Refused rather than fallen back from. A fallback here would be a
+    // security control that quietly stops applying, which is the shape this
+    // project keeps paying for — and the string is a constant, so a failure
+    // means the code is wrong rather than the machine.
+    let sd = SecurityDescriptor::deserialize(&sddl).map_err(|e| {
+        std::io::Error::new(
+            e.kind(),
+            format!("building the pipe's access rules from {PIPE_DACL:?}: {e}"),
+        )
+    })?;
+    Ok(ListenerOptions::new()
+        .name(socket_target(name)?)
+        .security_descriptor(sd))
+}
+
+/// [`listener_for`], on Unix: the directory already did it.
+///
+/// The socket lives inside a `0700` directory of this device's own, so the
+/// filesystem enforces exactly what the descriptor above spells out on
+/// Windows, and there is nothing to add here (decision 103).
+// portability-exception: the other arm of the same rule
+#[cfg(not(windows))]
+pub fn listener_for(name: &str) -> std::io::Result<ListenerOptions<'static>> {
+    Ok(ListenerOptions::new().name(socket_target(name)?))
 }
 
 /// [`socket_target`], on Unix: a path inside a directory only you can enter.
@@ -723,5 +795,56 @@ mod tests {
         let again = install_token(&dir).expect("writing a second token");
         assert_ne!(written, again);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// portability-exception: the pipe's access rules exist only on Windows, so
+// the test that they admit this user exists only there too
+#[cfg(all(test, windows))]
+mod windows_pipe_tests {
+    use super::*;
+    use interprocess::local_socket::traits::tokio::{Listener as _, Stream as _};
+
+    /// The access rules admit the account that created the pipe.
+    ///
+    /// **This is the test the whole change rests on.** The risk in #128's fix
+    /// is not a DACL that is too loose — it is one that is too *strict*: an
+    /// app that cannot talk to its own CLI, on a platform none of the people
+    /// writing this run. Without something executing it on Windows, a wrong
+    /// constant ships and arrives as "the app is broken", days later, with
+    /// nothing pointing at the access rules.
+    ///
+    /// It cannot check the other half. Proving that a *different* account is
+    /// refused would need a second account and a second logon session, which
+    /// a CI runner does not have. So this asserts the half that can be
+    /// asserted here, and says plainly that it is the half — the exclusion
+    /// rests on the SDDL being what it says it is, which is why every term in
+    /// `PIPE_DACL` is written out rather than left as a string.
+    #[tokio::test]
+    async fn this_user_can_open_the_pipe_it_just_created() {
+        let name = format!("clispeak-dacl-{}.sock", std::process::id());
+
+        let listener = listener_for(&name)
+            .expect("the access rules should build from a constant")
+            .create_tokio()
+            .expect("binding a pipe with the access rules on it");
+
+        let target = socket_target(&name).expect("a name");
+        let opened = interprocess::local_socket::tokio::Stream::connect(target).await;
+        assert!(
+            opened.is_ok(),
+            "the account that created the pipe cannot open it, so the access \
+             rules are too strict and this build would not talk to its own \
+             CLI: {:?}",
+            opened.err()
+        );
+
+        // And the listener really did accept it, rather than the connect
+        // succeeding against something else that happened to hold the name.
+        let accepted = listener.accept().await;
+        assert!(
+            accepted.is_ok(),
+            "the listener did not accept: {accepted:?}"
+        );
     }
 }

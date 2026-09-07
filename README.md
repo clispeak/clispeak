@@ -202,10 +202,18 @@ steps: paste or scan, see which space it joins, then confirm. `join --name`
 picks what to call it here.
 
 Two nodes can share one machine for testing by overriding `CLISPEAK_SOCKET`
-and `CLISPEAK_CONFIG_DIR`. `CLISPEAK_SOCKET` is a *name*, not a path: it names
-a socket inside a directory only you can enter, which the node creates and
-then checks before binding — so another local user cannot take the name first.
-A value with a separator in it is refused rather than reinterpreted.
+and `CLISPEAK_CONFIG_DIR`. `CLISPEAK_SOCKET` is a *name*, not a path: on Linux
+and macOS it names a socket inside a directory only you can enter, which the
+node creates and then checks before binding — so another local user cannot
+take the name first. A value with a separator in it is refused rather than
+reinterpreted.
+
+On Windows a named pipe has no directory to live in, so the pipe carries
+access rules instead: only the account that created it, LOCAL SYSTEM and
+Administrators can open it. Another account there still *can* take the name
+before the node does — the pipe namespace is global and nothing can prevent
+that — so the node identifies whatever holds the name and says plainly that it
+is not a node you started, with `CLISPEAK_SOCKET` offered as the way round.
 
 ## What it does
 

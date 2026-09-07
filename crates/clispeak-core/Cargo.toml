@@ -40,5 +40,10 @@ data-encoding = "2.11.1"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 gethostname = "1"
 
+# Only to hand an SDDL string to `interprocess`, which wants a wide C string.
+# Windows-only, so nothing else in the workspace grows a dependency for it.
+[target."cfg(windows)".dependencies]
+widestring = "1.0.2"
+
 [lints]
 workspace = true

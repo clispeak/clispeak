@@ -170,6 +170,29 @@ jobs:
         if: matrix.android
         run: cargo install cargo-ndk --locked
 
+      # The only place the Windows pipe's access rules are ever executed.
+      #
+      # They are a security control on the one desktop platform none of the
+      # people writing this run, and the failure they risk is not a DACL that
+      # is too loose — it is one that is too strict, which arrives as "the app
+      # cannot talk to its own CLI" days later with nothing pointing at the
+      # cause. `cargo check` for this target does not even build here, because
+      # `ring` needs an MSVC toolchain, so a Windows runner is the only thing
+      # that can answer (#128).
+      #
+      # Scoped to the `ipc` module rather than the suite: everything else
+      # already runs on Linux, and a Windows minute bills at twice a Linux
+      # one.
+      - name: Windows IPC access rules
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        # A block scalar because `ipc::` is followed by a space, and a colon
+        # followed by a space is how YAML spells a mapping — the plain form
+        # made this file stop parsing, which the `workflows` gate caught
+        # before it reached GitHub, where it would have been an absence
+        # rather than an error (#102).
+        run: |
+          cargo test -p clispeak-core --lib "ipc::" --target ${{ matrix.target }}
+
       # xtask is host-only tooling and is never cross-compiled;
       # clispeak-daemon links a desktop keyring and is superseded on a phone
       # by the app itself.

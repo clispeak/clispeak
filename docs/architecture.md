@@ -369,9 +369,32 @@ doing the work a file mode does elsewhere, which is why the node answers
 the name. That reasoning still holds and the handshake stays; it is now the
 second line of defence rather than the only one.
 
-**Windows is still unprotected.** A named pipe has no directory to live in and
-needs a security descriptor on the listener instead, which is not written yet
-(#128). The code says so where the pipe is created rather than only here.
+**Windows gets the same boundary by a different mechanism, since 7 September
+2026.** A named pipe has no directory to live in, so the restriction goes on
+the listener as an access-control list: generic access for the object's owner
+— which is the account that created the pipe — for LOCAL SYSTEM, and for
+Administrators, who can take ownership of anything on the machine and so lose
+nothing by being refused. Everyone, Authenticated Users and Interactive are
+absent, which is the whole point: another ordinary account on that machine
+cannot open the pipe at all (#128).
+
+**What it does not do, and nothing can, is stop squatting there.** The Windows
+pipe namespace is global and first come — any account may create the name
+before we do, and an access-control list on *our* listener has no bearing on
+somebody else's. That is why the paragraph below matters more on Windows than
+anywhere else: the node identifies what holds the name and says so, rather
+than assuming it is a node.
+
+**It is verified where it runs.** These rules are a security control on the
+one desktop platform none of the people writing this use, and the failure they
+risk is not a list that is too loose but one that is too *strict* — an app
+that cannot talk to its own CLI, arriving as "the app is broken" days later
+with nothing pointing at the cause. `cargo check` cannot even reach this code
+from Linux, because `ring` needs an MSVC toolchain, so CI runs the `ipc`
+tests on a Windows runner. What that test cannot check is the exclusion:
+proving a *different* account is refused needs a second logon session, which
+no runner has. The half that is asserted is the half that can be, and the
+other half rests on the list being what it says it is.
 
 **What this used to not fix**, and now does on Unix: another local user could
 take the socket name before the node did. Nothing leaked — that listener
