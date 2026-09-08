@@ -23,7 +23,7 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde.workspace = true
 anyhow.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-clispeak-text = { version = "0.9.2", path = "../../crates/clispeak-text" }
+clispeak-text = { version = "0.9.3", path = "../../crates/clispeak-text" }
 iroh = "1.1"
 directories = "6.0.0"
 
