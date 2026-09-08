@@ -194,6 +194,20 @@ enum PrefsAction {
         /// The number shown by `clispeak prefs`.
         index: usize,
     },
+    /// Forget the agreement and start again, keeping the skill and the hook.
+    ///
+    /// `forget --everything` also clears it, but takes the skill and the hook
+    /// with it — which is right for uninstalling and wrong for "let us do
+    /// this again". Without this there was no way to unset a scalar at all:
+    /// rules could be removed one at a time and the names could not be
+    /// removed at all.
+    Reset,
+    /// Print the questions to ask, in order, with the command for each answer.
+    ///
+    /// Offered when they ask to set clispeak up, or at a natural pause — not
+    /// demanded before the tool may be used. Defaults work from the first
+    /// message.
+    Setup,
     /// Set what to call the user, or where responses go.
     Set {
         /// Which setting.
@@ -346,14 +360,6 @@ enum Command {
         /// says (#231).
         #[arg(long, conflicts_with = "install")]
         check: bool,
-        /// Also install the hook that keeps the agreement in context.
-        ///
-        /// Opt-in, because it edits the agent's own settings file and that
-        /// should be something the user was asked about rather than something
-        /// that happened. It is the only part of this design that survives a
-        /// compaction, so it is worth asking for.
-        #[arg(long, requires = "install")]
-        hook: bool,
     },
     /// Show recent messages, spoken or not.
     ///
@@ -568,28 +574,12 @@ acts on this device."
         install,
         path,
         check,
-        hook,
     }) = &cli.command
     {
         if *check {
             return Ok(check_skill(path.as_deref(), cli.json));
         }
-        let code = run_skill(*install, path.as_deref());
-        if code == exit::OK && *hook {
-            match skill::install_hook() {
-                Ok(p) => println!(
-                    "installed the hook in {} — it runs `clispeak prefs --brief` \
-                     on every prompt,\nso the agreement survives a compaction. \
-                     `clispeak forget` takes it out again.",
-                    p.display()
-                ),
-                Err(e) => {
-                    err(&format!("error: could not install the hook: {e}"));
-                    return Ok(exit::USAGE);
-                }
-            }
-        }
-        return Ok(code);
+        return Ok(run_skill(*install, path.as_deref()));
     }
 
     // Group commands never reach the node: groups are this machine's own
@@ -795,7 +785,17 @@ fn run_skill(install: bool, path: Option<&std::path::Path>) -> u8 {
 fn target(cli: &Cli, config: &config::Config) -> Option<String> {
     cli.to
         .clone()
-        .or_else(|| config.default_target.clone())
+        // The agreement first, then the older top-level key. Both mean the
+        // same thing; the agreement is the one a person can set by talking,
+        // so it wins, and `default_target` keeps working for anyone who wrote
+        // it by hand.
+        .or_else(|| {
+            config
+                .agent
+                .as_ref()
+                .and_then(|a| a.speak_to.clone())
+                .or_else(|| config.default_target.clone())
+        })
         .map(|sel| config::expand(&sel, &config.groups))
 }
 
@@ -1789,18 +1789,15 @@ fn check_skill(path: Option<&std::path::Path>, json: bool) -> u8 {
     let target = skill::expand_home(&target);
     let state = skill::state(&target);
 
-    let hook = if skill::hook_installed() {
-        "the hook is installed"
-    } else {
-        "the hook is not installed — `clispeak skill --install --hook` adds it, \
-         and it is what keeps the agreement in context after a compaction"
-    };
-
     let (word, what) = match state {
         skill::State::Current => ("current", "matches this build; nothing to do"),
         skill::State::Stale => (
             "stale",
-            "was installed from a different build. Offer to update it with              `clispeak skill --install` before helping with anything else — a              skill describing a tool that has moved is worse than none,              because it is confident",
+            // One line with no continuations. A `\`-continued Rust string keeps
+            // the source indentation, so this printed with ragged runs of
+            // spaces mid-sentence — which reads like a bug in the thing
+            // reporting a problem.
+            "was installed from a different build. Offer to update it with `clispeak skill --install` before helping with anything else — a skill describing a tool that has moved is worse than none, because it is confident",
         ),
         skill::State::Absent => (
             "absent",
@@ -1812,12 +1809,10 @@ fn check_skill(path: Option<&std::path::Path>, json: bool) -> u8 {
         let body = serde_json::json!({
             "state": word,
             "path": target.display().to_string(),
-            "hook": skill::hook_installed(),
         });
         println!("{body}");
     } else {
         println!("{word}: the skill at {} {what}", target.display());
-        println!("{hook}");
     }
     exit::OK
 }
@@ -1836,11 +1831,29 @@ fn run_prefs(action: Option<&PrefsAction>, brief: bool, by: Option<&str>, json: 
         return exit::OK;
     }
 
+    if matches!(action, Some(PrefsAction::Setup)) {
+        print!("{}", prefs::setup_script(&prefs::load()));
+        return exit::OK;
+    }
+
+    if matches!(action, Some(PrefsAction::Reset)) {
+        if let Err(e) = prefs::clear() {
+            err(&format!("error: could not clear the agreement: {e}"));
+            return exit::USAGE;
+        }
+        println!("The agreement is cleared. The skill and the hook are untouched.\n");
+        print!("{}", prefs::setup_script(&prefs::Agreement::default()));
+        return exit::OK;
+    }
+
     let changed = match action {
         None => Ok(prefs::load()),
         Some(PrefsAction::Add { list, text }) => prefs::add(*list, text, &agent_name(by)),
         Some(PrefsAction::Remove { list, index }) => prefs::remove(*list, *index),
         Some(PrefsAction::Set { field, value }) => prefs::set(*field, value),
+        Some(PrefsAction::Setup) | Some(PrefsAction::Reset) => {
+            unreachable!("handled above")
+        }
     };
 
     let agreement = match changed {
@@ -1911,14 +1924,12 @@ fn forget(everything: bool, path: Option<&std::path::Path>) -> u8 {
     // rather than in the skill. An uninstall that left it behind would run
     // this binary on every prompt of a machine that no longer has the skill —
     // which is the kind of leftover nobody ever tracks down.
-    match skill::remove_hook() {
-        Ok(true) => println!("removed the hook from the agent's settings"),
-        Ok(false) => println!("no hook was installed"),
-        Err(e) => {
-            err(&format!("error: could not remove the hook: {e}"));
-            return exit::USAGE;
-        }
-    }
+    // Not a separate step: the hook is declared in the skill's own
+    // frontmatter, so deleting the file takes it. That is the reason it lives
+    // there rather than in the agent's settings — a hook written into
+    // somebody's settings file outlives the skill it came with, and goes on
+    // running a command they thought they had removed.
+    println!("the hook it carried went with it");
 
     if everything {
         match prefs::clear() {

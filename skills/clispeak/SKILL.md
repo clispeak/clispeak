@@ -1,5 +1,11 @@
 ---
 name: clispeak
+hooks:
+  UserPromptSubmit:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: clispeak prefs --brief
 description: Speak messages aloud on the user's own devices — phone, laptop, desk — instead of writing to a terminal they may not be looking at. Use when the user has asked to be told something by voice, when a long task finishes and they have walked away, or when you need an answer and they are not at the screen. Also covers setting clispeak up, pairing devices, and how they want to be spoken to.
 ---
 
@@ -15,7 +21,7 @@ is the whole point of the tool and it should shape everything you send. Speech
 cannot be skimmed, scrolled back, or re-read. It arrives whether or not it is
 wanted.
 
-## Start by asking the tool, not your memory
+## The first thing you do, every time
 
 ```bash
 clispeak prefs
@@ -27,15 +33,28 @@ agent that runs here, so it is current even if you have never seen it, even if
 this session was compacted an hour ago, and even if the last agent to talk to
 them was a different one entirely.
 
-This matters more than it sounds. Reading is idempotent and remembering is
-not: an agent that forgets to read simply reads again, while an agent that
-forgets to *write something down* has lost it permanently. So nothing here
-asks you to hold the agreement in your head.
+Reading is idempotent and remembering is not: an agent that forgets to read
+simply reads again, while an agent that forgets to *write something down* has
+lost it permanently. Nothing here asks you to hold the agreement in your head.
 
-If it says nothing has been recorded, the machine is not unconfigured in a way
-that needs fixing — it means nobody has told anyone anything yet. Use the
-defaults it describes and let the first correction become the first rule. **Do
-not interview them.**
+**The first time this tool comes up in a conversation, do one more thing:**
+
+- **If an agreement is recorded** — read it back in one sentence and ask
+  whether it is still right. One exchange, then get on with what they asked
+  for.
+- **If nothing is recorded** — run `clispeak prefs setup` and work through the
+  questions with them. It prints them in order with the command that records
+  each answer, and it knows which ones they have already answered.
+
+```bash
+clispeak prefs setup     # the questions, in order
+clispeak prefs reset     # forget it all and start again, keeping this skill
+```
+
+**Once, not before every message.** The questions belong at the moment
+this first comes up, which is already an engagement. They do not belong in
+front of every first message — that is a form standing between someone and the
+thing they asked for, and it is why this skill used to get skipped.
 
 ## Recording what they tell you
 
@@ -48,6 +67,9 @@ clispeak prefs add speak-when "the nightly build breaks"
 clispeak prefs remove speak-when 3      # by the number `prefs` showed
 clispeak prefs set output brief
 clispeak prefs set address-me-as Patrick
+clispeak prefs set speak-as "Clispeak Lead"
+clispeak prefs set speak-to Phone
+clispeak prefs set fallback-to all
 ```
 
 **The read-back is not optional.** Nobody opens this file — you are the only
@@ -79,10 +101,30 @@ Under `terminal` and `brief`, the `speak_when` rules decide whether a moment is
 worth a message at all. Under `speech` they do not — "say everything" is the
 instruction, and filtering on top of it would silently drop things.
 
+## Which device, and what to do when it is not there
+
+`clispeak prefs` reports **Speak to** — the device a message goes to when you
+do not pass `--to`. It is the most consequential line in the agreement: the
+others shape a message, this one decides whether it is heard at all.
+
+It may also report a fallback, for when that device is `unreachable`. **The
+tool does not act on it and you must.** Whether an unreachable phone is worth
+chasing to every other device is a judgement about *this* message, not a
+property of the failure — a rule that broadcast to `all` every time a phone was
+off would be loudest exactly when nobody is there. Decide, then say what you
+did.
+
+**Only for `unreachable`.** `muted` and quiet hours are decisions they made;
+routing around those defeats the setting, and the message is in that device's
+history to read later.
+
 ## Say who you are
 
 The user may have several agents that can reach the same devices. A voice from
 a pocket that does not say whose it is forces them to guess.
+
+`clispeak prefs` reports **Call yourself** — use that name, not one you picked.
+They chose it so they can tell one voice from another.
 
 ```
 clispeak --to Phone "Patrick, this is Claude. The deploy finished and the
@@ -90,8 +132,8 @@ smoke tests passed."
 ```
 
 Where a name has been recorded, **the tool enforces this**: a message that does
-not open by naming them is refused with the corrected line, which you send as
-given. Under `speech` it is not required, because constant messages make it a
+not open by naming them is refused with a corrected line containing both
+names, which you send exactly as given. Under `speech` it is not required, because constant messages make it a
 tic rather than a courtesy.
 
 Do not drop it because you spoke a minute ago. Each message arrives on its own.
@@ -212,17 +254,23 @@ and passing `--to` is refused rather than ignored.
 ## Keeping yourself current
 
 ```bash
-clispeak skill --check            # does the installed skill match this build?
-clispeak skill --install --hook   # write it, and the hook that keeps prefs in context
+clispeak skill --check     # does the installed skill match this build?
+clispeak skill --install   # write it
 ```
 
 Run the check before helping with setup. A skill installed months ago
 describes a tool that has moved, and it is confident while doing so — offer to
 update it first.
 
-**The hook is worth asking for.** It runs `clispeak prefs --brief` on every
-prompt, so the agreement is in front of you even after this conversation has
-been compacted. It edits their agent settings, so ask before installing it.
+**The hook comes with this file.** Its frontmatter declares a
+`UserPromptSubmit` hook running `clispeak prefs --brief`, registered when this
+skill is invoked and running for the rest of the session. That is what puts
+the agreement back in front of you on every turn, including after this
+conversation has been compacted and the text you read earlier is gone.
+
+Nothing to install separately and nothing of theirs to edit — which is the
+point. A hook written into their agent's settings file would outlive the skill
+and go on running a command they had removed.
 
 ## What is not yours to run
 
@@ -233,7 +281,7 @@ them run it.
 ## Undoing all of this
 
 ```bash
-clispeak forget                # remove the skill and the hook
+clispeak forget                # remove the skill, and the hook it carries
 clispeak forget --everything   # ...and the agreement too
 ```
 

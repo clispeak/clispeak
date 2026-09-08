@@ -150,3 +150,61 @@ fn the_skill_still_tells_an_agent_to_identify_itself() {
         "the skill must still tell an agent to record the working agreement"
     );
 }
+
+/// The hook block is the shape the runner actually accepts.
+///
+/// **Written because the first version was not, and nothing noticed.** The
+/// frontmatter carried `args: []`, copied from a documented example whose
+/// `command` was a path to a script with no arguments — where an empty args
+/// array is consistent. Generalised to a command *line* it is not: with an
+/// explicit `args` the runner treats `command` as a bare executable name and
+/// looks up the whole string in `$PATH`, so every prompt produced
+///
+///   exitCode: 1
+///   stderr:   Executable not found in $PATH: "clispeak prefs --brief"
+///
+/// and the agreement never reached the model. It failed *silently from the
+/// inside*: the hook fired, the transcript recorded the error, and nothing in
+/// the conversation looked wrong — the agreement appeared to be known because
+/// it had been read by hand a few minutes earlier.
+///
+/// That is the exact failure this hook exists to prevent, so the shape is
+/// pinned. Not a full YAML parse, deliberately: the point is to catch the one
+/// key whose presence changes how the command is executed.
+#[test]
+fn the_hook_runs_a_command_line_rather_than_naming_an_executable() {
+    let text = skill();
+    let front = text
+        .split("\n---\n")
+        .next()
+        .expect("frontmatter before the first ---");
+
+    assert!(
+        front.contains("UserPromptSubmit:"),
+        "the skill no longer declares the hook that keeps the agreement in \
+         context after a compaction"
+    );
+
+    let command = front
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("command:"))
+        .map(str::trim)
+        .expect("the hook declares a command");
+    assert!(
+        command.starts_with("clispeak "),
+        "the hook should run this tool, not {command:?}"
+    );
+    assert!(
+        command.split_whitespace().count() > 1,
+        "a command with no arguments would not need this test; {command:?}"
+    );
+
+    assert!(
+        !front.contains("args:"),
+        "the hook frontmatter has an `args` key. With one present the runner \
+         treats `command` as a bare executable name and looks up the whole \
+         string in $PATH, so `{command}` becomes a file that does not exist \
+         and the hook fails on every prompt — visibly in the transcript and \
+         invisibly in the conversation."
+    );
+}
