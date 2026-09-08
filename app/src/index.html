@@ -461,6 +461,36 @@
     </div>
   </section>
 
+  <!-- Last, and unmissable when you scroll here looking for it.
+
+       The interface never said what version it was, and that cost a day and a
+       half: a laptop ran a build from eighty-four minutes before the first
+       release for that long, and the only way anyone found out was reading a
+       package manager's install timestamp. On a phone there is no command
+       line at all, so this is the only place the question can be answered
+       (#235).
+
+       Selectable rather than a bare label, because the first thing anyone
+       does with it is paste it into a bug report. -->
+  <section>
+    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+      About
+    </h2>
+    <div class="rounded-xl border border-neutral-200 bg-white p-4
+                dark:border-neutral-800 dark:bg-neutral-900">
+      <div class="flex items-baseline justify-between gap-3">
+        <span class="text-sm">Version</span>
+        <span id="app-version" class="select-all font-mono text-sm text-neutral-500 dark:text-neutral-400">
+          …
+        </span>
+      </div>
+      <p class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        Worth quoting in a bug report. Downloads and what changed in each
+        release are on clispeak.com.
+      </p>
+    </div>
+  </section>
+
   </div>
 </main>
 

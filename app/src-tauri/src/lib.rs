@@ -41,6 +41,20 @@ pub struct NodeStatus {
     /// silent without saying what to do about it, and the sentence that
     /// names the fault was reaching only whoever sent a message.
     pub reason: Option<String>,
+    /// What version this build is.
+    ///
+    /// **The interface never said, and it cost a day and a half.** A laptop
+    /// ran a build from eighty-four minutes before the first release for that
+    /// long, and the only way anyone found out was reading a package
+    /// manager's install timestamp. On a phone there is no command line at
+    /// all, so this screen is the only place the question can be answered
+    /// (#235).
+    ///
+    /// The node's, not the shell's — those differ exactly when the app has
+    /// been updated and not restarted, which is the case worth spotting.
+    /// Empty while the node is still coming up, since there is nothing to
+    /// report yet.
+    pub version: String,
     /// Whether the node is still coming up. Transient, and worth saying so.
     pub starting: bool,
     /// Why the node is not running at all.
@@ -63,6 +77,11 @@ impl Default for NodeStatus {
             engine: "unknown".into(),
             fallback: true,
             reason: None,
+            // Not empty by default: this build knows its own version whatever
+            // else is unknown, and the one state where it would be blank —
+            // still starting — is the state a person is least likely to be
+            // reading a settings screen in.
+            version: env!("CARGO_PKG_VERSION").into(),
             starting: false,
             failed: None,
         }
@@ -620,6 +639,10 @@ fn status_of(startup: &Startup) -> NodeStatus {
                 engine: "unavailable".into(),
                 fallback: true,
                 failed: Some(why.clone()),
+                // Known even here, and this is where it matters most: a node
+                // that would not start is the report most likely to be filed,
+                // and the version is the first thing anyone will ask for.
+                version: env!("CARGO_PKG_VERSION").into(),
                 ..NodeStatus::default()
             };
         }
@@ -633,9 +656,13 @@ fn status_of(startup: &Startup) -> NodeStatus {
             engine: s.engine,
             fallback: s.fallback,
             reason: s.reason,
+            version: s.version,
             ..NodeStatus::default()
         },
         None => NodeStatus {
+            // A reply that was not a status still came from this build, so
+            // the version is known even when nothing else is.
+            version: env!("CARGO_PKG_VERSION").into(),
             name: node.name().to_string(),
             device_id: node.id(),
             engine: "unknown".into(),
@@ -1212,6 +1239,7 @@ mod replies {
         pub engine: String,
         pub fallback: bool,
         pub reason: Option<String>,
+        pub version: String,
     }
 
     pub(super) fn status(r: Response) -> Option<Status> {
@@ -1221,12 +1249,14 @@ mod replies {
                 engine,
                 fallback,
                 engine_reason,
+                version,
                 ..
             } => Some(Status {
                 device_id,
                 engine,
                 fallback,
                 reason: engine_reason,
+                version,
             }),
             _ => None,
         }

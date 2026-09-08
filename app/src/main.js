@@ -449,6 +449,10 @@ async function refresh() {
 
   $("name").textContent = status.name;
   $("ident").textContent = status.device_id.slice(0, 20) + "…";
+  // Written even while the node is starting, because the shell knows its own
+  // version whatever the node is doing — and a node that will not start is
+  // exactly when somebody wants the number to put in a report (#235).
+  if (status.version) $("app-version").textContent = status.version;
   if (document.activeElement !== $("name-input")) {
     $("name-input").value = status.name;
   }
