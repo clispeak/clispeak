@@ -68,6 +68,15 @@ window.__calls = [];
  */
 window.__peerName = "Phone";
 
+/**
+ * What the node reports as its version.
+ *
+ * A probe sets this to the empty string to check the one case that actually
+ * bit: a node too old to report one, where the screen must not print a blank
+ * or the word "undefined" where a number belongs.
+ */
+window.__version = "0.9.2";
+
 window.__TAURI__ = {
   core: {
     invoke: async (cmd, args) => {
@@ -94,6 +103,7 @@ window.__TAURI__ = {
       switch (cmd) {
         case "node_status":
           return {
+            version: window.__version,
             name: "Mac",
             device_id: "abcdef0123456789abcdef",
             engine: "Lessac",
