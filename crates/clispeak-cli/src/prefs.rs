@@ -121,9 +121,52 @@ pub struct Agreement {
     /// What to call the user when speaking to them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_me_as: Option<String>,
+    /// What the agent calls *itself* when it speaks.
+    ///
+    /// The opener names two people and only one of them was stored. That
+    /// showed as soon as anything used it: the rewrite offered on a refused
+    /// message had to say `<your name>`, a placeholder, while the skill tells
+    /// an agent to send the suggestion verbatim. Two instructions that cannot
+    /// both be followed.
+    ///
+    /// One name for the machine rather than one per agent, deliberately. It
+    /// is the name the *user* hears, they chose it so they can tell one voice
+    /// from another, and an agent picking its own would defeat that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speak_as: Option<String>,
     /// Where a response goes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<Output>,
+    /// Which device to speak on when `--to` is not given.
+    ///
+    /// **The most consequential preference here and it was missing.** The
+    /// others shape a message; this one decides whether it is heard at all. A
+    /// default of "this machine" is right for someone at their desk and
+    /// exactly wrong for the case the tool exists for — a person who has
+    /// walked away.
+    ///
+    /// Stored here rather than in the top-level `default_target` it mirrors,
+    /// and it wins over it, so that one command shows and sets everything
+    /// about how this person is spoken to. The older key keeps working for
+    /// anyone who set it by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speak_to: Option<String>,
+    /// Where to try when [`Self::speak_to`] cannot be reached.
+    ///
+    /// Only for `unreachable` — a device that is off or offline. **Never for
+    /// `muted` or quiet hours**, which are decisions the person made; routing
+    /// around those defeats the setting and the message is in that device's
+    /// history for them to read.
+    ///
+    /// **Read by the agent, not acted on by the tool, and that is deliberate.**
+    /// Retrying automatically was considered and refused: whether an
+    /// unreachable phone is worth chasing to every other device is a
+    /// judgement about *this* message, not a property of the failure. A rule
+    /// that broadcast to `all` every time a phone was off would be noisy
+    /// exactly when nobody is there to be reached, and the tool cannot tell a
+    /// build notification from something urgent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_to: Option<String>,
     /// Moments worth speaking about at all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub speak_when: Vec<Rule>,
@@ -151,6 +194,8 @@ impl Agreement {
     /// started an interview (#231).
     pub fn configured(&self) -> bool {
         self.address_me_as.is_some()
+            || self.speak_as.is_some()
+            || self.speak_to.is_some()
             || self.output.is_some()
             || !self.speak_when.is_empty()
             || !self.never_speak.is_empty()
@@ -192,8 +237,23 @@ impl List {
 pub enum Field {
     /// What to call the user.
     AddressMeAs,
+    /// What the agent calls itself.
+    SpeakAs,
+    /// Which device to speak on by default.
+    SpeakTo,
+    /// Where to try when that device is unreachable.
+    FallbackTo,
     /// Where responses go.
     Output,
+}
+
+/// Trimmed, or an error naming what was expected.
+fn non_empty(value: &str, what: &str) -> anyhow::Result<String> {
+    let v = value.trim();
+    if v.is_empty() {
+        anyhow::bail!("{what} needs some letters in it");
+    }
+    Ok(v.to_string())
 }
 
 /// Unix seconds now, or zero if the clock is before the epoch.
@@ -288,6 +348,15 @@ pub fn set(field: Field, value: &str) -> anyhow::Result<Agreement> {
                 }
                 a.address_me_as = Some(name.to_string());
             }
+            Field::SpeakAs => {
+                let name = value.trim();
+                if name.is_empty() {
+                    anyhow::bail!("a name needs some letters in it");
+                }
+                a.speak_as = Some(name.to_string());
+            }
+            Field::SpeakTo => a.speak_to = Some(non_empty(value, "a device name")?),
+            Field::FallbackTo => a.fallback_to = Some(non_empty(value, "a device name")?),
             Field::Output => a.output = Some(Output::parse(value).map_err(anyhow::Error::msg)?),
         }
         Ok(())
@@ -332,11 +401,16 @@ fn amend(change: impl FnOnce(&mut Agreement) -> anyhow::Result<()>) -> anyhow::R
 /// The agreement, written for whoever reads it — usually an agent.
 pub fn render(a: &Agreement) -> String {
     if !a.configured() {
-        return "Nothing recorded yet on this machine. Speak when a long task \
-                finishes and they have walked away, when a question blocks \
-                you, or when something fails they asked to hear about. Say \
-                what you are doing in one sentence and let the first \
-                correction become the first rule — do not interview them.\n"
+        return "Nothing recorded yet on this machine.\n\n\
+                Run `clispeak prefs setup` and work through the questions with \
+                them now — this is\nthe moment for it, and it is once rather \
+                than per message. Keep it to a few\nexchanges and accept short \
+                answers.\n\n\
+                If they would rather not, the defaults are: speak when a long \
+                task finishes and\nthey have walked away, when a question \
+                blocks you, or when something fails they\nasked to hear about. \
+                Say so in one sentence and let their first correction become\n\
+                the first rule.\n"
             .into();
     }
 
@@ -344,8 +418,19 @@ pub fn render(a: &Agreement) -> String {
     if let Some(name) = &a.address_me_as {
         out.push_str(&format!("Call them: {name}\n"));
     }
+    if let Some(me) = &a.speak_as {
+        out.push_str(&format!("Call yourself: {me}\n"));
+    }
+    match (&a.speak_to, &a.fallback_to) {
+        (Some(to), Some(back)) => {
+            out.push_str(&format!("Speak to: {to}, or {back} if it is unreachable\n"));
+        }
+        (Some(to), None) => out.push_str(&format!("Speak to: {to}\n")),
+        (None, _) => out.push_str("Speak to: this machine (nothing else chosen)\n"),
+    }
     let mode = a.output();
     out.push_str(&format!("Output: {} — {}\n", mode.as_str(), describe(mode)));
+    let _ = &mode;
     if let Some(length) = mode.spoken_length() {
         out.push_str(&format!("Spoken length: {length}\n"));
     }
@@ -367,6 +452,12 @@ pub fn render(a: &Agreement) -> String {
             ));
         }
     }
+    out.push_str(
+        "\nIf this is the first time clispeak has come up, read it back in one \
+         sentence and ask\nwhether it is still right. Once, not every message. \
+         `clispeak prefs setup` has the\nquestions if anything needs \
+         revisiting.\n",
+    );
     out
 }
 
@@ -378,6 +469,96 @@ fn describe(mode: Output) -> &'static str {
         Output::Full => "write it and speak the same text",
         Output::Speech => "speak everything, keep the terminal minimal",
     }
+}
+
+/// The questions to ask, in order, with the command that records each answer.
+///
+/// **Printed by the tool rather than written into the skill**, for the reason
+/// everything else here is: a skill installed months ago asks last year's
+/// questions and does it confidently. Questions that ship with the binary are
+/// current by construction, so an agent with a stale skill still asks the
+/// right ones.
+///
+/// **Run when the skill is first engaged, not before every message.** That
+/// distinction is the whole of it, and the first version of this file got it
+/// wrong in both directions.
+///
+/// The original skill demanded a five-question interview and said an agent
+/// did not know enough to use the tool until it was done — a form standing in
+/// front of every first message, which agents route around by not using the
+/// tool. Removing it went too far the other way: a user who asked to set
+/// clispeak up got no path at all, because there was nothing to run.
+///
+/// The moment that works is when clispeak first comes up in a conversation
+/// and the skill loads. That is already an engagement, so questions there
+/// cost nothing — and it is once, not per message.
+pub fn setup_script(a: &Agreement) -> String {
+    let mut out = String::from(
+        "Ask these in order, recording each answer as it comes. It is a \
+         conversation, not a form:\n\
+         keep it to a few exchanges, accept short answers, and skip anything \
+         they have already told you.\n\n",
+    );
+
+    let known = |v: &Option<String>| match v {
+        Some(x) => format!("  (currently {x})"),
+        None => String::new(),
+    };
+
+    out.push_str(&format!(
+        "1. What should I call you?{}\n   \
+            clispeak prefs set address-me-as <name>\n\n\
+         2. What should I call myself when I speak?{}\n   \
+            They may run several agents that reach the same devices, and a \
+            voice from a\n   pocket that does not say whose it is makes them \
+            guess.\n   \
+            clispeak prefs set speak-as <name>\n\n\
+         3. Which device should I speak on by default?{}\n   \
+            Run `clispeak devices` first and offer the real names. A phone \
+            suits \"you need\n   to know now\"; a desk machine suits \"you will \
+            see this when you are back\".\n   \
+            clispeak prefs set speak-to <device>\n\n\
+         4. And if that device is unreachable — off, or offline?{}\n   \
+            Another device, or `all` to reach everything in the space. Only \
+            for unreachable:\n   \
+            muted and quiet hours are decisions they made, and routing around \
+            those\n   defeats the setting.\n   \
+            clispeak prefs set fallback-to <device|all>\n\n\
+         5. Where should answers go?  ({})\n   \
+            terminal  write everything, say nothing\n   \
+            brief     write the detail, say a short summary of it\n   \
+            full      say the same text you wrote\n   \
+            speech    say everything, keep the terminal quiet\n   \
+            clispeak prefs set output <mode>\n\n\
+         6. When is it worth speaking? Offer a starting point rather than an \
+            empty question:\n   \
+            a long task finishing when they have walked away; something \
+            blocked on them;\n   \
+            a failure they asked to hear about. Ask what to add or drop.\n   \
+            clispeak prefs add speak-when \"<their words, not yours>\"\n\n\
+         7. Anything I should never say aloud?\n   \
+            Advisory — the tool cannot check it, so it is your judgement to \
+            apply.\n   \
+            clispeak prefs add never-speak \"<their words>\"\n\n",
+        known(&a.address_me_as),
+        known(&a.speak_as),
+        known(&a.speak_to),
+        known(&a.fallback_to),
+        // Said as a default rather than a choice when nobody has chosen. The
+        // first version printed "currently brief" on a freshly reset machine,
+        // which claims a decision that was never made — the same shape as
+        // every other thing that described itself wrongly today.
+        match a.output {
+            Some(m) => format!("currently {}", m.as_str()),
+            None => format!("default: {}", Output::default().as_str()),
+        },
+    ));
+
+    out.push_str(
+        "Then read back what you recorded, in one sentence. They never open \
+         the file — that\nsentence is the only way they learn what is stored.\n",
+    );
+    out
 }
 
 /// One line, for a hook that runs on every prompt.
@@ -392,6 +573,15 @@ pub fn brief(a: &Agreement) -> String {
     let mut parts = vec![format!("output {}", a.output().as_str())];
     if let Some(name) = &a.address_me_as {
         parts.push(format!("call them {name}"));
+    }
+    if let Some(me) = &a.speak_as {
+        parts.push(format!("call yourself {me}"));
+    }
+    if let Some(to) = &a.speak_to {
+        parts.push(match &a.fallback_to {
+            Some(back) => format!("speak to {to}, or {back} if unreachable"),
+            None => format!("speak to {to}"),
+        });
     }
     if !a.speak_when.is_empty() {
         parts.push(format!(
@@ -496,7 +686,14 @@ pub fn allows(a: &Agreement, text: &str) -> Result<(), Refusal> {
                   and this one does not.\n       A voice from a pocket that does \
                   not say who it is forces them to guess."
             .into(),
-        instead: Some(format!("{name}, this is <your name>. {text}")),
+        // Literal when both names are known, which is what makes "send this
+        // verbatim" an instruction an agent can actually follow. Before
+        // `speak_as` existed this said `<your name>` — a placeholder, in a
+        // suggestion the skill tells agents to send unchanged.
+        instead: Some(match a.speak_as.as_deref() {
+            Some(me) => format!("{name}, this is {me}. {text}"),
+            None => format!("{name}, {text}"),
+        }),
         kind: Kind::NeedsOpener,
     })
 }
@@ -626,6 +823,103 @@ mod tests {
         let mut a = named("Patrick", Output::Brief);
         a.never_speak = vec![rule("credentials")];
         assert!(allows(&a, "Patrick, the credentials test passed.").is_ok());
+    }
+
+    #[test]
+    fn the_rewrite_is_literal_once_both_names_are_known() {
+        // The skill tells an agent to send the suggestion verbatim. Before
+        // `speak_as` existed this contained `<your name>` — a placeholder in
+        // a line it was told not to edit, which are two instructions that
+        // cannot both be followed.
+        let a = Agreement {
+            address_me_as: Some("Patrick".into()),
+            speak_as: Some("Clispeak Lead".into()),
+            output: Some(Output::Brief),
+            ..Agreement::default()
+        };
+        let instead = allows(&a, "The deploy finished.")
+            .expect_err("refused")
+            .instead
+            .expect("a rewrite");
+        assert_eq!(
+            instead,
+            "Patrick, this is Clispeak Lead. The deploy finished."
+        );
+        // And the rewrite has to satisfy the rule it is offered for, or an
+        // agent that sends it gets refused again and has nowhere to go.
+        assert!(
+            allows(&a, &instead).is_ok(),
+            "the suggestion is refused too"
+        );
+    }
+
+    #[test]
+    fn without_a_name_of_its_own_the_rewrite_still_works() {
+        let a = Agreement {
+            address_me_as: Some("Patrick".into()),
+            output: Some(Output::Brief),
+            ..Agreement::default()
+        };
+        let instead = allows(&a, "Done.").expect_err("refused").instead.unwrap();
+        assert!(allows(&a, &instead).is_ok(), "{instead} is refused too");
+    }
+
+    #[test]
+    fn a_device_or_a_name_alone_counts_as_configured() {
+        // `configured` decides whether an agent asks the setup questions. A
+        // machine where someone has said only "use my phone" has been
+        // configured, and asking again from scratch would lose that.
+        for a in [
+            Agreement {
+                speak_to: Some("Phone".into()),
+                ..Agreement::default()
+            },
+            Agreement {
+                speak_as: Some("Clispeak Lead".into()),
+                ..Agreement::default()
+            },
+        ] {
+            assert!(a.configured(), "{a:?} should count as configured");
+        }
+    }
+
+    #[test]
+    fn the_setup_script_says_default_where_nothing_was_chosen() {
+        // It said "currently brief" on a machine where nobody had chosen
+        // anything — claiming a decision that was never made, which is the
+        // shape of every other thing that described itself wrongly.
+        let fresh = setup_script(&Agreement::default());
+        assert!(fresh.contains("default: brief"), "{fresh}");
+        assert!(!fresh.contains("currently brief"), "{fresh}");
+
+        let chosen = setup_script(&Agreement {
+            output: Some(Output::Brief),
+            ..Agreement::default()
+        });
+        assert!(chosen.contains("currently brief"), "{chosen}");
+    }
+
+    #[test]
+    fn the_setup_script_asks_which_device_and_what_to_do_when_it_is_gone() {
+        // The most consequential preference, and the questions did not cover
+        // it: the others shape a message, this one decides whether it is
+        // heard at all.
+        let script = setup_script(&Agreement::default());
+        for want in ["speak-to", "fallback-to", "clispeak devices", "unreachable"] {
+            assert!(script.contains(want), "setup never mentions {want}");
+        }
+    }
+
+    #[test]
+    fn the_brief_line_carries_the_device_so_a_hook_shows_it() {
+        let a = Agreement {
+            speak_to: Some("Phone".into()),
+            fallback_to: Some("all".into()),
+            ..Agreement::default()
+        };
+        let line = brief(&a);
+        assert!(line.contains("speak to Phone"), "{line}");
+        assert!(line.contains("all if unreachable"), "{line}");
     }
 
     #[test]

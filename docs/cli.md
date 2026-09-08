@@ -534,6 +534,59 @@ loud   = ["desk", "laptop"]
 Identity lives in the system keyring, not here. The device roster is managed
 by the node, not hand-edited.
 
+## The working agreement
+
+How this person wants to be spoken to, in the same file as the groups, under
+`[agent]`. **Not intended to be edited by hand** — an agent writes it as the
+user says things, and reads it back to them in a sentence.
+
+```bash
+clispeak prefs                                  # everything, numbered
+clispeak prefs setup                            # the questions to ask, in order
+clispeak prefs set speak-to Phone               # scalars
+clispeak prefs add speak-when "the build breaks"
+clispeak prefs remove speak-when 2              # by the number `prefs` showed
+clispeak prefs reset                            # start again, keeping the skill
+```
+
+| Setting | |
+|---|---|
+| `address-me-as` | what to call the user |
+| `speak-as` | what the agent calls itself — they may run several |
+| `speak-to` | the device a message goes to without `--to`; beats `default_target` |
+| `fallback-to` | where to try when that device is **unreachable**; `all` is valid |
+| `output` | `terminal`, `brief`, `full` or `speech` |
+| `speak-when` | a list of moments worth speaking about |
+| `never-speak` | a list; advisory, see below |
+
+**Why it lives here rather than in an agent's memory.** It used to be
+remembered by each agent, which is per-harness — Claude Code, Codex and
+Antigravity each remembered separately and diverged — invisible to the person
+it describes, and lost whenever a write was forgotten. Reading is idempotent
+and remembering is not: an agent that forgets to read simply reads again,
+while one that forgets to write has lost the preference for good.
+
+**Lists, not prose.** Preferences do not change by rewording; they gain a rule
+or lose one. "Stop telling me about builds" is a removal, and nothing else in
+the list is at risk. Each rule records which agent added it and when, so "why
+does it keep doing that?" has an answer.
+
+**Two rules are enforced and the rest are not.** `output = terminal` refuses
+to speak, with the same exit a muted device produces. A message that does not
+open by naming the user is refused with a corrected line to send verbatim.
+Everything else is judgement.
+
+`never-speak` is deliberately *not* enforced. What people want kept quiet are
+categories — "customer names" — and a substring match cannot check a category.
+Making it enforceable would mean listing the literal secrets in a plaintext
+file in order to avoid saying them aloud, and even then `credentials` would
+refuse "the credentials test passed".
+
+`fallback-to` is likewise read rather than acted on. Whether an unreachable
+phone is worth chasing to every other device is a judgement about *this*
+message; a rule that broadcast to `all` whenever a phone was off would be
+loudest exactly when nobody is there to hear it.
+
 ## Agent usage
 
 The shape this is all built around:

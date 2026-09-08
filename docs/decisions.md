@@ -5227,3 +5227,98 @@ not documented clearly enough to guess at when it is the mechanism the whole
 design rests on, so it goes in `settings.json`, whose shape is documented, and
 `clispeak forget` removes it explicitly. Worth revisiting once the frontmatter
 form has been seen to work.
+
+## 122. The hook rides in the skill, and the questions ride in the binary
+
+**Chosen:** the `UserPromptSubmit` hook is declared in `SKILL.md`'s own
+frontmatter rather than written into the user's `settings.json`, and the setup
+questions are printed by `clispeak prefs setup` rather than written into the
+skill's prose.
+
+**Why the hook moved.** The first version edited `~/.claude/settings.json`
+behind a `--hook` flag, because the frontmatter shape for a *command* hook was
+not something to guess at when it is the mechanism the whole design rests on.
+Reading the documentation properly settled it: a skill may declare hooks, they
+register when the skill is invoked, and they keep running for the rest of the
+session.
+
+That makes the frontmatter strictly better. Nothing of the user's is edited.
+Installing the skill installs the hook, so there is no second step to forget.
+And **removing the skill removes the hook by construction** — where a hook
+written into somebody's settings file outlives the skill it came with and goes
+on running a command they believed they had removed. 129 lines of settings
+merging, tidying and removal went with it.
+
+The cost is that the hook is registered when the skill is *invoked* rather
+than at every session start. That is the right trade: no cost at all in
+sessions where clispeak never comes up.
+
+**Why the questions moved the other way.** They belong in the binary for the
+same reason the agreement does. A skill installed months ago asks last year's
+questions and does it confidently; questions that ship with the binary are
+current by construction, and an agent with a stale skill still asks the right
+ones. `prefs setup` also knows which have already been answered, so it can be
+run again without starting from nothing.
+
+**When they are asked, which is the part that changed twice.** The original
+skill demanded a five-question interview before an agent knew enough to use
+the tool — a form standing in front of every first message, which agents route
+around by not using the tool. Removing it went too far the other way: asked to
+"run the full setup", the answer was that there wasn't one. The moment that
+works is the first time clispeak comes up in a conversation: already an
+engagement, and once rather than per message.
+
+**What `fallback-to` deliberately does not do.** Retrying an unreachable
+device automatically was considered and refused. Whether an unreachable phone
+is worth chasing to every other device is a judgement about *this* message,
+not a property of the failure — a rule that broadcast to `all` whenever a
+phone was off would be loudest exactly when nobody is there to hear it. The
+tool records the preference; the agent decides.
+
+**A one-directional gate, found while doing this.**
+`crates/clispeak-cli/tests/skill.rs` fails when the skill names a command that
+does not exist. It says nothing when the *tool* grows a command the skill
+never mentions — and it had grown five. The drift it was built to catch has a
+direction it cannot see.
+
+## 123. The hook's frontmatter carries no `args`, and a test says so
+
+**Chosen:** the `UserPromptSubmit` hook in `SKILL.md` declares `command:
+clispeak prefs --brief` and **no `args` key**, and
+`crates/clispeak-cli/tests/skill.rs` fails if one appears.
+
+**Why.** The first version had `args: []`, copied from a documented example
+whose `command` was a path to a script taking no arguments — where an empty
+args array is consistent. Generalised to a command *line* it is not: with an
+explicit `args` present the runner treats `command` as a bare executable name
+and does a literal `$PATH` lookup, so every prompt produced
+
+```
+exitCode: 1
+stderr:   Executable not found in $PATH: "clispeak prefs --brief"
+```
+
+and the agreement never reached the model.
+
+**How it hid.** From inside the conversation nothing looked wrong. The hook
+fired, the transcript recorded the failure, and the agreement appeared to be
+known — because it had been read by hand a few minutes earlier during setup.
+The mechanism that exists to survive a compaction was dead, and the only
+evidence was in a log nobody had reason to open. Patrick found it by reading
+the transcript.
+
+**The claim that was carried across a change it did not survive.** The hook
+had been verified working — as a `settings.json` entry, whose form was
+correct. When it moved into the frontmatter (decision 122) the verification
+did not move with it, and "the hook fires" went on being said about a
+different mechanism. Evidence is about the thing it was gathered from.
+
+**What the test pins.** Not a full YAML parse: the one key whose presence
+changes how the command is executed, plus that the command has arguments at
+all — a hook with none would not need this guard. Falsified by putting
+`args: []` back and watching it fail.
+
+**What it cost to find.** Nothing, this time, because it was caught before
+release. What it would have cost is the failure the skill file describes in
+its own words: after a compaction the agreement is out of context with nothing
+to put it back, silently.
