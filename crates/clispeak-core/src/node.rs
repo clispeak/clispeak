@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 use crate::history::{Entry, History, Saver};
 use crate::ipc::{read_frame, socket_name, write_frame};
 use crate::policy::{self, Policies};
-use crate::queue::{Job, Speaker, words_in};
+use crate::queue::{Gating, Job, Speaker, words_in};
 use crate::roster::RosterError;
 use crate::spaces::Spaces;
 use crate::transport::{Network, Wire, read_msg, write_msg};
@@ -297,15 +297,26 @@ impl Node {
             // submit let a message accepted at 21:59 be spoken at 22:10 from
             // behind a long document, inside quiet hours (#77). Weak for the
             // same reason as the recorder above.
-            Arc::new(move |space: Option<&str>| {
+            Arc::new(move |space: Option<&str>, priority: Priority| {
                 let shared = gate.lock().expect("recorder lock").upgrade()?;
                 let policy = shared.policy.lock().expect("policy lock");
+                // The message's own priority, carried down from where it was
+                // sent. It used to be `Priority::Normal` written out here, so
+                // a `high` message passed the check at submit and was refused
+                // by this one for being something it was not — which is the
+                // whole of `high breaks through` never having worked (#246).
+                //
                 // Depth zero: the queue-depth rule drops a low-priority
                 // message that would arrive too late to matter, and it has
                 // already been applied once. Applying it again here, with
                 // this message about to be spoken rather than waiting behind
                 // anything, would be a different question with the same name.
-                policy.verdict(space, Priority::Normal, policy::local_minute(), 0)
+                //
+                // The two arguments beside each other are worth a moment. The
+                // depth argument was reasoned about and got this paragraph;
+                // the priority took a default and got nothing, which is
+                // exactly how it stayed wrong for as long as it did.
+                policy.verdict(space, priority, policy::local_minute(), 0)
             }),
         );
         let shared = Arc::new(Shared {
@@ -1548,16 +1559,17 @@ fn enqueue_inner(
     if let Err(e) = shared.engine.ready() {
         return Response::error(e.to_string());
     }
-    shared.speaker.submit(
-        Job {
-            msg_id: msg_id.clone(),
-            chunks,
-            voice,
-            space: space.map(str::to_string),
-            done,
-        },
-        p == Priority::High,
-    );
+    shared.speaker.submit(Job {
+        msg_id: msg_id.clone(),
+        chunks,
+        voice,
+        space: space.map(str::to_string),
+        // Carried rather than reduced to "is this urgent". The queue reads
+        // the priority for its ordering and the speak-time policy check reads
+        // it for its verdict, and there is now one of it (#246).
+        gating: Gating::Sent(p),
+        done,
+    });
     Response::Accepted { msg_id }
 }
 
@@ -2024,6 +2036,11 @@ fn history_response(shared: &Arc<Shared>, limit: Option<usize>) -> Response {
 /// make the history unreadable exactly when it is most useful — while the
 /// device is still muted.
 ///
+/// It is skipped in both places, which it was not for a while. Bypassing the
+/// check at submit stopped being sufficient the moment a second check was
+/// added at the point of speaking, and this paragraph went on describing
+/// behaviour the code had quietly lost (#248).
+///
 /// Keeps the original id, so a message that was never heard is marked as
 /// heard once it has been played.
 fn replay(shared: &Arc<Shared>, msg_id: &str) -> Response {
@@ -2041,18 +2058,20 @@ fn replay(shared: &Arc<Shared>, msg_id: &str) -> Response {
     if chunks.is_empty() {
         return Response::error("that message has no text");
     }
-    shared.speaker.submit(
-        Job {
-            msg_id: entry.msg_id.clone(),
-            chunks,
-            voice: None,
-            // A replay is this device speaking its own history, not the
-            // space's message arriving again.
-            space: None,
-            done: None,
-        },
-        false,
-    );
+    shared.speaker.submit(Job {
+        msg_id: entry.msg_id.clone(),
+        chunks,
+        voice: None,
+        // A replay is this device speaking its own history, not the
+        // space's message arriving again.
+        space: None,
+        // Skipping the submit-time check was never enough on its own. Every
+        // job also passes a check at the moment of speaking (#77), which
+        // refused replays on a muted device and so undid the bypass the
+        // comment above still described (#248).
+        gating: Gating::Asked,
+        done: None,
+    });
     Response::Accepted {
         msg_id: entry.msg_id,
     }
@@ -5124,6 +5143,131 @@ mod peer_tests {
 
         laptop.shut_down().await;
         impostor.shut_down().await;
+    }
+
+    /// A quiet window that certainly contains this moment, whatever time the
+    /// suite runs at.
+    ///
+    /// `00:00-23:59` is the obvious spelling and it is wrong for one minute a
+    /// day: the window is half-open, so 23:59 itself falls outside it. Two
+    /// hours from now covers the run however long it takes, and wraps
+    /// correctly past midnight because a window whose end is before its start
+    /// is read as crossing midnight.
+    fn quiet_from_now() -> (String, String) {
+        let start = policy::local_minute();
+        (
+            policy::format_time(start),
+            policy::format_time((start + 120) % 1440),
+        )
+    }
+
+    /// #246. `high` is the entire mechanism for reaching someone through a
+    /// quiet window, `status` advertises it, and it never worked.
+    ///
+    /// Policy is checked twice — once when the message is accepted and again
+    /// when it is about to be spoken (#77) — and the second check was handed
+    /// a hardcoded `Priority::Normal`. So a high message passed the first
+    /// gate, queued, and was refused by the second one for being something it
+    /// was not.
+    ///
+    /// This has to go through the queue to fail. `Policy::verdict` is correct
+    /// and its own tests pass, because they call it directly with the
+    /// priority the caller meant. What was wrong was the call site, and
+    /// nothing exercised it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn high_breaks_through_a_quiet_window_at_the_moment_of_speaking() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let (from, to) = quiet_from_now();
+        laptop
+            .node
+            .set_quiet(Some(from), Some(to), true, None)
+            .await;
+
+        laptop
+            .node
+            .speak("the roof is on fire".into(), Priority::High, None)
+            .await;
+        settle(|| !laptop.heard().is_empty()).await;
+        assert_eq!(
+            laptop.heard(),
+            vec!["the roof is on fire".to_string()],
+            "high breaks through, so it has to actually come out of the speaker"
+        );
+
+        laptop.shut_down().await;
+    }
+
+    /// The other half: the window still applies to everything else.
+    ///
+    /// Without this, "let it through" and "let everything through" look
+    /// identical from the test suite, and the fix for #246 could have been
+    /// deleting the second check entirely — which would put #77 back.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_normal_message_is_still_refused_inside_the_window() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let (from, to) = quiet_from_now();
+        laptop
+            .node
+            .set_quiet(Some(from), Some(to), true, None)
+            .await;
+
+        let response = laptop
+            .node
+            .speak("nothing important".into(), Priority::Normal, None)
+            .await;
+        match response {
+            Response::Report { targets, .. } => assert_eq!(
+                targets.first().map(|t| t.status.clone()),
+                Some(Status::QuietHours),
+                "a normal message inside the window is refused, and told why"
+            ),
+            other => panic!("speaking here should report: {other:?}"),
+        }
+        assert!(
+            laptop.heard().is_empty(),
+            "and nothing comes out of the speaker"
+        );
+
+        laptop.shut_down().await;
+    }
+
+    /// Pressing play on a muted device has to speak.
+    ///
+    /// `replay` skips the submit-time policy check deliberately, and says so:
+    /// mute and quiet hours exist to stop a device making noise *unasked*,
+    /// and pressing play is the ask. Then #77 added a second check at the
+    /// moment of speaking, which every job passes through — so the bypass
+    /// stopped working and the comment describing it went on being read as
+    /// true. Found while fixing #246, in the same three lines.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_replay_speaks_on_a_muted_device() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        laptop.node.set_mute(true, None).await;
+
+        // Muted, so this is recorded and not spoken — which is the whole
+        // reason someone would go back to the history and press play.
+        let msg_id = match laptop
+            .node
+            .speak("read this back to me".into(), Priority::Normal, None)
+            .await
+        {
+            Response::Report { msg_id, .. } => msg_id,
+            other => panic!("speaking here should report: {other:?}"),
+        };
+        assert!(laptop.heard().is_empty(), "a muted device says nothing");
+
+        laptop.node.replay(&msg_id);
+        settle(|| !laptop.heard().is_empty()).await;
+        assert_eq!(
+            laptop.heard(),
+            vec!["read this back to me".to_string()],
+            "the person asked for this one directly"
+        );
+
+        laptop.shut_down().await;
     }
 
     /// Wait for a condition, or give up loudly.
