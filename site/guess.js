@@ -43,3 +43,34 @@
     note.hidden = false;
   }
 })();
+
+/**
+ * Say which version the download links will give you.
+ *
+ * Fetched, not written into the page. A number typed by hand goes stale the
+ * next time we ship and then states the wrong thing with confidence — and the
+ * links beside it point at "latest", so a hardcoded version would eventually
+ * disagree with the very files it labels.
+ *
+ * Silent on failure. Someone on a flaky connection, or behind something that
+ * blocks the API, should see the page they came for rather than an error
+ * about a detail. No version at all is better than a wrong one.
+ */
+(async () => {
+  const el = document.getElementById("latest-version");
+  if (!el) return;
+  try {
+    const r = await fetch("https://api.github.com/repos/clispeak/clispeak/releases/latest", {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!r.ok) return;
+    const tag = (await r.json()).tag_name;
+    // Trusted only as far as its shape. It is someone else's JSON landing in
+    // our page, and `textContent` keeps it text whatever it contains.
+    if (!/^v?\d+\.\d+\.\d+/.test(tag || "")) return;
+    el.textContent = `Latest release: ${tag}`;
+    el.hidden = false;
+  } catch {
+    // Offline, blocked, or rate limited. The page is still the page.
+  }
+})();

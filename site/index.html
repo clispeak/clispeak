@@ -69,7 +69,8 @@
       <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#download">Download</a></li>
       <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#after">After</a></li>
       <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#pair">Pairing</a></li>
-      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#agents">For agents</a></li>
+      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#agents">For agents</a>
+        <a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#agreements">Agreements</a></li>
       <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#works">Status</a></li>
     </ul>
 
@@ -226,6 +227,15 @@
       Free, and the same build on every platform.
       <span id="guess-note" hidden></span>
     </p>
+
+    <!-- Asked for, and fetched rather than written in.
+         A number typed here goes stale the next time we ship and then says
+         the wrong thing confidently, which is the one failure this project
+         keeps paying for. The links below already point at "latest"; this
+         asks GitHub what that currently is. If the request fails the line
+         simply stays hidden — no version at all beats a wrong one. -->
+    <p id="latest-version" hidden
+       class="mt-3 text-sm text-neutral-500 dark:text-neutral-400"></p>
 
     <div class="mt-6 grid gap-4 sm:grid-cols-2">
 
@@ -527,7 +537,58 @@ $ clispeak --to Phone "the build finished"
     </p>
   </section>
 
-  <!-- 6. What works today ------------------------------------------------ -->
+
+  <!-- 6. Agreements ------------------------------------------------------
+       Added for 0.9.2, and the release notes point here. Written for someone
+       who codes with an AI rather than someone who reads our source: no
+       mechanism, no file paths, nothing about how it is stored. -->
+  <section id="agreements" class="mt-16 scroll-mt-20">
+    <h2 class="text-2xl font-semibold tracking-tight">Tell it how you want to be interrupted</h2>
+    <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      An assistant that reads every thought aloud gets muted within a day, and
+      then it cannot reach you at all. So the useful thing is not teaching it
+      to talk &mdash; it is telling it
+      <strong class="font-medium text-neutral-900 dark:text-neutral-100">when
+      to</strong>. You do that once, by saying it, and clispeak remembers.
+    </p>
+
+    <p class="mt-4 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      Just talk to it. &ldquo;Use my phone.&rdquo; &ldquo;Only tell me if
+      something breaks.&rdquo; &ldquo;Stop telling me about builds.&rdquo; Ask
+      it to set clispeak up and it will ask you a few short questions instead.
+      Nothing to configure and no file to edit.
+    </p>
+
+    <pre class="mt-6 overflow-x-auto rounded-xl border border-neutral-200 bg-white p-5
+                font-mono text-xs leading-relaxed dark:border-neutral-800 dark:bg-neutral-900"><code>Call me: Patrick
+Speak on: my Phone
+How much: keep it short out loud, put the detail on screen
+
+Say something when
+  1. a long job finishes and I have walked away
+  2. you are stuck and need an answer from me</code></pre>
+
+    <h3 class="mt-8 text-lg font-semibold tracking-tight">It sticks</h3>
+    <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      Tomorrow&rsquo;s chat knows it. So does a different assistant, if you
+      switch or use more than one. You should not have to say it twice. What
+      you told it is kept on your computer, not in one assistant&rsquo;s head.
+    </p>
+
+    <h3 class="mt-8 text-lg font-semibold tracking-tight">Two things it will not let slide</h3>
+    <p class="mt-2 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      Tell it to stay quiet and it stays quiet &mdash; it cannot talk itself
+      into an exception. And every message says who it came from, so a voice
+      out of your pocket never leaves you wondering which assistant that was.
+    </p>
+    <p class="mt-4 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
+      The rest is up to it. Say &ldquo;never mention client names&rdquo; and it
+      will try. But that one is a promise, not a lock &mdash; and we would
+      rather say so than let you assume otherwise.
+    </p>
+  </section>
+
+  <!-- 7. What works today ------------------------------------------------ -->
   <section id="works" class="mt-16 scroll-mt-20">
     <h2 class="text-2xl font-semibold tracking-tight">What works today</h2>
     <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
