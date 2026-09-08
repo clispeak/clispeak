@@ -11,7 +11,44 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 
 use clispeak_engine::{EngineError, SpeechEngine};
-use clispeak_proto::Status;
+use clispeak_proto::{Priority, Status};
+
+/// How policy applies to a message at the moment it is about to be spoken.
+///
+/// The distinction is not urgency, it is *who asked*. Everything queued
+/// arrives unbidden as far as the device is concerned, and mute and quiet
+/// hours exist to stop exactly that. A replay is the person at the device
+/// pressing play, which is the ask those settings are asking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gating {
+    /// Ask policy again when its turn comes, telling it this priority.
+    ///
+    /// Both halves of that are a fixed bug. Asking again is #77: policy was
+    /// checked once, at submit, and a queue takes time to drain, so a message
+    /// accepted at 21:59 behind a long document was spoken at 22:10 inside
+    /// quiet hours. Telling it the real priority is #246: the second check
+    /// was written with `Priority::Normal` hardcoded, so `high` — the entire
+    /// mechanism for reaching someone through a quiet window, and advertised
+    /// as such by `status` — passed the first gate and was refused by the
+    /// second for being something it was not.
+    Sent(Priority),
+    /// Speak it whatever policy says.
+    ///
+    /// A replay, and only a replay. Refusing one would make the history
+    /// unreadable exactly when it is most useful — while the device is still
+    /// muted — which is what the second check quietly did to it (#248).
+    Asked,
+}
+
+impl Gating {
+    /// Whether this message jumps the queue.
+    ///
+    /// A replay never does: it is old text being read back, not something
+    /// that has just become urgent.
+    fn urgent(self) -> bool {
+        matches!(self, Self::Sent(Priority::High))
+    }
+}
 
 /// A message waiting its turn.
 pub struct Job {
@@ -26,6 +63,13 @@ pub struct Job {
     /// `None` for text this device originated, which belongs to no space and
     /// is governed by the device policy alone.
     pub space: Option<String>,
+    /// How policy applies to this message when its turn comes.
+    ///
+    /// Also decides its place in the queue, so the two cannot disagree. They
+    /// used to be separate — a `Priority` handed to the policy check and a
+    /// `bool` handed to the queue — and the check was given a constant while
+    /// the queue was given the truth (#246).
+    pub gating: Gating,
     /// Signalled when speaking ends, for callers that asked to wait.
     ///
     /// Optional because the common case is fire-and-forget: an agent firing
@@ -177,7 +221,10 @@ pub type OnFinish = Arc<dyn Fn(&str, Ended) + Send + Sync>;
 /// with that status rather than held, which matches what the same policy does
 /// to a message that arrives during quiet hours: it is recorded as unheard,
 /// and the sender that waited is told.
-pub type MaySpeak = Arc<dyn Fn(Option<&str>) -> Option<Status> + Send + Sync>;
+///
+/// The priority is the message's own. It used to be a constant here, which
+/// is the whole of #246 — see [`Gating::Sent`].
+pub type MaySpeak = Arc<dyn Fn(Option<&str>, Priority) -> Option<Status> + Send + Sync>;
 
 /// The speaking thread and the queue feeding it.
 #[derive(Clone)]
@@ -220,7 +267,8 @@ impl Speaker {
     /// An urgent one interrupts whatever is playing; the interrupted message
     /// is put back and resumes at the chunk it was cut off in, so what the
     /// listener hears is a clean sentence restart rather than a fragment.
-    pub fn submit(&self, job: Job, urgent: bool) {
+    pub fn submit(&self, job: Job) {
+        let urgent = job.gating.urgent();
         let (lock, cond) = &*self.inner;
         {
             let mut inner = lock.lock().expect("queue lock");
@@ -483,9 +531,13 @@ impl Speaker {
             // to drain and policy is about when noise happens (#77). Once per
             // message rather than per chunk: cutting a sentence in half at
             // ten o'clock would be worse than finishing it.
-            let outcome = match (self.may_speak)(job.space.as_deref()) {
-                Some(status) => Some((job, Ended::plain(status))),
-                None => self.speak_job(job),
+            let outcome = match job.gating {
+                // Nothing to ask: the person asked for this one by hand.
+                Gating::Asked => self.speak_job(job),
+                Gating::Sent(priority) => match (self.may_speak)(job.space.as_deref(), priority) {
+                    Some(status) => Some((job, Ended::plain(status))),
+                    None => self.speak_job(job),
+                },
             };
 
             let mut inner = lock.lock().expect("queue lock");
@@ -510,6 +562,7 @@ impl Speaker {
             chunks,
             voice,
             space,
+            gating,
             mut done,
         } = job;
 
@@ -542,6 +595,7 @@ impl Speaker {
                         chunks: chunks[index..].to_vec(),
                         voice,
                         space,
+                        gating,
                         done: done.take(),
                     });
                     drop(inner);
@@ -584,6 +638,7 @@ impl Speaker {
                 chunks,
                 voice,
                 space,
+                gating,
                 done,
             },
             outcome,
@@ -696,6 +751,15 @@ mod tests {
     }
 
     fn job(id: &str, chunks: &[&str]) -> (Job, tokio::sync::oneshot::Receiver<Ended>) {
+        at(id, chunks, Gating::Sent(Priority::Normal))
+    }
+
+    /// The same, with the gating spelled out.
+    fn at(
+        id: &str,
+        chunks: &[&str],
+        gating: Gating,
+    ) -> (Job, tokio::sync::oneshot::Receiver<Ended>) {
         let (tx, rx) = tokio::sync::oneshot::channel();
         (
             Job {
@@ -703,6 +767,7 @@ mod tests {
                 chunks: chunks.iter().map(|c| c.to_string()).collect(),
                 voice: None,
                 space: None,
+                gating,
                 done: Some(tx),
             },
             rx,
@@ -721,7 +786,7 @@ mod tests {
         let speaker = Speaker::new(
             Arc::clone(&engine) as Arc<dyn SpeechEngine>,
             Arc::new(|_, _| {}),
-            Arc::new(move |_| {
+            Arc::new(move |_, _| {
                 gate.load(std::sync::atomic::Ordering::SeqCst)
                     .then_some(Status::QuietHours)
             }),
@@ -729,7 +794,7 @@ mod tests {
 
         // Accepted while the device is allowed to speak.
         let (first, first_done) = job("m1", &["before"]);
-        speaker.submit(first, false);
+        speaker.submit(first);
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(5), first_done)
                 .await
@@ -742,7 +807,7 @@ mod tests {
         // Ten o'clock arrives while the next one is still waiting.
         shut.store(true, std::sync::atomic::Ordering::SeqCst);
         let (second, second_done) = job("m2", &["after"]);
-        speaker.submit(second, false);
+        speaker.submit(second);
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(5), second_done)
                 .await
@@ -770,9 +835,9 @@ mod tests {
             code: "exit code 1".into(),
             detail: Some("connection refused".into()),
         });
-        let speaker = Speaker::new(engine, Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine, Arc::new(|_, _| {}), Arc::new(|_, _| None));
         let (job, done) = job("m1", &["hello"]);
-        speaker.submit(job, false);
+        speaker.submit(job);
 
         let ended = tokio::time::timeout(Duration::from_secs(5), done)
             .await
@@ -793,9 +858,9 @@ mod tests {
     async fn a_genuinely_missing_engine_still_says_so() {
         let engine =
             FakeEngine::failing(EngineError::Unavailable("no voice model installed".into()));
-        let speaker = Speaker::new(engine, Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine, Arc::new(|_, _| {}), Arc::new(|_, _| None));
         let (job, done) = job("m1", &["hello"]);
-        speaker.submit(job, false);
+        speaker.submit(job);
 
         let ended = tokio::time::timeout(Duration::from_secs(5), done)
             .await
@@ -830,14 +895,14 @@ mod tests {
     #[tokio::test]
     async fn what_is_being_spoken_counts_towards_the_wait() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
         let lines: Vec<String> = (0..40)
             .map(|i| format!("sentence number {i} here"))
             .collect();
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let (long, _done) = job("long", &refs);
-        speaker.submit(long, false);
+        speaker.submit(long);
         settle().await;
 
         // Playing, and therefore in none of the queues.
@@ -859,13 +924,13 @@ mod tests {
     #[tokio::test]
     async fn pending_words_covers_everything_still_to_be_spoken() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
         assert_eq!(speaker.pending_words(), 0);
 
         let (first, _first_done) = job("m1", &["one two three", "four five"]);
-        speaker.submit(first, false);
+        speaker.submit(first);
         let (second, _second_done) = job("m2", &["six seven"]);
-        speaker.submit(second, false);
+        speaker.submit(second);
 
         // Counted before the thread has drained anything, so both are still
         // in hand. Over-counting as speaking proceeds is the safe direction:
@@ -884,16 +949,16 @@ mod tests {
     #[tokio::test]
     async fn urgent_interrupts_then_the_interrupted_message_resumes() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
         let (normal, normal_done) = job("m1", &["one", "two", "three"]);
-        speaker.submit(normal, false);
+        speaker.submit(normal);
         // Long enough to be *inside* the first chunk, which is the case the
         // resume logic exists for.
         settle().await;
 
-        let (urgent, urgent_done) = job("m2", &["urgent"]);
-        speaker.submit(urgent, true);
+        let (urgent, urgent_done) = at("m2", &["urgent"], Gating::Sent(Priority::High));
+        speaker.submit(urgent);
 
         let urgent_status = tokio::time::timeout(Duration::from_secs(5), urgent_done)
             .await
@@ -918,12 +983,12 @@ mod tests {
     #[tokio::test]
     async fn skip_abandons_the_current_message_and_moves_on() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
         let (first, first_done) = job("m1", &["one", "two", "three"]);
         let (second, second_done) = job("m2", &["next"]);
-        speaker.submit(first, false);
-        speaker.submit(second, false);
+        speaker.submit(first);
+        speaker.submit(second);
         settle().await;
 
         speaker.skip();
@@ -947,12 +1012,12 @@ mod tests {
     #[tokio::test]
     async fn clear_cancels_everything_including_what_is_waiting() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
         let (first, first_done) = job("m1", &["one", "two"]);
         let (second, second_done) = job("m2", &["never"]);
-        speaker.submit(first, false);
-        speaker.submit(second, false);
+        speaker.submit(first);
+        speaker.submit(second);
         settle().await;
 
         speaker.clear();
@@ -982,10 +1047,10 @@ mod tests {
     #[tokio::test]
     async fn pause_holds_the_message_and_resume_finishes_it() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
         let (only, only_done) = job("m1", &["one", "two"]);
-        speaker.submit(only, false);
+        speaker.submit(only);
         settle().await;
 
         speaker.pause();
@@ -1012,10 +1077,10 @@ mod tests {
     #[tokio::test]
     async fn skipping_while_paused_drops_the_held_message() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
         let (only, only_done) = job("m1", &["one", "two"]);
-        speaker.submit(only, false);
+        speaker.submit(only);
         settle().await;
         speaker.pause();
         settle().await;
@@ -1043,9 +1108,9 @@ mod tests {
     #[tokio::test]
     async fn stopping_while_paused_does_not_leave_the_device_mute() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
-        speaker.submit(job("m1", &["one", "two"]).0, false);
+        speaker.submit(job("m1", &["one", "two"]).0);
         settle().await;
         speaker.pause();
         settle().await;
@@ -1060,7 +1125,7 @@ mod tests {
         assert!(!speaker.snapshot().paused, "stop should end a pause");
 
         let (next, next_done) = job("m2", &["after"]);
-        speaker.submit(next, false);
+        speaker.submit(next);
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(5), next_done)
                 .await
@@ -1075,9 +1140,9 @@ mod tests {
     #[tokio::test]
     async fn a_paused_queue_still_says_what_it_is_holding() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
-        speaker.submit(job("m1", &["one", "two"]).0, false);
+        speaker.submit(job("m1", &["one", "two"]).0);
         settle().await;
         speaker.pause();
         settle().await;
@@ -1100,7 +1165,7 @@ mod tests {
     #[tokio::test]
     async fn the_controls_say_whether_they_did_anything() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
         // An idle device. Every one of these used to report success at
         // stopping, holding or resuming something that was never there, which
@@ -1111,7 +1176,7 @@ mod tests {
         assert!(!speaker.unpause(), "nothing was waiting to resume");
 
         // And with something in flight, the same calls say so.
-        speaker.submit(job("m1", &["one", "two"]).0, false);
+        speaker.submit(job("m1", &["one", "two"]).0);
         settle().await;
         assert!(speaker.pause(), "a message was playing when it was held");
         settle().await;
@@ -1120,8 +1185,8 @@ mod tests {
         assert!(speaker.skip(), "a message was playing when it was skipped");
         settle().await;
 
-        speaker.submit(job("m2", &["a"]).0, false);
-        speaker.submit(job("m3", &["b"]).0, false);
+        speaker.submit(job("m2", &["a"]).0);
+        speaker.submit(job("m3", &["b"]).0);
         settle().await;
         assert!(
             speaker.clear() >= 2,
@@ -1133,11 +1198,11 @@ mod tests {
     #[tokio::test]
     async fn the_queue_reports_what_is_waiting_in_playing_order() {
         let engine = FakeEngine::new();
-        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_| None));
+        let speaker = Speaker::new(engine.clone(), Arc::new(|_, _| {}), Arc::new(|_, _| None));
 
-        speaker.submit(job("m1", &["a", "b"]).0, false);
-        speaker.submit(job("m2", &["c"]).0, false);
-        speaker.submit(job("m3", &["d"]).0, false);
+        speaker.submit(job("m1", &["a", "b"]).0);
+        speaker.submit(job("m2", &["c"]).0);
+        speaker.submit(job("m3", &["d"]).0);
         settle().await;
 
         let snap = speaker.snapshot();
