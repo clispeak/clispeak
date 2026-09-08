@@ -322,7 +322,8 @@ fn portability() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Fail if `docs/decisions.md` numbers its decisions with a gap or a repeat.
+/// Fail if `docs/adr/` numbers its records with a gap, a repeat, or a heading,
+/// status or index entry that does not match the file.
 ///
 /// The file is append-only and cited by number from CLAUDE.md, issues and
 /// commit messages, so a number has to name exactly one decision. Two agents
@@ -331,40 +332,84 @@ fn portability() -> anyhow::Result<()> {
 /// things and "decision 34" pointed one past where it was written. Nothing
 /// read the sequence, so nothing noticed. Returns how many were checked.
 fn decision_numbers() -> anyhow::Result<usize> {
-    let path = Path::new("docs/decisions.md");
-    let text = std::fs::read_to_string(path)?;
-    let mut expected = 1usize;
+    let dir = Path::new("docs/adr");
+    let mut seen: Vec<(usize, String)> = Vec::new();
     let mut findings = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        let Some(rest) = line.strip_prefix("## ") else {
+
+    for entry in std::fs::read_dir(dir)? {
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        if name == "README.md" || !name.ends_with(".md") {
             continue;
-        };
-        let Some((number, _)) = rest.split_once(". ") else {
-            continue;
-        };
-        let Ok(number) = number.trim().parse::<usize>() else {
-            continue;
-        };
-        if number != expected {
-            findings.push(format!(
-                "  {}:{}: decision {number}, expected {expected}",
-                path.display(),
-                i + 1
-            ));
-            // Resume from what was found, so one slip reports once rather
-            // than as every heading after it.
-            expected = number;
         }
-        expected += 1;
+        // `NNNN-slug.md`. A file that is not named that way is not findable by
+        // number, which is the whole reason the numbering exists.
+        let Some((digits, _)) = name.split_once('-') else {
+            findings.push(format!("  {name}: expected NNNN-a-short-slug.md"));
+            continue;
+        };
+        match digits.parse::<usize>() {
+            Ok(n) if digits.len() == 4 => seen.push((n, name)),
+            _ => findings.push(format!("  {name}: expected four digits, got {digits:?}")),
+        }
     }
+
+    seen.sort();
+    // Consecutive from one, each number once. Two branches adding a record in
+    // parallel each take the next free number, and a rebase keeps both — which
+    // is the failure this catches, and is why records are files rather than
+    // sections of one document.
+    for (i, (n, name)) in seen.iter().enumerate() {
+        let expected = i + 1;
+        if *n != expected {
+            findings.push(format!("  {name}: numbered {n}, expected {expected}"));
+            break;
+        }
+    }
+
+    // A title is part of a decision and the heading has to match the file, or
+    // the index and the record disagree about what was decided.
+    for (n, name) in &seen {
+        let text = std::fs::read_to_string(dir.join(name))?;
+        let first = text.lines().next().unwrap_or_default();
+        if !first.starts_with(&format!("# {n}. ")) {
+            findings.push(format!("  {name}: first line should be `# {n}. <title>`"));
+        }
+        if !text.contains("**Status:**") {
+            findings.push(format!("  {name}: no Status line"));
+        }
+    }
+
+    // Every record is in the index, and the index names no record that is not
+    // there. An index that has quietly stopped listing everything is worse
+    // than none, because it reads as complete.
+    let index = std::fs::read_to_string(dir.join("README.md"))?;
+    for (_, name) in &seen {
+        if !index.contains(name.as_str()) {
+            findings.push(format!("  {name}: missing from docs/adr/README.md"));
+        }
+    }
+    for link in index.match_indices("](").map(|(i, _)| &index[i + 2..]) {
+        if let Some(target) = link.split(')').next()
+            && target.ends_with(".md")
+            && !target.contains('/')
+            && !dir.join(target).exists()
+        {
+            findings.push(format!(
+                "  README.md links to {target}, which does not exist"
+            ));
+        }
+    }
+
     if !findings.is_empty() {
-        eprintln!("decisions must be numbered consecutively, each number once:");
+        eprintln!("decision records must be numbered consecutively and listed once:");
+        findings.sort();
+        findings.dedup();
         for f in &findings {
             eprintln!("{f}");
         }
-        anyhow::bail!("renumber the later decision and update anything that cites it");
+        anyhow::bail!("fix the record's name, heading or index entry");
     }
-    Ok(expected - 1)
+    Ok(seen.len())
 }
 
 /// Fail if the frontend calls a blocking dialog the webview may not have.
@@ -503,13 +548,13 @@ const NEEDLE: &str = "\"org/clispeak/";
 /// Files allowed to contain what looks like a conflict marker.
 ///
 /// **Empty, and that is the finding.** The plan was to exempt this file, which
-/// spells the markers out, and `docs/decisions.md`, which describes the gate.
+/// spells the markers out, and `docs/adr/`, which describes the gate.
 /// Neither needs it: matching only at the start of a line already separates a
 /// marker from prose about one, and both spellings here sit indented inside a
-/// `let`. Tested by putting a real conflict in `docs/decisions.md` and
+/// `let`. Tested by putting a real conflict in a decision record and
 /// watching it be caught.
 ///
-/// Which matters, because `docs/decisions.md` is the file that conflicts on
+/// Which matters, because a decision record is what conflicts on
 /// *every* rebase — it is where all three of today's conflicts were. An
 /// exemption list arrived at by reasoning would have excused the one file
 /// most likely to carry a real marker, and the gate would have looked right.
