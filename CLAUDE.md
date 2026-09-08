@@ -251,6 +251,18 @@ and always has. If this number moves again, move it here in the same change,
 because a merge rule that is one name out of date passes a pull request whose
 newest check never ran.
 
+**Six is a floor, not a count, because a seventh appears conditionally.**
+`kotlin · manifest · resources` builds the Android shell and runs only when
+`gen/android/**`, `tauri.conf.json`, `android.rs` or its own workflow changes
+— so a pull request touching any of those has seven names and every other one
+has six. That makes "six or more green" the wrong test in a way that reads as
+right: it is satisfied by six greens sitting beside a red.
+
+So ask two questions rather than one. Are the six required names green, and
+did *anything* fail. The second is what catches a conditional job, and it
+needs no list to maintain — which is the point, because a list of names is
+exactly the thing that goes one out of date.
+
 Not the number of green rows. `matrix.target: SKIPPED` is the draft run's
 result and it **stays in the rollup forever**, beside the four real names on a
 fully verified pull request — and so do the draft run's own always-run jobs,
