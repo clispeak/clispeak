@@ -215,11 +215,24 @@ impl SpeechEngine for AppleEngine {
     fn current_voice(&self) -> Option<String> {
         // The chosen one if there is one; otherwise whatever the system
         // would use, which is the first it offers.
-        self.voice
-            .lock()
-            .expect("voice lock")
-            .clone()
-            .or_else(|| self.voices().first().map(|v| v.id.clone()))
+        //
+        // **The `let` is the fix, not a tidy-up.** A `MutexGuard` temporary
+        // lives to the end of the enclosing *statement*, not to the end of
+        // the `.clone()` that produced the value — so writing this as one
+        // expression evaluated `self.voices()`, and therefore `run_on_main`,
+        // with the voice lock still held. The app then deadlocked whenever
+        // its own interface and the CLI asked for status at overlapping
+        // moments: the main thread waiting for the lock, a tokio worker
+        // holding it and waiting for the main thread (#245). It reaches an
+        // ordinary install, because the fallback runs precisely when no
+        // voice has been chosen — the state that reports the system default.
+        //
+        // Nothing in the source said the guard was still alive, which is why
+        // `speak` above got this right by writing it out and this did not.
+        // Any `.lock()` here whose statement goes on to call `run_on_main`
+        // or `get_on_main` is the same bug; there are no others today.
+        let chosen = self.voice.lock().expect("voice lock").clone();
+        chosen.or_else(|| self.voices().first().map(|v| v.id.clone()))
     }
 
     fn set_voice(&self, id: &str) -> Result<(), EngineError> {
