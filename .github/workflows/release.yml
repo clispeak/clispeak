@@ -731,42 +731,20 @@ jobs:
           # Per-release specifics — what changed, what is new — are written by
           # hand on the draft before publishing. This is the part that is true
           # of every release.
+          # **What changed, and nothing else.** This used to repeat the
+          # download table, the first-run warnings for each platform and a
+          # section for agents — all of which live on clispeak.com, are the
+          # same every release, and pushed the actual news below the fold.
+          # GitHub already lists the assets.
+          #
+          # Everything specific is written by hand on the draft before
+          # publishing. What is left here is the sentence that is true of
+          # every release, so a draft with nobody's attention on it still
+          # points somewhere useful.
           body: |
-            clispeak speaks text aloud on your own devices — your laptop, your
-            phone, the machine across the room. Peer to peer, with no server to
-            run and no account to create. Built so an agent can drive it.
+            Downloads are attached below. Installing, what each platform says
+            the first time, and pairing a second device are all on
+            **[clispeak.com](https://clispeak.com)**. `SHA256SUMS` lists what
+            each file should hash to.
 
-            ## Downloads
-
-            | Platform | File | Notes |
-            |---|---|---|
-            | Linux | `clispeak-linux.flatpak` | carries its own voice |
-            | Windows | `clispeak-windows-setup.exe` | no administrator password needed |
-            | Android | `clispeak-android.apk` | **64-bit ARM only** |
-            | macOS | `clispeak-macos.dmg` | Apple silicon, signed and notarised |
-
-            `SHA256SUMS` lists what each file should hash to and names the
-            version they were built from. It is not a signature, and it is only
-            as trustworthy as the page you read it from.
-
-            ## First run
-
-            Every platform says something alarming the first time. None of it
-            means the download went wrong.
-
-            - **Windows** — *"Windows protected your PC"*. Choose **More info**
-              → **Run anyway**. There is no Windows signing certificate yet.
-            - **macOS** — asks once for anything downloaded from the web. The
-              app is signed and notarised by Apple.
-            - **Android** — allow **Install unknown apps** for your browser.
-            - **Linux** — needs Flatpak, then
-              `flatpak install --bundle ./clispeak-linux.flatpak`.
-
-            One install does nothing on its own: run `clispeak invite` on one
-            device and scan or paste the code on the other.
-
-            ## For agents
-
-            `clispeak skill --install` writes the agent skill where Claude Code
-            looks for it.
-            two downloads apart.
+            *Release notes go above this line before publishing.*

@@ -399,6 +399,35 @@ otherwise the code gains a capability while two documents go on denying it. That
 has already happened once here, one commit apart, and was caught by luck rather
 than process.
 
+**Release notes say what changed in that release, and nothing else.**
+Everything evergreen — how to install, what each platform says the first time,
+how to pair a second device — is on clispeak.com and does not belong in a
+release. GitHub already lists the assets. The workflow's default body is the
+one sentence true of every release; the specifics are written by hand on the
+draft before publishing.
+
+Both halves of that were learned by getting it wrong. The first version
+carried issue numbers, decision references and an explanation of GitHub's
+"latest" rule — notes addressed to the people publishing, on the one page a
+stranger reads before deciding whether to trust a binary. Patrick's words were
+that they *"share internal build information and random shit that doesn't need
+to be there"*. The second version fixed that and then repeated the whole
+website above the news, pushing what actually changed below the fold.
+
+Three rules follow, and they are all the same rule:
+
+- **Describe a bug by what it did to the person**, not by what was wrong in
+  the code. "A device renamed in the same second it was paired never got its
+  new name anywhere else" is the release note; the unix-seconds tie belongs in
+  `docs/decisions.md`.
+- **Say plainly when behaviour changes for someone who already has it
+  installed.** A refusal that did not exist last week is the thing most likely
+  to annoy the people most likely to be using it, and a sentence costs
+  nothing.
+- **No issue numbers, no decision references, no test counts, nothing about
+  CI.** If it would only mean something to somebody with the repository open,
+  it is not a release note.
+
 **Delete the branch when the pull request merges.** `gh pr merge
 --delete-branch` does it; ten merged branches had accumulated before anyone
 looked, every one of them fully contained in `main`. They cost nothing and
