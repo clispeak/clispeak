@@ -105,7 +105,7 @@ blames the ticket when the fault is usually the reader's clock (#200).
 **Conventions worth knowing before your first pull request.** Open it as a
 draft and mark it ready when you want the five-target verdict — the expensive
 matrix skips drafts on purpose. Docs move with the change:
-[`docs/decisions.md`](docs/decisions.md) is append-only and records what was
+[`docs/adr/`](docs/adr/) holds one file per decision, append-only, recording what was
 chosen, *why*, and what it cost. And no session links in commits or pull
 requests.
 
@@ -351,11 +351,11 @@ so it cannot quietly drift into describing a tool that has moved on.
 | [text.md](docs/text.md) | Validation and chunking rules |
 | [build-plan.md](docs/build-plan.md) | Milestones, repo layout, CI |
 | [m0-results.md](docs/m0-results.md) | Measured transport results on real devices |
-| [decisions.md](docs/decisions.md) | Every decision, with its rationale and cost |
+| [adr/](docs/adr/) | Every decision, one file each, with its rationale and cost |
 | [releasing.md](docs/releasing.md) | How binaries will be built and published, and what has to be settled first |
 | [licensing.md](docs/licensing.md) | The licence, what we may redistribute, and what has to change first |
 
-Start with `decisions.md` if you want to know *why* rather than *what*.
+Start with `docs/adr/` if you want to know *why* rather than *what*.
 
 ## The workspace
 

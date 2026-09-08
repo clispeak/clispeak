@@ -419,7 +419,7 @@ Three rules follow, and they are all the same rule:
 - **Describe a bug by what it did to the person**, not by what was wrong in
   the code. "A device renamed in the same second it was paired never got its
   new name anywhere else" is the release note; the unix-seconds tie belongs in
-  `docs/decisions.md`.
+  a decision record.
 - **Say plainly when behaviour changes for someone who already has it
   installed.** A refusal that did not exist last week is the thing most likely
   to annoy the people most likely to be using it, and a sentence costs
@@ -442,10 +442,41 @@ are not. `cargo xtask piper` fetching that onto your own machine is fine.
 Putting it in something we hand to somebody else is a different question, and
 `docs/licensing.md` is the answer to it.
 
-**Docs are part of the change.** `docs/decisions.md` is numbered and
-append-only: a decision records what was chosen, *why*, and what it costs.
-`docs/build-plan.md` tracks milestones. If a change alters behaviour the docs
-describe, the docs move with it.
+**Docs are part of the change.** `docs/build-plan.md` tracks milestones. If a
+change alters behaviour the docs describe, the docs move with it.
+
+**Decisions live in `docs/adr/`, one file per decision.** They were a single
+`decisions.md` until 8 September 2026. Splitting them was not tidiness: two
+branches appending to one file each took the next free number and a rebase
+kept both, which happened repeatedly; and there was no way to tell a live
+decision from a superseded one without reading forward to find out.
+
+Four rules, and the last two are the ones that were missing:
+
+- **`NNNN-a-short-slug.md`, numbered from one, never reused.** `cargo xtask
+  portability` checks the sequence, that each heading matches its filename,
+  that every record carries a `**Status:**` line, and that the index in
+  `docs/adr/README.md` lists every record and links to nothing absent.
+- **Append, never edit.** A record says what was believed when it was written,
+  so correcting one destroys the only thing it is for. A decision that stops
+  being true is superseded by a *later* record, and the old one's `Status`
+  line is updated to point at it. That line is the only part of an existing
+  record that ever changes.
+- **Write one only when a rejected alternative matters.** If the whole
+  reasoning is about the code that exists, it belongs in a comment beside that
+  code and nowhere else. Two copies of one explanation drift apart
+  independently, which is the failure the records exist to prevent — and it
+  was measured: of 123 records, 66 were referenced by nothing at all.
+- **Link it from the code it explains.** A record nothing points at is one
+  nobody can find at the moment they need it. If there is no place that would
+  cite it, that is the signal not to write it.
+
+**The title is part of the decision, and nothing checks whether it is still
+true.** The gate reads the numbering and the shape; whether a heading
+describes what actually landed is only detectable by reading. That has gone
+wrong once — 56 was titled "the Android shell is compiled on every push" after
+the step it named had been taken back out in the same change. If a change ends
+somewhere other than where it started, the title moves too.
 
 **Errors are written for whoever reads them.** A rejected message shows the
 offending span and a rewrite that can be sent verbatim; a device that will not

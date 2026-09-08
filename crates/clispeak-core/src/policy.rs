@@ -100,7 +100,7 @@ impl Policy {
 /// space *quieter*, never louder. Mute means mute — a space that could undo it
 /// would turn the one switch everybody understands into a switch that works
 /// most of the time, which is worse than not having per-space settings at all.
-/// The cost is stated in `docs/decisions.md` #29: there is no way to let one
+/// The cost is stated in `docs/adr/` decision 29: there is no way to let one
 /// space through while the device is muted, and `high` remains the mechanism
 /// for "reach me anyway".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

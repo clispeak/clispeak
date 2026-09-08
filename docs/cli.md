@@ -494,7 +494,7 @@ device-wide switch is the one most people ever touch.
 consulted and either can refuse, so muting the device silences every space, and
 a per-space setting only ever adds silence. This means there is no way to hear
 one space while the device is muted — `high` is the mechanism for that, and
-`docs/decisions.md` #29 records why the trade went this way.
+[decision 29](docs/adr/0029-a-space-may-be-quieter-than-its-device-never-louder.md) records why the trade went this way.
 
 To have work go quiet in the evening while home still speaks, leave the
 device's own quiet hours off and set a window on `work` alone.

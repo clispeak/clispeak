@@ -236,7 +236,7 @@ original plan.
 *Exit:* `cli.md` is fully implemented, apart from volume, which does not exist
 at any level. Per-space mute and quiet hours landed later, with issue #2 — a
 device policy that acts as a floor and an optional override per space. See
-`docs/decisions.md` #29 for why an override can only add silence.
+[decision 29](docs/adr/0029-a-space-may-be-quieter-than-its-device-never-louder.md) for why an override can only add silence.
 
 ### M9 — macOS
 

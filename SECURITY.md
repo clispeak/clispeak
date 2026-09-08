@@ -42,7 +42,7 @@ welcome but will be closed as known:
   consistent by design; `rotate` is the answer when a device is out of your
   hands, and it says so in its own help text.
 - **Any member may vouch for any device.** That is the design, not an
-  oversight — decision 39 in `docs/decisions.md` explains why enforcing the
+  oversight — [decision 39](docs/adr/0039-any-member-may-vouch-for-any-device-and-the-docs-now-say-so.md) explains why enforcing the
   inviter would stop nothing and would orphan devices.
 - **iOS stops answering when backgrounded**, between five and ten minutes.
   That is the platform. Issue #137.

@@ -28,7 +28,7 @@ already evaluated it as a draft — so leave half a minute between them.
 
 ## Documentation is part of the change
 
-`docs/decisions.md` is numbered and append-only. A decision records what was
+`docs/adr/` holds one file per decision, numbered and append-only. A decision records what was
 chosen, **why**, and what it cost. If a change alters behaviour the docs
 describe, the docs move with it — the README and `docs/` are not a separate
 task to be done later.
