@@ -19,6 +19,27 @@
 # URL "succeeds" with a 302 and the check is a decoration.
 set -uo pipefail
 
+# Every nav item is one link in one list item.
+#
+# Written after a nav entry was added by inserting an anchor beside an
+# existing one instead of in a list item of its own. The markup parsed, both
+# links worked, and the two sat stacked on top of each other in the bar —
+# visible only to somebody looking at the rendered page.
+#
+# **Placed here rather than at the end, which is where it was first put.**
+# The download section closes with `exit 0`, so a check appended after it can
+# never run — a gate that is always silent, which is the failure it exists to
+# catch. Found by breaking the nav on purpose and seeing nothing happen.
+nav=$(sed -n '/<ul class="-mx-1/,/<\/ul>/p' index.html)
+nav_items=$(grep -c '<li>' <<<"$nav")
+nav_links=$(grep -c '<a ' <<<"$nav")
+if [ "$nav_items" != "$nav_links" ]; then
+  echo "FAIL  the section nav has $nav_links links in $nav_items list items —"
+  echo "      one is nested inside another and they will stack in the bar"
+  exit 1
+fi
+echo "ok    nav: $nav_items items, one link each"
+
 # `gh` needs no token beyond the default read permission. If it cannot answer
 # at all — no `gh`, no network — that is treated as "no release", because
 # guessing "there is one" would fail a build over a missing tool.
@@ -72,3 +93,4 @@ fi
 echo "No release is published yet, so this is expected — see the sequencing"
 echo "section of docs/website.md. It will fail rather than warn once one is."
 exit 0
+
