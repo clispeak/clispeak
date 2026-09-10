@@ -431,9 +431,13 @@ something that does not exist yet, it says so.
 | Android | `android.speech.tts.TextToSpeech` | Foreground service |
 | iOS | `AVSpeechSynthesizer` | **Foreground only** — measured, see below |
 
-**Every platform speaks in its own best voice, and Piper is what Linux and
-Windows have.** That is a change: this page used to say every desktop speaks
-through Piper *because a message should sound the same wherever it lands*.
+**Every platform speaks in its own best voice, and Piper is what Linux has.**
+That is a change: this page used to say every desktop speaks through Piper
+*because a message should sound the same wherever it lands*.
+
+This sentence said "Linux and Windows" while the table ten lines above it said
+Windows uses SAPI 5 — one page, one fact, two answers, and the table was
+right. Windows moved off Piper with decision 102 and the paragraph did not.
 
 The uniformity was a consequence rather than a goal. There is no universal
 native engine on Linux and espeak-ng sounds like 1994, so Piper started there

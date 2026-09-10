@@ -280,8 +280,14 @@ pub fn socket_name() -> String {
 /// The private directory this device's socket lives in.
 ///
 /// `None` on Windows, where a named pipe is a namespaced name and has no
-/// directory to be private in — that platform needs a security descriptor on
-/// the listener instead, which is not written yet (#128).
+/// directory to be private in. That platform carries the protection on the
+/// listener instead: see [`PIPE_DACL`] below, which is the same guarantee
+/// spelled in a different language (#128).
+///
+/// This comment said the descriptor "is not written yet" for as long as the
+/// descriptor existed, a hundred and fifty lines below it in this file. A
+/// doc comment describing an absence is the kind that rots silently, because
+/// nothing fails when the absence is filled.
 ///
 /// **`$XDG_RUNTIME_DIR` first**, which is what it is for: per-user, `0700`,
 /// on tmpfs, and cleaned up at logout. Measured here as `/run/user/1000`,
