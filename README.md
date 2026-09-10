@@ -13,56 +13,6 @@ Built for agents to notify you — on your desk, or on the phone in your pocket
 while you're out. Devices connect **peer to peer**. There is no server to run
 and no account to create.
 
-## Status
-
-**Working on Linux, macOS and Android.** Linux and Android run the packaged
-app and talk to each other over the open internet, including on cellular.
-
-**macOS speaks in its own voice.** It uses `AVSpeechSynthesizer`, the
-platform synthesiser, rather than Piper — which also takes the GPL-3.0 speech
-payload out of the Mac build entirely and drops it from 208MB to 32MB.
-Installing from the built dmg with the `clispeak` command on the PATH was
-verified on an arm64 Mac while it still used Piper. **The new engine has been
-heard**, foreground and backgrounded, and the Mac has been paired with a
-laptop and an iOS device and spoken to across the network.
-
-iOS uses the same engine, and has been launched and heard on a real device.
-
-**Windows speaks through SAPI 5**, the platform synthesiser, so it needs
-nothing installed and carries no speech payload. **It has been built and never
-run** — nobody here has a Windows machine, and it is type-checked for
-`x86_64-pc-windows-msvc` and verified by no one.
-
-**Linux speaks with Piper**, which is the one platform where it is still the
-best available answer: there is no universal native engine there. So a message
-does *not* sound identical everywhere any more. That uniformity was a
-consequence of Piper being the only thing that ran everywhere, not a goal —
-Android has always sounded like Android and nobody thought it a defect.
-
-**There is a Windows installer**, and moving to SAPI made most of it
-unnecessary: no Piper, no voice model, and no Microsoft Visual C++
-Redistributable, which was needed only because Piper linked against it. What is
-left is an NSIS installer that needs no administrator, and that puts the
-`clispeak` command on your PATH so an agent can call it — open a **new**
-terminal afterwards, since an existing one keeps the environment it started
-with. Uninstalling takes the entry back off.
-
-**Somebody has run it**, on a clean Windows VM on 6 September 2026: the
-installer runs without an administrator prompt, the app launches, it pairs
-with another device over the network, and **it speaks**. The Windows speech
-path had never been executed by a person before that afternoon.
-
-Two things broke on the way, both now fixed and neither yet re-confirmed on a
-real machine: an invite read as expired because the VM's clock was wrong and
-the message blamed the invite (#200), and `clispeak` sat on the PATH and
-printed nothing at all, because it needed a Visual C++ runtime a clean Windows
-does not have (#201).
-
-The riskiest assumption — that peer-to-peer connections survive carrier-grade
-NAT and network changes — was [measured on real hardware](docs/m0-results.md)
-before anything was built on top of it. It holds: 91% of connections went
-direct, and switching between wifi and cellular caused zero reconnects.
-
 ## Get it
 
 **[clispeak.com](https://clispeak.com)** — downloads for Linux, Windows,
@@ -70,150 +20,8 @@ Android and macOS, with a sentence for each about what the operating system
 will say when you open it, because every one of them says something alarming
 the first time.
 
-That page is where to send anybody who just wants to use this. Everything
-below is for building it yourself.
-
-## Helping
-
-The short version: the issues are real, the tests run on one platform, and the
-thing most likely to bite you is written down.
-
-**Start with [`CLAUDE.md`](CLAUDE.md).** It is addressed to agents and is the
-most useful thing in the repository for a person too — a catalogue of the ways
-this project has actually broken, each with the reason it was invisible.
-`/etc/hostname` on a Mac, a socket name too long by one byte, a build flag
-that only applies to release, a keystore read from the wrong directory. Most
-of them compiled fine and passed every gate.
-
-**The rule that matters most:** it has to compile for all five targets, and a
-green run means *compiled on five, tested on one* — `cargo test` runs on
-Linux and nowhere else. Say which claim you are making.
-
-```bash
-cargo run -p xtask -- check     # conflicts, workflows, fmt, clippy, tests, portability
-```
-
-Run that one command rather than the four it wraps; assembling the chain by
-hand has failed three times in one week, each time silently.
-
-**Where to start looking.** [Open issues](https://github.com/clispeak/clispeak/issues)
-are labelled honestly, including the ones that are decisions rather than
-tasks. If you want something self-contained: the node has no test above the
-unit level and the engine has none at all (#80), and an invite that expires
-blames the ticket when the fault is usually the reader's clock (#200).
-
-**Conventions worth knowing before your first pull request.** Open it as a
-draft and mark it ready when you want the five-target verdict — the expensive
-matrix skips drafts on purpose. Docs move with the change:
-[`docs/adr/`](docs/adr/) holds one file per decision, append-only, recording what was
-chosen, *why*, and what it cost. And no session links in commits or pull
-requests.
-
-**[`CONTRIBUTING.md`](CONTRIBUTING.md)** has the rest.
-
-## Building the packages
-
-**Linux.** Build the Flatpak, which carries Piper and a voice so it speaks the
-moment it is installed:
-
-```bash
-git submodule update --init                 # the manifest's shared-modules
-npm --prefix app ci
-npm --prefix app run build:css              # styles.css is generated, not committed
-cargo build --release -p clispeak-app -p clispeak-cli
-cd packaging/flatpak
-flatpak-builder --force-clean --user --install build-dir org.clispeak.app.yml
-flatpak run org.clispeak.app
-```
-
-The first four lines are not optional and used to be missing here. The
-manifest takes the two binaries from `target/release`, so they have to exist;
-and `cargo build` — unlike `tauri build` — does not run Tailwind, so without
-the CSS step the app installs and comes up unstyled with nothing to say why.
-
-The app installs the `clispeak` command to `~/.local/bin` on first launch, and
-re-installs it whenever the app is updated. The command deliberately stays on
-the host rather than inside the sandbox: entering a Flatpak costs about 86ms
-against the tool's own 3ms, and an agent calls it repeatedly. They still find
-each other, over an abstract socket that crosses the sandbox.
-
-**macOS.** Build the app bundle, which carries the command-line tool and no
-speech payload at all — macOS speaks through the platform synthesiser — so a
-drag to /Applications is the whole install:
-
-```bash
-cargo xtask bundle
-open target/release/bundle/dmg/clispeak_*_aarch64.dmg
-```
-
-As on Linux, the app installs the `clispeak` command to `~/.local/bin` on
-launch and rewrites it whenever the bundled copy differs, so an update cannot
-leave a stale CLI behind. macOS builds its default PATH from `/etc/paths`,
-which names no home directory, so the app also adds a line to `~/.zprofile` —
-after `path_helper`, which would otherwise reorder it away. Nothing is written
-if any of your start-up files already puts that directory on the PATH.
-
-**A locally built `.app` is ad-hoc signed**, which is enough to run and has a
-cost worth knowing: the identity is derived from the binary's own hash, so
-every rebuild looks like a different program to macOS and the keychain grant
-holding the device identity is asked for again. Any stable certificate,
-self-signed included, ends that — five minutes in Keychain Access, and
-`docs/signing.md` has the steps.
-
-**Release builds are signed and notarised**, so a downloaded `.dmg` opens
-without Gatekeeper's warning. Verified on 4 September 2026 by downloading the
-release artefact and installing it over a local build: `spctl` reports
-`source=Notarized Developer ID`, the ticket validates against the disk image,
-and the app kept its keychain identity and its pairings across the swap.
-
-The signing happens in a job that holds the certificate and runs nothing else
-— no `npm`, no `cargo`, no build scripts — behind an environment that needs an
-approval. `docs/signing.md` explains why (#117).
-
-**Android.** Build and install over USB:
-
-```bash
-cd app
-ANDROID_HOME=~/Android/Sdk NDK_HOME=~/android-ndk-r29 \
-  npx @tauri-apps/cli android build --apk --debug --target aarch64
-adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
-```
-
-**Without the app.** `clispeakd` is a headless node for a machine with no
-desktop. On Linux it needs Piper where the engine looks for it, which `cargo
-xtask piper` does — `~/.local/share/clispeak` — and can otherwise fall back to
-`espeak-ng` on `PATH`. On macOS and Windows it uses the platform synthesiser
-and needs nothing installed.
-
-## Pairing
-
-```bash
-clispeak invite             # on one device — prints a ticket, app shows a QR
-clispeak preview <ticket>   # on the other — what that code would join
-clispeak join <ticket>      # ...and join it
-clispeak devices
-```
-
-The destination is written *into* the ticket by whoever minted it, so the
-joining device does not get to choose it. `preview` reads it out first —
-locally, contacting nobody and spending nothing, so it can be run on a code
-before deciding to use it. In the app, joining goes through the same two
-steps: paste or scan, see which space it joins, then confirm. `join --name`
-picks what to call it here.
-
-Two nodes can share one machine for testing by overriding `CLISPEAK_SOCKET`
-and `CLISPEAK_CONFIG_DIR`. `CLISPEAK_SOCKET` is a *name*, not a path: on Linux
-and macOS it names a socket inside a directory only you can enter, which the
-node creates and then checks before binding — so another local user cannot
-take the name first. A value with a separator in it is refused rather than
-reinterpreted.
-
-On Windows a named pipe has no directory to live in, so the pipe carries
-access rules instead: only the account that created it, LOCAL SYSTEM and
-Administrators can open it. Another account there still *can* take the name
-before the node does — the pipe namespace is global and nothing can prevent
-that — so the node identifies whatever holds the name and says plainly that it
-is not a node you started, with `CLISPEAK_SOCKET` offered as the way round.
+Send anybody who just wants to *use* this there. The rest of this file is for
+building it yourself and understanding how it works.
 
 ## What it does
 
@@ -223,9 +31,9 @@ tying up its speaker for the afternoon. Markdown and bare URLs are *rejected*
 with a suggested rewrite rather than silently mangled, so an agent can correct
 itself — `--strip` converts instead, `--raw` skips the check.
 
-**From the app, not only the terminal.** The **Speak** tab picks a device, or
-everyone, and sends. It is how a phone sends at all, and it is the short way
-to check a new pairing actually carries sound both ways.
+**From the app as well as the terminal.** The **Speak** tab picks a device, or
+everyone, and sends, then reports back a line per device. It is how a phone
+sends at all, and it is the quickest check that a new pairing carries sound.
 
 **Targeting.** One device, a comma-separated list, a locally-defined group,
 `all`, or `here`. Several devices are reached at once rather than one after
@@ -253,18 +61,9 @@ There is deliberately no selector meaning "everywhere". `rotate` replaces a
 space outright, which locks a lost device out immediately rather than
 eventually.
 
-An invite carries the space it was made for, so scanning it joins the one you
-asked for rather than whichever happens to be the default when it is scanned.
-It also carries what that space is *called*, so the joining device can name it
-the same thing rather than inventing one. Joining a space *adds* it — the one
-exception being the empty space a device founds for itself at first start,
-which a first pairing displaces rather than leaving abandoned beside the real
-one.
-
-A space's name is local. It is how this device writes `work/laptop`, nothing
+A space's name is local. It is how *this* device writes `work/laptop`, nothing
 is sent when it changes, and two devices in one space may call it different
-things — `join --name` and **Manage → Rename** both set only what is on the
-device you run them from.
+things.
 
 See [cli.md](docs/cli.md) for the full surface and exit codes.
 
@@ -275,46 +74,58 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 | Linux | Piper, falling back to espeak-ng if the host has it | tray app |
 | macOS | Apple's own | tray app |
 | Android | system text-to-speech | foreground service + battery exemption |
-| Windows | SAPI 5 — launched and heard | tray app |
+| Windows | SAPI 5 | tray app |
 | iOS | Apple's own | **foreground only** — see below |
 
-The Android build is **`arm64-v8a` only** (decision 106), which is every phone
-made since about 2019 and no emulator. The APK is called `clispeak-android.apk`
-and does not say that, so wherever it is offered for download, the page has to.
+iOS is built and not shipped. The Android build is **`arm64-v8a` only**, which
+is every phone made since about 2019 and no emulator.
 
 **iOS only speaks while the app is on screen**, and that is the platform
 rather than an unfinished corner. Backgrounded, it stops answering somewhere
-between five and ten minutes — measured on the simulator, which suspends less
-aggressively than a real phone, so expect worse. Nothing available fixes it:
-the audio background mode keeps an app alive while it is *playing*, not while
-it is *waiting*, and everything that wakes a suspended iOS app needs a push
-server. There is no server here, which is the point of the project.
+between five and ten minutes. Nothing available fixes it: the audio background
+mode keeps an app alive while it is *playing*, not while it is *waiting*, and
+everything that wakes a suspended iOS app needs a push server. There is no
+server here, which is the point of the project. So a phone in a pocket is
+exactly the case iOS cannot serve. Android can, and does.
 
-So a phone in a pocket is exactly the case iOS cannot serve. Android can, and
-does.
-
-Piper streams raw audio to whatever player the system has — `paplay`,
-`pw-play`, `aplay`, or sox. macOS ships none that read raw audio on stdin, so
-there the chunk is rendered and played with the built-in `afplay`: speech
-starts a little later, and a stock Mac needs nothing installed. Windows ships
-none either, and none that takes a bare path, so PowerShell plays the rendered
-file and is handed its path on stdin rather than on a command line.
+A message does not sound identical on every platform. Each device speaks in
+whatever voice it is configured with, using its own system's synthesiser where
+there is a good one.
 
 ## How it works
 
-Each install is a **node** — both sender and receiver, one small Tauri app on
-Linux, macOS, Windows, Android, and iOS. Devices join a **space** by scanning a
-QR code once, and stay reachable afterwards even as they move between networks,
-because they address each other by public key rather than by IP.
+Each install is a **node** — both sender and receiver, one small Tauri app.
+Devices join a **space** by scanning a QR code once, and stay reachable
+afterwards even as they move between networks, because they address each other
+by public key rather than by IP.
 
 **Only text crosses the wire.** The receiving device synthesises it locally, so
-five minutes of speech costs ~50KB instead of tens of megabytes, and each
-device speaks in whatever voice it is configured with.
+five minutes of speech costs ~50KB instead of tens of megabytes.
 
 **There is no shared group secret.** Authorisation is "is this public key in my
 roster?", so compromising one device leaks nothing that decrypts another's
 traffic. The roster is an add-only set with tombstones, signed by whoever
 invited each member, which is what lets a device admit a peer it has never met.
+
+The riskiest assumption — that peer-to-peer connections survive carrier-grade
+NAT and network changes — was [measured on real hardware](docs/m0-results.md)
+before anything was built on top of it. 91% of connections went direct, and
+switching between wifi and cellular caused zero reconnects.
+
+## Pairing
+
+```bash
+clispeak invite             # on one device — prints a ticket, app shows a QR
+clispeak preview <ticket>   # on the other — what that code would join
+clispeak join <ticket>      # ...and join it
+clispeak devices
+```
+
+The destination is written *into* the ticket by whoever minted it, so the
+joining device does not get to choose it. `preview` reads it out first —
+locally, contacting nobody — so a code can be checked before it is used. In the
+app, joining goes through the same two steps: paste or scan, see which space it
+joins, then confirm. `join --name` picks what to call it here.
 
 ## Using it from an agent
 
@@ -326,23 +137,112 @@ clispeak skill --install --path <dir>/SKILL.md    # anywhere else
 clispeak skill                                    # print it, to pipe somewhere
 ```
 
-or from the app's Settings tab on a desktop. The phone build does not offer
-it, because a skill is a file an agent running on that machine reads and
-nothing on a phone reads one — it was offered there, and would have written
-into the app's own sandbox and reported success. The agent
-gains the judgement the `--help` output cannot give it: when speaking is worth
+or from the app's Settings tab on a desktop.
+
+The skill gives an agent the judgement `--help` cannot: when speaking is worth
 doing at all, which device suits which kind of message, what each exit code
 means for what to do next, and that a `muted` device is a decision to respect
 rather than a failure to retry.
 
-It also walks the user through a one-time working agreement — what the agent
-should call itself when it speaks, which device is the default, and where the
-line is between speaking and printing — and tells the agent to record it. The
-naming matters once more than one agent can reach the same phone: a voice from
-a pocket that does not say whose it is makes the user guess.
+It also walks you through a one-time working agreement — what the agent should
+call itself when it speaks, which device is the default, and where the line is
+between speaking and printing. The naming matters once more than one agent can
+reach the same phone: a voice from a pocket that does not say whose it is makes
+you guess.
 
-A test checks that every command and flag the skill mentions actually exists,
-so it cannot quietly drift into describing a tool that has moved on.
+## Building it yourself
+
+Rust 1.98 or newer, and `npm install` in `app/` once.
+
+**Linux.** The Flatpak carries Piper and a voice, so it speaks the moment it is
+installed:
+
+```bash
+git submodule update --init                 # the manifest's shared-modules
+npm --prefix app ci
+npm --prefix app run build:css              # styles.css is generated, not committed
+cargo build --release -p clispeak-app -p clispeak-cli
+cd packaging/flatpak
+flatpak-builder --force-clean --user --install build-dir org.clispeak.app.yml
+flatpak run org.clispeak.app
+```
+
+All four of the first lines are needed. The manifest takes the two binaries
+from `target/release`, and `cargo build` — unlike `tauri build` — does not run
+Tailwind, so without the CSS step the app comes up unstyled with nothing to say
+why.
+
+**macOS.** The bundle carries the command-line tool and no speech payload,
+since macOS speaks through the platform synthesiser, so a drag to
+`/Applications` is the whole install:
+
+```bash
+cargo xtask bundle
+open target/release/bundle/dmg/clispeak_*_aarch64.dmg
+```
+
+A locally built `.app` is ad-hoc signed, which runs but derives its identity
+from the binary's own hash — so every rebuild looks like a different program to
+macOS and the keychain grant holding the device identity is asked for again.
+Any stable certificate, self-signed included, ends that; `docs/signing.md` has
+the steps. Release builds are signed and notarised, so a downloaded `.dmg`
+opens without Gatekeeper's warning.
+
+**Android.** Build and install over USB:
+
+```bash
+cd app
+ANDROID_HOME=~/Android/Sdk NDK_HOME=~/android-ndk-r29 \
+  npx @tauri-apps/cli android build --apk --debug --target aarch64
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+```
+
+**Without a desktop.** `clispeakd` is a headless node. On Linux it needs Piper
+where the engine looks for it, which `cargo xtask piper` arranges; it can
+otherwise fall back to `espeak-ng` on `PATH`. On macOS and Windows it uses the
+platform synthesiser and needs nothing installed.
+
+**The `clispeak` command** is installed to `~/.local/bin` by the app on first
+launch, and re-installed whenever the app is updated. On Windows the installer
+puts it on your PATH — open a *new* terminal afterwards, since an existing one
+keeps the environment it started with.
+
+**Checks.** One command runs all of them:
+
+```bash
+cargo run -p xtask -- check
+```
+
+Two nodes can share one machine for testing by overriding `CLISPEAK_SOCKET` and
+`CLISPEAK_CONFIG_DIR`. `CLISPEAK_SOCKET` is a *name*, not a path, and a value
+with a separator in it is refused rather than reinterpreted.
+
+## Who can drive your node
+
+The CLI talks to the node over a local socket, and the two prove themselves to
+each other before anything is sent — with a secret in the config directory,
+which is kept readable only by you.
+
+That matters because the socket *name* has no permissions on any platform here:
+Linux's abstract namespace has none by design, and on macOS the socket lands in
+`/tmp`. So another user on the same machine cannot make your devices speak,
+read your history, or mint an invite to your space. They can still take the
+name before your node does, which stops it starting — a nuisance, not a leak.
+
+On Windows a named pipe carries access rules instead: only the account that
+created it, LOCAL SYSTEM and Administrators can open it.
+
+Anyone who can read your config directory can drive your node. That is the same
+directory that holds your identity key, so the boundary is the same one.
+
+**The Flatpak is packaging, not containment.** It grants itself write access to
+`~/.local/bin`, which is on your PATH ahead of `/usr/bin`, and to `~/.claude`,
+which holds hooks your agent runs. Either is enough to escape the sandbox, and
+they are there because an app that offers to install a tool and then silently
+fails to is worse than one that says what it can reach. Install it because it
+is convenient, not because it is contained.
+
+Reporting a security issue: [`SECURITY.md`](SECURITY.md).
 
 ## Docs
 
@@ -353,92 +253,35 @@ so it cannot quietly drift into describing a tool that has moved on.
 | [cli.md](docs/cli.md) | Command surface, exit codes, targeting |
 | [protocol.md](docs/protocol.md) | Wire format and stream model |
 | [text.md](docs/text.md) | Validation and chunking rules |
-| [build-plan.md](docs/build-plan.md) | Milestones, repo layout, CI |
 | [m0-results.md](docs/m0-results.md) | Measured transport results on real devices |
+| [licensing.md](docs/licensing.md) | What may be redistributed, and the working behind it |
 | [adr/](docs/adr/) | Every decision, one file each, with its rationale and cost |
-| [releasing.md](docs/releasing.md) | How binaries will be built and published, and what has to be settled first |
-| [licensing.md](docs/licensing.md) | The licence, what we may redistribute, and what has to change first |
 
 Start with `docs/adr/` if you want to know *why* rather than *what*.
 
-## The workspace
+## Contributing
 
-Rust 1.98 or newer, and `npm install` in `app/` once.
-
-```bash
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all --check
-cargo run -p xtask -- portability
-cd app && npx tailwindcss -i src/input.css -o src/styles.css --minify
-```
-
-`cargo xtask piper` downloads Piper and a voice against pinned checksums and
-puts them where the engine looks, which is what a checked-out copy needs
-before it can speak. On macOS it also repairs the upstream release: that build
-ships without an rpath and without the dylibs it links against, which live in
-a separate `piper-phonemize` archive, so the two are merged and re-signed.
-
-`cargo xtask bundle` stages Piper, a voice and the CLI into the app and builds
-the installable bundle. Those staged files are declared in
-`tauri.bundle.conf.json` rather than the main config, because Tauri's build
-script checks declared resources exist on *every* `cargo check` — declaring
-them normally would break `cargo build --workspace` on any machine that had
-not staged them first, CI included.
-
-The frontend is plain HTML and JavaScript with a Tailwind build step — no
-framework and no bundler, because the interesting behaviour lives in
-`clispeak-core`, shared with the CLI.
-
-## Who can drive your node
-
-The CLI talks to the node over a local socket, and the two prove themselves to
-each other before anything is sent — a secret in the config directory, which
-is kept readable only by you.
-
-That matters because the socket *name* has no permissions on any platform here:
-Linux's abstract namespace has none by design, and on macOS the socket lands in
-`/tmp`. So another user on the same machine cannot make your devices speak,
-read your history, or mint an invite to your space. They can still take the
-name before your node does, which stops it starting — that is a nuisance, not
-a leak, and it is written up in `docs/architecture.md`.
-
-Anyone who can read your config directory can drive your node. That is the
-same directory that holds your identity key, so the boundary is the same one.
-
-**The Flatpak is packaging, not containment.** It grants itself write access
-to `~/.local/bin`, which is on your PATH ahead of `/usr/bin`, and to
-`~/.claude`, which holds hooks your agent runs. Either is enough to escape the
-sandbox, and they are there because an app that offers to install a tool and
-then silently fails to is worse than one that says what it can reach. Install
-it because it is convenient, not because it is contained.
+Bug reports and pull requests are welcome.
+**[`CONTRIBUTING.md`](CONTRIBUTING.md)** covers what is unusual about this
+repository before you spend time on a change — chiefly that it has to compile
+for all five targets, and that a green CI run means *compiled on five, tested
+on one*.
 
 ## Licence
 
 **MIT OR Apache-2.0**, at your option — the Rust ecosystem's usual pair.
-
-**The speech payload is not ours and is not always shipped.** Piper, its
-phonemiser and ONNX Runtime are MIT; espeak-ng is GPL-3.0-or-later; and a
-voice model carries the terms of the corpus it was trained on. macOS, iOS and
-Android use the platform's own synthesiser and carry no payload at all; Linux
-and Windows are covered in [`docs/licensing.md`](docs/licensing.md), which is
-the honest answer rather than a badge.
-
-Reporting a security issue: [`SECURITY.md`](SECURITY.md). Working on it:
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
 Apache-2.0 carries an explicit patent grant; MIT is there for anyone who
 prefers the shorter terms. See [LICENSE-MIT](LICENSE-MIT) and
 [LICENSE-APACHE](LICENSE-APACHE).
 
-**The speech engine is not ours and is not covered by that.** Piper, its
-phonemiser and ONNX Runtime are MIT; **espeak-ng is GPL-3.0-or-later**; and a
-voice model carries the terms of the corpus it was trained on, which are
-frequently *not* redistributable. `cargo xtask piper` downloads all of it onto
-your own machine, which is yours to do.
+**The speech payload is not ours, and is not shipped everywhere.** macOS, iOS,
+Windows and Android use the platform's own synthesiser and carry no payload at
+all. Linux ships Piper — MIT, as are its phonemiser and ONNX Runtime — with
+espeak-ng, which is GPL-3.0-or-later, and the LJ Speech voice, which is public
+domain.
 
-**Distributed builds are a different question and it is not finished.** The
-default voice today is trained on a research-only corpus that bars
-redistribution, so it has to change before anything is published, and the
-speech payload should be fetched on first run rather than bundled. Nothing has
-been published yet. [licensing.md](docs/licensing.md) has the working, and it
-is a careful reading of licence text by people who are not lawyers.
+A voice model carries the terms of the corpus it was trained on, and those are
+frequently *not* the licence label on the model. If you change the default
+voice, read the corpus terms rather than the model card's licence field;
+[`docs/licensing.md`](docs/licensing.md) shows the working, and is a careful
+reading of licence text by people who are not lawyers.

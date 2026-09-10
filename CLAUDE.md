@@ -521,11 +521,24 @@ done: if the tests were not run, say so.
 
 ## Testing on real devices
 
-Linux, Android and Windows get real runtime testing; macOS and iOS are
+Linux, Android, macOS and Windows get real runtime testing; iOS is
 build-verified. Windows joined that list on 6 September 2026 and cost two bugs
-in the first hour — see the three claims above, which this sentence used to
-contradict by still saying "Linux and Android" a day after Windows had been
-paired, spoken through and installed from a release artefact.
+in the first hour. macOS joined on 9 September and cost three in a morning
+(#245, #246, #248), and a fourth the same night on a phone (#258).
+
+**This sentence has now been wrong twice, in the same way, about two different
+platforms.** It said "Linux and Android" for a day after Windows had been
+paired, spoken through and installed from a release artefact; the correction
+was written *and the same paragraph went on calling macOS build-verified*
+while three macOS bugs found by a person were being closed underneath it.
+
+So the rule the paragraph needs is not "keep this list current", which it
+already said. It is that **the list changes on the day a person first runs a
+platform, and that is the same day they file whatever they found** — the
+filing is the reminder, because nothing else is. `README.md`'s status section
+is the second place, and it disagreed with this one for four days while
+telling strangers Windows had "been built and never run" seventeen lines
+above a paragraph headed *Somebody has run it*.
 
 The things no CI can cover are exactly the ones that have bitten: NAT
 traversal, Android doze, network switching, audio actually coming out of a
