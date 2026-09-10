@@ -15,8 +15,9 @@ and no account to create.
 
 ## Status
 
-**Working on Linux, macOS and Android.** Linux and Android run the packaged
-app and talk to each other over the open internet, including on cellular.
+**Working on Linux, macOS, Windows and Android.** All four run the packaged
+app and have been started, paired and heard by a person. Linux and Android
+talk to each other over the open internet, including on cellular.
 
 **macOS speaks in its own voice.** It uses `AVSpeechSynthesizer`, the
 platform synthesiser, rather than Piper — which also takes the GPL-3.0 speech
@@ -29,9 +30,9 @@ laptop and an iOS device and spoken to across the network.
 iOS uses the same engine, and has been launched and heard on a real device.
 
 **Windows speaks through SAPI 5**, the platform synthesiser, so it needs
-nothing installed and carries no speech payload. **It has been built and never
-run** — nobody here has a Windows machine, and it is type-checked for
-`x86_64-pc-windows-msvc` and verified by no one.
+nothing installed and carries no speech payload. It has been installed from a
+release artefact on a clean machine, paired, and heard — see *Somebody has run
+it* below, which is where the detail lives.
 
 **Linux speaks with Piper**, which is the one platform where it is still the
 best available answer: there is no universal native engine there. So a message
