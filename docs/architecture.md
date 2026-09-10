@@ -13,15 +13,23 @@ $ clispeak --to phone "needs your input"    # speak on a named device
 $ cat CHANGELOG.md | clispeak --to desk     # long-form, piped
 ```
 
-Devices reach each other peer-to-peer. There is no server to run.
+Devices reach each other peer-to-peer. There is no server to run
+([decision 1](adr/0001-peer-to-peer-no-hosted-server.md)), over iroh ([decision 2](adr/0002-iroh-as-the-transport.md)).
 
 ## Goals
 
-- **Trivial to set up.** Install, scan a QR code, done.
+- **Trivial to set up.** Install, scan a QR code, done — [decision 9](adr/0009-a-signed-space-roster-not-pairwise-pairing.md), a signed
+  space roster rather than pairwise pairing.
 - **Works anywhere.** Not just on the same wifi — phones on cellular too.
-- **No hosted infrastructure.** Nothing the user has to deploy or pay for.
-- **Any length.** The CLI has no opinion about how much text you give it.
-- **Consistent across platforms.** Same app, same UI, five targets.
+- **No hosted infrastructure.** Nothing the user has to deploy or pay for
+  ([decision 1](adr/0001-peer-to-peer-no-hosted-server.md)).
+- **Any length.** The CLI has no opinion about how much text you give it
+  ([decision 7](adr/0007-any-message-length.md)); the receiver bounds what it will accept and says why
+  ([decision 40](adr/0040-a-receiver-bounds-what-it-will-accept-as-a-message-and-says.md)).
+- **Consistent across platforms.** Same app, same UI, five targets —
+  [decision 3](adr/0003-tauri-v2-for-the-receiver-app.md), one Tauri v2 codebase.
+- **Both directions from every install.** There is no sender-only build
+  ([decision 4](adr/0004-every-install-is-both-sender-and-receiver.md)).
 
 ## Non-goals (for now)
 
@@ -33,6 +41,9 @@ Devices reach each other peer-to-peer. There is no server to run.
 ## Core invariant
 
 > **Only text crosses the wire. The receiver always renders it.**
+
+That is [decision 6](adr/0006-text-only-on-the-wire.md), and [decision 11](adr/0011-the-receiver-enforces-policy-the-sender-only-expresses-inten.md) is its consequence: the sender expresses intent and
+the receiving device decides what to do with it.
 
 No audio is ever transmitted. This keeps payloads tiny (~50KB of text is
 five minutes of speech), removes the audio codec and streaming machinery
@@ -87,7 +98,10 @@ to a `0600` file.
 
 Display names ("Phil's Pixel", "desk") are **local labels only**. Identity is
 always the key. Renaming never breaks pairing, and a name can't be used to
-impersonate a device.
+impersonate a device. One keypair serves every space the device belongs to
+([decision 12](adr/0012-multiple-spaces-per-device-one-keypair.md)), the name is asked of the system rather than read from a Linux
+file ([decision 32](adr/0032-a-devices-name-is-asked-of-the-system-not-read-from-a-linux.md)), it is the same in every space and on every start
+([decision 86](adr/0086-a-device-is-called-one-thing-in-every-space-on-every-start.md)), and the keyring is asked once per process ([decision 43](adr/0043-the-keyring-is-asked-once-per-process.md)).
 
 ## Discovery
 
@@ -325,6 +339,13 @@ makes `cat file | clispeak` work — the receiver starts speaking sentence one w
 sentence forty is still arriving — and it's what gives `clispeak stop` something to
 address. Priority and queue behavior are specified in `cli.md`.
 
+CBOR over one QUIC stream per message ([decision 13](adr/0013-cbor-and-one-quic-stream-per-message.md)). Sending is
+fire-and-forget unless the caller asks to wait ([decision 10](adr/0010-fire-and-forget-by-default-confirmation-opt-in.md)), and the device
+that will speak is the one that decides how long that wait is, because it is
+the only one that knows its own engine and what is queued ahead
+([decision 25](adr/0025-the-device-that-speaks-decides-how-long-a-caller-waits.md)). Policy is asked again at the moment of speaking rather than only
+at submission ([decision 50](adr/0050-policy-is-asked-again-at-the-moment-of-speaking.md)).
+
 Chunking happens at sentence boundaries, which is required regardless: most TTS
 engines degrade or fail on very long inputs, and sentence-level chunks are what
 let playback start immediately.
@@ -340,7 +361,16 @@ much. **Never the text.**
 
 **Authorization** is a per-receiver allowlist of NodeIds. An unpaired node
 cannot make your device speak, and pairing requires physical possession of a
-QR code or ticket.
+QR code or ticket. There is no shared group secret and no pairwise pairing
+([decision 9](adr/0009-a-signed-space-roster-not-pairwise-pairing.md)); a space is identified by its founder and a device may hold
+several ([decision 20](adr/0020-a-space-is-identified-by-its-founder-and-a-device-may-hold-s.md)); an invite names the space it joins and joining adds
+rather than replaces ([decision 28](adr/0028-an-invite-names-its-space-and-joining-one-adds-rather-than-r.md)); revocation is eager and roster sync is lazy
+([decision 15](adr/0015-lazy-roster-sync-eager-revoke-no-gossip-layer.md)), with rotation as the answer when a device is out of your hands
+([decision 16](adr/0016-space-rotation-instead-of-fast-revocation.md)).
+
+State is written privately and all at once, through one function
+([decision 45](adr/0045-state-is-written-privately-and-all-at-once-through-one-funct.md)), and a peer's clock is bounded rather than trusted
+([decision 36](adr/0036-a-peers-clock-is-bounded-and-a-join-record-names-the-peer-th.md)).
 
 **Abuse surface worth remembering:** anything an agent can be convinced to
 print, it can be convinced to say. Rate limiting, quiet hours, and a mute
@@ -431,9 +461,13 @@ something that does not exist yet, it says so.
 | Android | `android.speech.tts.TextToSpeech` | Foreground service |
 | iOS | `AVSpeechSynthesizer` | **Foreground only** — measured, see below |
 
-**Every platform speaks in its own best voice, and Piper is what Linux and
-Windows have.** That is a change: this page used to say every desktop speaks
-through Piper *because a message should sound the same wherever it lands*.
+**Every platform speaks in its own best voice, and Piper is what Linux has.**
+That is a change: this page used to say every desktop speaks through Piper
+*because a message should sound the same wherever it lands*.
+
+This sentence said "Linux and Windows" while the table ten lines above it said
+Windows uses SAPI 5 — one page, one fact, two answers, and the table was
+right. Windows moved off Piper with decision 102 and the paragraph did not.
 
 The uniformity was a consequence rather than a goal. There is no universal
 native engine on Linux and espeak-ng sounds like 1994, so Piper started there

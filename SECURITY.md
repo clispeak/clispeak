@@ -34,10 +34,13 @@ vulnerability would hurt most:
 These are documented limitations rather than surprises. A report of one is
 welcome but will be closed as known:
 
-- **The local socket name is not protected by the operating system.** Another
-  local user can take it before the node does and deny service. Nothing leaks
-  when they do — a squatter cannot prove it knows the token — and the node
-  says so rather than blaming itself. Issue #128.
+- **On Windows, another account can take the pipe name before the node does**
+  and deny service. The pipe namespace is global and nothing can prevent that.
+  Nothing leaks when they do — a squatter cannot prove it knows the token —
+  and the node identifies whatever holds the name and says plainly that it is
+  not a node you started. On Linux and macOS the socket lives in a directory
+  only you can enter, which is checked before binding rather than assumed
+  (decision 103).
 - **A revoked device keeps working until it syncs.** Revocation is eventually
   consistent by design; `rotate` is the answer when a device is out of your
   hands, and it says so in its own help text.

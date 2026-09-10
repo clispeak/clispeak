@@ -8,6 +8,34 @@ rejected**, which is the part with nowhere else to live — a comment beside the
 code can say what the code does, and only a record can say what was tried
 first and why it was not kept.
 
+## What "unreferenced" turned out to mean
+
+Issue #242 measured that 54% of these records were referenced by nothing, and
+concluded the unreferenced half was sediment: entries about code that no
+longer exists, or restatements of what a comment now says better. **That was
+the wrong conclusion, and the list is what shows it.**
+
+The uncited records clustered in the *low numbers*. Peer-to-peer with no
+hosted server. iroh as the transport. Text only, on the wire. One Tauri
+codebase for five targets. CBOR and one QUIC stream per message. Every one
+still load-bearing, and every one uncited for the same reason: **they are
+about the whole system, so there is no single line of code that is the place
+to point at them.**
+
+The rule "link it from the code it explains" is right for a decision about one
+function. For a decision about the shape of the thing, the place that explains
+it is `docs/architecture.md`, and that is where they are now cited from.
+
+So an uncited record raises a question rather than a verdict, and the question
+is *which kind is it*. A decision nothing points at because nothing needs it
+should be superseded. A decision nothing points at because it underpins
+everything needs a pointer from the document that describes everything. The
+first is sediment; the second is a foundation nobody labelled.
+
+Coverage was 29% when this was written and is 52% now. The remainder are
+genuinely worth reading through one at a time, and the point of this section
+is that "delete the orphans" is not what that pass should be looking for.
+
 ## The rules
 
 **One file per decision**, named `NNNN-a-short-slug.md`, numbered from one and

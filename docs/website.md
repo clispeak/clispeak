@@ -1,7 +1,12 @@
 # The website
 
-A plan, for Patrick to approve before anyone writes it. The implementation is
-the Mac agent's; this document is the brief and the acceptance criteria.
+**The brief the site is held to.** It was written as a plan for approval
+before anything existed; clispeak.com has been live since 8 September 2026 and
+this is now the standard it is checked against rather than a proposal.
+
+The one thing to keep in view when editing it: everything below either gets a
+person from *"what is this"* to *"installed and paired with my phone"*, or it
+does not belong on the page.
 
 **What it is for.** Getting a person from *"what is this"* to *"it is
 installed and paired with my phone"* without opening a terminal. That is the
@@ -29,24 +34,19 @@ decisions, signing procedures and build plans written for us. A workflow
 publishing `site/` means what is public is a deliberate list rather than
 whatever happens to be in a directory.
 
-## Sequencing: the site cannot go live yet
+## Sequencing, and what it was for
 
-**There are no releases and no tags.** `gh release list` is empty. Every
-`releases/latest/download/…` URL therefore 404s, so a site published today is
-a page with four dead buttons — and it fails in the way this project keeps
-being failed, because the *page* is fine and only the destinations are
-missing.
+This section said **"There are no releases and no tags. `gh release list` is
+empty"**, and set the order: sign the Android key, tag a release, fetch all
+four URLs, and only then point DNS at the site. That order was followed and
+every step is done.
 
-So the order is fixed:
-
-1. The Android keystore exists and the four secrets are set (#31), or the
-   Android link cannot be real — a tagged release now **refuses** to publish
-   an unsigned APK (#191)
-2. A version is tagged and the draft release is published
-3. Every one of the four URLs is fetched and returns a file
-4. Then, and only then, DNS points at the site
-
-Building the page can start immediately. Publishing it cannot.
+It is kept because the reasoning still binds anyone who adds a download: **a
+page is not finished when the page is right.** A site published before the
+artefacts exist has four dead buttons, and it fails the way this project keeps
+being failed — the page is fine and only the destinations are missing. That is
+what `site/check-links.sh` exists to catch, and why it fetches the download
+URLs rather than checking that the markup contains them.
 
 ## Structure
 
@@ -63,8 +63,14 @@ Building the page can start immediately. Publishing it cannot.
 4. **Pair two devices** — one install does nothing on its own, and this is
    where a person gives up.
 5. **For agents** — the reason the project exists, not a footnote.
-6. **What works today** — the honest table.
+6. **Agreements** — how to tell an assistant when to speak.
 7. Footer: source, licence, issues.
+
+A *"What works today"* platform table was here and has been removed. It shipped
+carrying the line *"if this disagrees with the README, the README is right"* —
+a section admitting in its own copy that it would go out of date, on a page
+nobody re-reads. Per-platform status is process information; it belongs in the
+repository, where the people who need it look.
 
 ### The section that matters most is 3
 
@@ -121,27 +127,39 @@ with no server and no account, and a landing page that phones home about the
 people reading that sentence is an argument against the software it is
 selling.
 
-## Work, in an order that makes sense
+## Work
 
-1. `site/index.html`, `site/input.css`, and a Tailwind build — page renders
-   locally, with real content and placeholder links
-2. The four download cards and the platform guess
-3. Sections 3, 4 and 5 — the honest ones, which are writing rather than code
-4. `.github/workflows/site.yml` — build the CSS, publish `site/` to Pages
-5. A link check that runs after the workflow and fetches all four URLs
-6. Favicon and Open Graph image, from #188
-7. DNS, last, after step 3 of the sequencing section above
-
-Steps 1 to 5 can be done now. 6 needs the icon. 7 needs a release.
+All seven steps are done: the page, the download cards and the platform guess,
+the honest sections, `.github/workflows/site.yml`, `site/check-links.sh`, the
+favicon and Open Graph image, and DNS.
 
 ## Acceptance
 
-- [ ] Renders at 360px wide with no horizontal scroll
-- [ ] Light and dark both deliberate — the light theme went unlooked-at for the
-      whole build of the app, which is what that check is here to prevent
-- [ ] Readable with JavaScript off
-- [ ] Every download link fetched and returns a file, by a script, not by eye
-- [ ] Nothing is loaded from a third party. Checked in the network tab
-- [ ] Every claim about a platform matches `README.md`'s table. If the two
-      disagree the site is wrong, because the README is where the person who
-      changed the code was looking
+Checked on 10 September 2026, by running each one rather than by eye.
+
+- [x] **No horizontal scroll.** Measured in a headless browser at three
+      widths: the document is narrower than the viewport at each. The section
+      nav is wider than a phone and scrolls *inside its own*
+      `overflow-x-auto` container, which is the intended shape — the page body
+      never scrolls sideways. Note for anyone re-running this: headless
+      Chromium floors `innerWidth` at 500px, so `--window-size=360` does not
+      actually test 360.
+- [x] **Readable with JavaScript off.** 1,546 words and all four download
+      links are in the HTML. `guess.js` only ever *adds* emphasis to a card;
+      with it off there are four cards, none highlighted, every link working.
+- [x] **Every download link fetched and returns a file**, by
+      `site/check-links.sh`, not by eye. It also checks the section nav has
+      one link per list item, after a nav entry was once added as a bare
+      anchor beside an existing one.
+- [x] **Nothing is loaded from a third party.** No `src` or `href` on the page
+      points anywhere but github.com and clispeak.com.
+- [ ] **Light and dark both deliberate.** Not re-verified here. The light
+      theme went unlooked-at for the whole build of the app, which is what
+      this check exists to prevent, and it needs eyes rather than a script.
+- [x] **No platform claims to keep in step.** The per-platform table has been
+      removed. This item used to say the site must match `README.md`'s table
+      and that the README wins — two places holding one fact, with a rule for
+      which lies. Deleting one of them is the better fix.
+
+**The screenshots are out of date.** All three show a three-tab app; there are
+four tabs since the Speak tab shipped.

@@ -1,6 +1,15 @@
 # M0 spike — iroh connectivity
 
-**Throwaway.** Answers one question, then gets deleted. Do not build on it.
+**Throwaway, and kept anyway.** It answered its question on 1 September 2026
+and said it would then be deleted. It was not, and rather than act on a
+year-old instruction: it stays, because it is the only *executable* form of
+the measurement everything else rests on, and re-running it is how you would
+check whether the answer still holds after an iroh upgrade.
+
+`docs/m0-results.md` has the numbers. This has the thing that produced them.
+
+**Still do not build on it.** It is excluded from the workspace in the root
+`Cargo.toml`, nothing depends on it, and nothing should.
 
 ## The question
 
