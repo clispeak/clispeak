@@ -77,11 +77,8 @@ See [cli.md](docs/cli.md) for the full surface and exit codes.
 | Windows | SAPI 5 | tray app |
 | iOS | Apple's own | **foreground only** — see below |
 
-Linux, macOS, Windows and Android have each been installed from a release
-build, paired and heard by a person. iOS is built and not shipped.
-
-The Android build is **`arm64-v8a` only**, which is every phone made since
-about 2019 and no emulator.
+iOS is built and not shipped. The Android build is **`arm64-v8a` only**, which
+is every phone made since about 2019 and no emulator.
 
 **iOS only speaks while the app is on screen**, and that is the platform
 rather than an unfinished corner. Backgrounded, it stops answering somewhere
