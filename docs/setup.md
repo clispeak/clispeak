@@ -134,9 +134,10 @@ $ clispeak join clispeak://join/BXn4Tp8...kQ2m
   Joined. 3 devices in this space.
 ```
 
-Because `laptop` also installed the CLI, it can send too. Nothing extra to
-configure — it learned about `desk` and `pixel` from the roster it received on
-join.
+Because `laptop` also installed the CLI, it can send from a terminal too.
+Nothing extra to configure — it learned about `desk` and `pixel` from the
+roster it received on join. Every device can send without one, from the app's
+**Speak** tab; the CLI is what an agent uses.
 
 ## 4. iPhone — join from the phone in your hand
 
@@ -179,6 +180,16 @@ $ clispeak --to pixel,iphone "build finished"
 
 $ cat CHANGELOG.md | clispeak --strip --to laptop
 ```
+
+From the phone, where there is no terminal, the same three sends are the
+**Speak** tab: pick **Everyone**, or pick `laptop`, type, and send. It reports
+back a line per device, so "sent to 3 of 4 devices" is something you read
+rather than something you find out later — the fourth being asleep is the
+usual reason, and it says so.
+
+That tab is also the quickest check that a new pairing works. Send from the
+device you have just joined rather than to it: a message *to* a phone that
+never speaks has three possible causes, and a message *from* it has one.
 
 ---
 

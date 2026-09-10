@@ -145,6 +145,88 @@
      set once and left alone, and membership is checked and changed. Devices
      are listed inside the space that holds them, because every device is in
      exactly one and listing them apart left no way to tell which. -->
+<!-- Speak. Sending, as opposed to the home screen, which is receiving.
+
+     Its own tab rather than a box on Settings, where a one-line "Say
+     something" field used to live. That field spoke here and only here, and
+     the moment sending anywhere else exists, a second field that silently
+     means "this device" is the kind of adjacent answer this project keeps
+     getting wrong. There is one place to send from now, and where it goes is
+     something you choose rather than something you have to know. -->
+<main id="screen-speak" hidden class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+  <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
+
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Send to
+      </h2>
+      <label for="send-to" class="sr-only">Which device</label>
+      <select id="send-to"
+        class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm
+                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900 pl-3 pr-9"></select>
+      <p id="send-to-note" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400"></p>
+    </section>
+
+    <section>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        Message
+      </h2>
+      <form id="send-form" class="flex flex-col gap-3">
+        <label for="send-text" class="sr-only">What to say</label>
+        <!-- Several lines rather than one. This is composed rather than
+             typed, and a message long enough to be worth sending to another
+             room does not fit in a single-line box. -->
+        <textarea id="send-text" rows="4" autocomplete="off"
+          placeholder="Type what the other device should say"
+          class="w-full resize-y rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm
+                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900
+                 placeholder:text-neutral-500 dark:placeholder:text-neutral-500"></textarea>
+        <div class="flex items-center gap-2">
+          <label for="send-priority" class="sr-only">How urgent</label>
+          <select id="send-priority"
+            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm
+                 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30
+                 dark:border-neutral-700 dark:bg-neutral-900 pl-3 pr-9">
+            <option value="normal">Normal</option>
+            <option value="high">Urgent — interrupts</option>
+            <option value="low">Low — dropped if busy</option>
+          </select>
+          <button id="send" type="submit"
+            class="ml-auto shrink-0 rounded-lg bg-accent-600 px-5 py-1.5 text-sm font-medium
+                   text-white transition hover:bg-accent-500 active:scale-[0.98]
+                   disabled:opacity-40
+                   focus-visible:outline-2 focus-visible:outline-offset-2">
+            Send
+          </button>
+        </div>
+        <!-- Said here rather than discovered later. Urgent is the one setting
+             people expect to be a master key, and it is not: the receiving
+             device decides, and mute wins. -->
+        <p class="text-xs text-neutral-500 dark:text-neutral-400">
+          Urgent interrupts whatever is playing and the interrupted message
+          carries on afterwards. It never speaks through a muted device, and
+          it gets through quiet hours only where that device allows it.
+        </p>
+      </form>
+    </section>
+
+    <!-- What each device did with it. A list rather than one verdict: a
+         message can reach three devices and miss the fourth, and that is the
+         answer, not a footnote to it. -->
+    <section id="send-result-section" hidden>
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+        What happened
+      </h2>
+      <ul id="send-result"
+        class="divide-y divide-neutral-200 overflow-hidden rounded-xl border border-neutral-200
+               bg-white dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900"></ul>
+    </section>
+
+  </div>
+</main>
+
 <main id="screen-spaces" hidden class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
   <div class="mx-auto flex w-full max-w-md flex-col gap-6 px-5 py-5">
 
@@ -358,27 +440,6 @@
       </div>
     </section>
 
-    <!-- Speak ---------------------------------------------------------------- -->
-    <section>
-      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-        Say something
-      </h2>
-      <form id="speak-form" class="flex gap-2">
-        <label for="say-input" class="sr-only">Text to speak</label>
-        <input id="say-input" type="text" autocomplete="off" placeholder="Type a message"
-          class="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3
-                 placeholder:text-neutral-500 dark:placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none
-                 focus:ring-2 focus:ring-accent-500/30
-                 dark:border-neutral-700 dark:bg-neutral-900 dark:placeholder:text-neutral-500" />
-        <button id="say" type="submit"
-          class="shrink-0 rounded-lg bg-accent-600 px-5 font-medium text-white transition
-                 hover:bg-accent-500 active:scale-[0.98] disabled:opacity-40
-                 focus-visible:outline-2 focus-visible:outline-offset-2">
-          Speak
-        </button>
-      </form>
-    </section>
-
     <!-- Voice ---------------------------------------------------------------- -->
     <section id="voice-section" hidden>
       <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
@@ -529,6 +590,15 @@
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>
       Messages
+    </button>
+    <button id="tab-speak" data-screen="speak"
+      class="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" class="size-5" aria-hidden="true">
+        <path d="M22 2 11 13" />
+        <path d="M22 2 15 22l-4-9-9-4z" />
+      </svg>
+      Speak
     </button>
     <button id="tab-spaces" data-screen="spaces"
       class="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition">

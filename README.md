@@ -223,6 +223,10 @@ tying up its speaker for the afternoon. Markdown and bare URLs are *rejected*
 with a suggested rewrite rather than silently mangled, so an agent can correct
 itself — `--strip` converts instead, `--raw` skips the check.
 
+**From the app, not only the terminal.** The **Speak** tab picks a device, or
+everyone, and sends. It is how a phone sends at all, and it is the short way
+to check a new pairing actually carries sound both ways.
+
 **Targeting.** One device, a comma-separated list, a locally-defined group,
 `all`, or `here`. Several devices are reached at once rather than one after
 another.

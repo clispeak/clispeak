@@ -61,13 +61,16 @@ Holds the device identity, the iroh endpoint and its warm connections, the
 allowlist, the playback queue, and the TTS engine. Exposes a local IPC socket
 for the CLI on desktop.
 
-On desktop it lives in the tray; the window is for configuration, not
-operation. Starting at login is intended and not yet implemented, so today
-something has to launch it.
+On desktop it lives in the tray. The window used to be for configuration
+rather than operation; since the Speak tab it is both, because a phone had no
+way to send at all and a laptop's only way was a terminal. Starting at login
+is intended and not yet implemented, so today something has to launch it.
 
 **Every install is both sender and receiver.** There is no separate
 "broadcaster" build. The CLI is desktop-only because that's where agents run,
-not because phones can't send.
+not because phones can't send — and until the Speak tab existed, that
+sentence was a claim about the protocol that the interface quietly did not
+honour. A phone could receive from four devices and reach none of them.
 
 ### `clispeak-core` — the shared Rust library
 

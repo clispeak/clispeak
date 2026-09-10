@@ -1168,40 +1168,113 @@ async fn leave_space(state: State<'_, AppState>, space: Option<String>) -> Resul
 }
 
 #[tauri::command]
-async fn speak(state: State<'_, AppState>, text: String) -> Result<(), String> {
+async fn speak(
+    state: State<'_, AppState>,
+    text: String,
+    to: Option<String>,
+    priority: Option<Priority>,
+) -> Result<Vec<Spoken>, String> {
     // Validated here rather than in the UI so the app and the CLI reject
     // exactly the same things.
     if let Err(rejection) = clispeak_text::validate(&text) {
         return Err(rejection.to_string());
     }
-    replies::spoke(state.node.speak(text, Priority::Normal, None).await)
+    // `to` is the CLI's selector, unchanged: `None` means this device, and
+    // anything else goes through the same `resolve` the command line uses.
+    // The Speak tab builds it from a picker, so nobody types one — but the
+    // grammar has one implementation, and a second one here would be a
+    // second thing to keep in step with spaces, groups and qualified names.
+    replies::spoke(
+        state
+            .node
+            .speak(text, priority.unwrap_or(Priority::Normal), to)
+            .await,
+    )
 }
 
-/// Whether a report counts as the message being taken, and why if not.
+/// One device's answer to a send.
 ///
-/// The app speaks on this device only, so there is one target — but the
-/// answer is written over all of them, because "some device refused" is the
-/// question, not "the first one did".
+/// The Speak tab draws a row per target rather than one verdict, because
+/// "some devices spoke and some did not" is a real outcome — it is the CLI's
+/// exit 3 — and a single line of toast cannot carry it. Sending to four
+/// devices and being told "spoken" when one of them is off is the silence
+/// this project keeps forbidding.
+// `Debug` because the tests assert on the error a refusal produces, and a
+// row is half of what that error is made of.
+#[derive(Debug, Serialize)]
+struct Spoken {
+    /// The device's label, as the roster has it.
+    device: String,
+    /// Whether this one counts as the message having been taken.
+    heard: bool,
+    /// What happened, in words rather than the enum's name.
+    outcome: String,
+}
+
+/// Whether a status counts as the message having been taken.
+fn was_heard(s: &clispeak_proto::Status) -> bool {
+    use clispeak_proto::Status;
+    matches!(s, Status::Spoken | Status::Queued | Status::Speaking)
+}
+
+/// What one target's answer means, in words for whoever is reading it.
+///
+/// Context-free on purpose. The phrase used to say "this device is muted",
+/// which was true while the app could only speak here and became a lie the
+/// moment it could send anywhere else. The device's name is beside this in a
+/// row and in front of it in an error, so the words only have to supply the
+/// rest of the sentence.
+///
+/// Matched exhaustively rather than with a catch-all: a new `Status` should
+/// fail the build here, which is the same argument [`describe`] makes about
+/// unhandled replies further down.
+fn outcome_of(t: &clispeak_proto::TargetResult) -> String {
+    use clispeak_proto::Status;
+    match (&t.status, t.detail.as_deref()) {
+        (Status::Spoken, _) => "spoken".into(),
+        (Status::Speaking, _) => "speaking".into(),
+        (Status::Queued, _) => "queued".into(),
+        (Status::Muted, _) => "muted".into(),
+        (Status::QuietHours, _) => "quiet hours are on".into(),
+        (Status::NoEngine, Some(d)) => d.to_string(),
+        (Status::NoEngine, None) => "no working speech engine".into(),
+        // The detail is a transport error chain. It is kept because this tab
+        // is partly a testing aid, and "could not be reached" alone has told
+        // nobody anything they did not already know from the silence.
+        (Status::Unreachable, Some(d)) => format!("could not be reached: {d}"),
+        (Status::Unreachable, None) => "could not be reached".into(),
+        (Status::Rejected, Some(d)) => format!("refused it: {d}"),
+        (Status::Rejected, None) => "refused it".into(),
+        (Status::Cancelled, _) => "cancelled".into(),
+        (Status::Dropped, _) => "dropped, its queue was already deep".into(),
+    }
+}
+
+/// Turn a report into a row per device, or into why nothing was spoken.
 ///
 /// A refusal is surfaced rather than swallowed. Muting is a decision worth
 /// reporting back: pressing Speak on a muted device and being told nothing
 /// looks like the button is broken.
-fn spoken_or_why(targets: &[clispeak_proto::TargetResult]) -> Result<(), String> {
-    use clispeak_proto::Status;
-    let heard = |s: &Status| matches!(s, Status::Spoken | Status::Queued | Status::Speaking);
-    if targets.iter().any(|t| heard(&t.status)) {
-        return Ok(());
-    }
-    let why = targets
+///
+/// The failure is written over *all* the targets, because "some device
+/// refused" is the question rather than "the first one did" — and the rows
+/// are returned on success for the same reason, since a send that reached
+/// three devices out of four succeeded and still has something to say.
+fn spoken_or_why(targets: &[clispeak_proto::TargetResult]) -> Result<Vec<Spoken>, String> {
+    let rows: Vec<Spoken> = targets
         .iter()
-        .map(|t| match (&t.status, t.detail.as_deref()) {
-            (Status::Muted, _) => "this device is muted".to_string(),
-            (Status::QuietHours, _) => "quiet hours are on".to_string(),
-            (Status::NoEngine, Some(d)) => d.to_string(),
-            (Status::NoEngine, None) => "no working speech engine".to_string(),
-            (s, Some(d)) => format!("{s:?}: {d}"),
-            (s, None) => format!("{s:?}"),
+        .map(|t| Spoken {
+            device: t.device.clone(),
+            heard: was_heard(&t.status),
+            outcome: outcome_of(t),
         })
+        .collect();
+    if rows.iter().any(|r| r.heard) {
+        return Ok(rows);
+    }
+    let why = rows
+        .iter()
+        .map(|r| format!("{}: {}", r.device, r.outcome))
         .collect::<Vec<_>>()
         .join("; ");
     Err(if why.is_empty() {
@@ -1228,7 +1301,7 @@ fn spoken_or_why(targets: &[clispeak_proto::TargetResult]) -> Result<(), String>
 /// a real node through *these* functions, so a reply that changes shape fails
 /// the build rather than waiting for someone to press the button.
 mod replies {
-    use super::{DeviceInfo, Invite, InvitePreview, Joined, describe, spoken_or_why};
+    use super::{DeviceInfo, Invite, InvitePreview, Joined, Spoken, describe, spoken_or_why};
     use clispeak_proto::Response;
 
     /// The fields `node_status` reads. `None` when the reply was not a status
@@ -1406,10 +1479,13 @@ mod replies {
     /// it, and the interface then said the send had failed — showing the debug
     /// formatting of a successful report as an error. Work done, failure
     /// announced.
-    pub(super) fn spoke(r: Response) -> Result<(), String> {
+    /// A row per device on success. `Accepted` and `Finished` carry no
+    /// targets, so they report being taken with nothing to draw beside it —
+    /// which is what an empty list means to the caller, not an empty send.
+    pub(super) fn spoke(r: Response) -> Result<Vec<Spoken>, String> {
         match r {
             Response::Report { targets, .. } => spoken_or_why(&targets),
-            Response::Accepted { .. } | Response::Finished { .. } => Ok(()),
+            Response::Accepted { .. } | Response::Finished { .. } => Ok(Vec::new()),
             other => Err(describe(other)),
         }
     }
@@ -2081,9 +2157,15 @@ mod report_tests {
         assert!(spoken_or_why(&report).is_ok());
     }
 
-    /// A muted device says so rather than failing silently or lying.
+    /// A muted device says so rather than failing silently or lying — and
+    /// says *which* device.
+    ///
+    /// This used to read "this device is muted", which was true while the app
+    /// could only ever speak here. The Speak tab can send anywhere, so the
+    /// same sentence about a phone in another room named the wrong machine.
+    /// The words carry the status and the name carries the subject.
     #[test]
-    fn a_muted_device_says_why() {
+    fn a_muted_device_says_which_one_and_why() {
         use clispeak_proto::{Status, TargetResult};
         let report = [TargetResult {
             device: "Phone".into(),
@@ -2092,7 +2174,7 @@ mod report_tests {
             took_ms: None,
             detail: None,
         }];
-        assert_eq!(spoken_or_why(&report).unwrap_err(), "this device is muted");
+        assert_eq!(spoken_or_why(&report).unwrap_err(), "Phone: muted");
     }
 
     /// An engine failure carries the engine's own reason, not a stand-in.
@@ -2128,6 +2210,50 @@ mod report_tests {
             detail: None,
         };
         assert!(spoken_or_why(&[row(Status::Muted), row(Status::Spoken)]).is_ok());
+    }
+
+    /// A partial send reports every device, not only the ones that spoke.
+    ///
+    /// The success case returns rows for the same reason the failure case
+    /// joins all of them: a message that reached two devices out of three
+    /// succeeded, and the third is the part worth reading. Collapsing that
+    /// into "spoken" is the silence this project forbids, one layer up from
+    /// where it usually happens.
+    #[test]
+    fn a_partial_send_still_reports_the_ones_that_missed() {
+        use clispeak_proto::{Status, TargetResult};
+        let row = |device: &str, status| TargetResult {
+            device: device.into(),
+            endpoint_id: "x".into(),
+            status,
+            took_ms: None,
+            detail: None,
+        };
+        let rows = spoken_or_why(&[
+            row("Phone", Status::Queued),
+            row("Desk", Status::Unreachable),
+        ])
+        .expect("one device took it, so the send did not fail");
+        assert_eq!(rows.len(), 2, "a row per device, including the miss");
+        assert!(rows[0].heard && rows[0].device == "Phone");
+        assert!(!rows[1].heard, "unreachable is not the message being taken");
+        assert_eq!(rows[1].outcome, "could not be reached");
+    }
+
+    /// Every refusal names its device when several are involved.
+    #[test]
+    fn nothing_anywhere_names_every_device() {
+        use clispeak_proto::{Status, TargetResult};
+        let row = |device: &str, status| TargetResult {
+            device: device.into(),
+            endpoint_id: "x".into(),
+            status,
+            took_ms: None,
+            detail: None,
+        };
+        let why = spoken_or_why(&[row("Phone", Status::Muted), row("Desk", Status::QuietHours)])
+            .unwrap_err();
+        assert_eq!(why, "Phone: muted; Desk: quiet hours are on");
     }
 }
 

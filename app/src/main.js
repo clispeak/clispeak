@@ -35,17 +35,25 @@ let screen = "home";
 /**
  * Show one screen and mark its tab.
  *
- * Three screens rather than one long column: the app is mostly a receiver, and
- * what it is saying and what it has said are what you open it for. Who can
- * reach it is checked and changed often enough to deserve its own tab, and
- * what is set once and left alone belongs behind the last one.
+ * Four screens rather than one long column: the app is mostly a receiver, and
+ * what it is saying and what it has said are what you open it for. Sending is
+ * the other half and gets its own tab, because a field tucked under Settings
+ * could only ever mean "speak here" and there was nowhere to say where else.
+ * Who can reach this device is checked and changed often enough to deserve a
+ * tab too, and what is set once and left alone belongs behind the last one.
  */
 function showScreen(name) {
   screen = name;
   $("screen-home").hidden = name !== "home";
+  $("screen-speak").hidden = name !== "speak";
   $("screen-spaces").hidden = name !== "spaces";
   $("screen-settings").hidden = name !== "settings";
-  for (const tab of [$("tab-home"), $("tab-spaces"), $("tab-settings")]) {
+  for (const tab of [
+    $("tab-home"),
+    $("tab-speak"),
+    $("tab-spaces"),
+    $("tab-settings"),
+  ]) {
     const active = tab.dataset.screen === name;
     tab.className =
       "flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition " +
@@ -932,6 +940,7 @@ async function refreshSpaces() {
   // ticket — but "Joins home" is what a person needs to read before handing
   // the code to another device.
   defaultSpace = spaces.find((s) => s.is_default)?.label ?? null;
+  fillSendTargets(spaces, devices);
   const several = spaces.length > 1;
   syncRows($("spaces"), spaces, {
     key: (space) => space.label,
@@ -1227,14 +1236,167 @@ $("preview").onclick = () =>
     await call("speak", { text: "This is how this device sounds." });
   });
 
-$("speak-form").onsubmit = async (e) => {
+/**
+ * Fill the Speak tab's target picker.
+ *
+ * Fed from the same fetch that draws the space cards rather than a second
+ * one. Two reads of the roster a few milliseconds apart would disagree
+ * occasionally and there would be no way to tell which screen was right.
+ *
+ * Rebuilt only when the options actually change. A poll runs every few
+ * seconds, and replacing a `<select>`'s children throws away the selection —
+ * on a phone it also closes the native picker under the finger that opened
+ * it. So the whole option list is reduced to a string and compared.
+ */
+let sendTargets = "";
+
+function fillSendTargets(spaces, devices) {
+  // The default space first: a bare name resolves there, so it is what
+  // "everyone" means with nothing qualifying it.
+  const ordered = [...spaces].sort(
+    (a, b) => Number(b.is_default) - Number(a.is_default),
+  );
+  const several = spaces.length > 1;
+
+  // Value is the selector the node will resolve; "" means this device, which
+  // is what leaving `to` off does. Qualified only when there is more than one
+  // space, because `home/Phone` reads like a path to someone who has never
+  // made a second space and does not need to know one exists.
+  const options = [["", "This device", "Speaks here, through this device's own speaker."]];
+  for (const space of ordered) {
+    const mine = devicesIn(space, devices).filter((d) => !d.is_self);
+    const scope = space.is_default && !several ? "" : `${space.label}/`;
+    if (mine.length) {
+      options.push([
+        `${scope}all`,
+        several ? `Everyone in ${space.label}` : "Everyone",
+        `Goes to all ${mine.length + 1} devices in ${space.label}, this one included.`,
+      ]);
+    }
+    for (const d of mine) {
+      options.push([
+        `${scope}${d.name}`,
+        several ? `${d.name} · ${space.label}` : d.name,
+        `Goes to ${d.name}. Whether it speaks is that device's decision — its own mute and quiet hours apply.`,
+      ]);
+    }
+  }
+
+  const signature = options.map((o) => o.join("\u0000")).join("\u0001");
+  if (signature === sendTargets) return;
+  sendTargets = signature;
+
+  const select = $("send-to");
+  const chosen = select.value;
+  select.replaceChildren();
+  for (const [value, label, note] of options) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.dataset.note = note;
+    select.append(option);
+  }
+  // A device that has just been revoked, or a space just left, takes its
+  // option with it. Falling back to this device rather than to whatever
+  // happens to be first: the fallback should be the harmless one.
+  select.value = options.some(([v]) => v === chosen) ? chosen : "";
+  describeSendTarget();
+}
+
+/** Say what the chosen target means, under the picker. */
+function describeSendTarget() {
+  const chosen = $("send-to").selectedOptions[0];
+  $("send-to-note").textContent = chosen?.dataset.note ?? "";
+}
+
+/**
+ * Draw what each device did with the message.
+ *
+ * `rows` is empty when the node reported the send as taken without saying by
+ * whom, and null when nothing was spoken anywhere — in which case `problem`
+ * carries the reason. It is written into the panel as well as raised as a
+ * toast, because the toast fades and the reason is the entire answer.
+ */
+function showSendResult(rows, problem) {
+  const list = $("send-result");
+  list.replaceChildren();
+  $("send-result-section").hidden = false;
+
+  const row = (device, outcome, heard) => {
+    const li = document.createElement("li");
+    li.className = "flex items-baseline gap-3 px-3 py-2 text-sm";
+    const name = document.createElement("span");
+    // Truncating rather than `shrink-0`: a device name is somebody else's
+    // text and can be as long as they like, and a row that refuses to shrink
+    // pushes the outcome — the half worth reading — out of a clipped list.
+    name.className = "min-w-0 truncate font-medium";
+    name.textContent = device;
+    const what = document.createElement("span");
+    what.className =
+      "min-w-0 flex-1 break-words text-right " +
+      (heard
+        ? "text-emerald-700 dark:text-emerald-400"
+        : "text-amber-700 dark:text-amber-400");
+    what.textContent = outcome;
+    li.append(name, what);
+    list.append(li);
+  };
+
+  // Brought into view rather than left below the fold. The answer is the
+  // whole point of pressing Send, and on a short phone the panel sits under
+  // the note about urgency — close enough to look like nothing happened.
+  // `nearest` so an already-visible panel does not make the page jump.
+  const reveal = () =>
+    $("send-result-section").scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+  if (problem != null) {
+    row("Nothing spoke it", problem, false);
+    reveal();
+    return;
+  }
+  if (!rows.length) {
+    row("Sent", "the node took it", true);
+    reveal();
+    return;
+  }
+  for (const r of rows) row(r.device, r.outcome, r.heard);
+  reveal();
+}
+
+/** One line for the toast, since the panel carries the detail. */
+function summariseSend(rows) {
+  if (!rows.length) return "sent";
+  const heard = rows.filter((r) => r.heard).length;
+  if (rows.length === 1) return `${rows[0].device}: ${rows[0].outcome}`;
+  if (heard === rows.length) return `sent to all ${rows.length} devices`;
+  return `sent to ${heard} of ${rows.length} devices`;
+}
+
+$("send-to").onchange = describeSendTarget;
+
+$("send-form").onsubmit = async (e) => {
   e.preventDefault();
-  const text = $("say-input").value.trim();
+  const text = $("send-text").value.trim();
   if (!text) return;
-  await withButton($("say"), "…", async () => {
-    await call("speak", { text });
-    $("say-input").value = "";
-    say("spoken");
+  // `to` is left off for this device rather than sent as an empty string: the
+  // node reads a missing selector as `here`, and an empty one as a selector
+  // that matched nothing.
+  const to = $("send-to").value || null;
+  const priority = $("send-priority").value;
+  await withButton($("send"), "…", async () => {
+    let rows;
+    try {
+      rows = await invoke("speak", { text, to, priority });
+    } catch (problem) {
+      showSendResult(null, String(problem));
+      say(String(problem), "error");
+      return;
+    }
+    // The text stays. Sending the same line to a second device is the whole
+    // reason this tab is useful for testing, and there is no way to submit by
+    // accident — Enter puts a newline in the box, so only the button sends.
+    showSendResult(rows, null);
+    say(summariseSend(rows));
   });
 };
 
@@ -1668,6 +1830,7 @@ $("skill-install").onclick = () =>
   });
 
 $("tab-home").onclick = () => showScreen("home");
+$("tab-speak").onclick = () => showScreen("speak");
 $("tab-spaces").onclick = () => showScreen("spaces");
 $("tab-settings").onclick = () => showScreen("settings");
 

@@ -69,6 +69,18 @@ window.__calls = [];
 window.__peerName = "Phone";
 
 /**
+ * What a send reports back, per device.
+ *
+ * Overridable because "some devices spoke and some did not" is the outcome
+ * the Speak tab exists to draw, and it is not reachable from a stub that
+ * always succeeds. `window.__speakFails` is the other half: nothing being
+ * spoken anywhere comes back as an error from the command rather than as an
+ * empty list, and the tab has to say so somewhere that does not fade.
+ */
+window.__spoken = null;
+window.__speakFails = null;
+
+/**
  * What the node reports as its version.
  *
  * A probe sets this to the empty string to check the one case that actually
@@ -199,6 +211,9 @@ window.__TAURI__ = {
             default_path: "/Users/someone/.claude/skills/clispeak/SKILL.md",
             sandboxed: false,
           };
+        case "speak":
+          if (window.__speakFails) throw window.__speakFails;
+          return window.__spoken ?? [{ device: "Mac", heard: true, outcome: "spoken" }];
         case "reset_skill_path":
           reset = true;
           return "/Users/someone/Desktop/skills/clispeak/SKILL.md";
