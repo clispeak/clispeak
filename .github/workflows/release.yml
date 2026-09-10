@@ -137,23 +137,36 @@ jobs:
   # A dependency compromised anywhere in the build cannot reach the
   # certificate, because the certificate is not in that job (#117).
   #
-  # `environment:` does two things here, and only one of them is available
-  # today. It scopes the secrets to this job rather than the whole
-  # repository, which works on any plan and is most of the value.
+  # `environment:` does two things here, and both of them are live now. It
+  # scopes the secrets to this job rather than the whole repository, and it
+  # holds the run until a named person approves it.
   #
-  # **It is not yet a gate.** Required reviewers are a paid feature —
-  # measured, not assumed: creating the environment with a reviewer returns
-  # "Please ensure the billing plan supports the required reviewers
-  # protection rule" on a private repository on the free plan. So nothing
-  # currently stops a run that references this environment from reaching the
-  # certificate, including one from a branch.
+  # **Both environments require Patrick.** Read back from the API rather
+  # than believed: `macos-signing` and `android-signing` each carry a
+  # `required_reviewers` rule naming `patrickhogg`, plus a branch policy. A
+  # release therefore stops twice and waits, which is the point — the gate
+  # exists so a person watches the signing key get used, and an agent
+  # clicking it is the same as not having one.
   #
-  # That is an accepted risk while the repository is private and two people
-  # can push to it. **It stops being acceptable the day the repository is
-  # public and takes pull requests**, because a contributor could then
-  # propose a workflow that names this environment. Add the reviewer before
-  # that happens; going public is also when branch protection becomes free,
-  # so the two land together (#5, #117).
+  # **This paragraph used to say the opposite, and was wrong for weeks.** It
+  # said "it is not yet a gate", because required reviewers had been a paid
+  # feature and the measurement was real at the time: creating the
+  # environment with a reviewer returned "Please ensure the billing plan
+  # supports the required reviewers protection rule" on a private repository
+  # on the free plan. It then named the exact condition that would end that —
+  # "it stops being acceptable the day the repository is public" — the
+  # repository went public, somebody added the reviewers, and nobody came
+  # back to the sentence saying they had not.
+  #
+  # Which is the failure this whole repository is about, in the file that
+  # does the signing: a measured claim, correct when written, decaying into
+  # a confident description of something that is no longer true. Anyone
+  # reading it would have concluded the certificate was unprotected and
+  # gone to add a gate that was already there. Check the environment, not
+  # this comment (#5, #117).
+  #
+  # `main`'s branch protection is a separate question and is one name short
+  # of the merge rule in `CLAUDE.md` — see #255.
   macos-sign:
     name: macos (sign and notarise)
     needs: macos
