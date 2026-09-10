@@ -1184,10 +1184,23 @@ async fn speak(
     // The Speak tab builds it from a picker, so nobody types one — but the
     // grammar has one implementation, and a second one here would be a
     // second thing to keep in step with spaces, groups and qualified names.
+    // `Until::Spoken`, because a person is looking at the answer. Sending
+    // without waiting reports the intake — every device came back `queued`,
+    // which was true when the queue took it and false by the time it was
+    // read, with the message already spoken. The tab's heading is "what
+    // happened"; this is what makes that heading true.
+    //
+    // The cost is that the button stays busy for about as long as the
+    // speech. That is the honest shape of the question.
     replies::spoke(
         state
             .node
-            .speak(text, priority.unwrap_or(Priority::Normal), to)
+            .speak(
+                text,
+                priority.unwrap_or(Priority::Normal),
+                to,
+                clispeak_core::Until::Spoken,
+            )
             .await,
     )
 }
@@ -2379,7 +2392,15 @@ mod command_tests {
         // message at all.
         understood(
             "speak",
-            replies::spoke(node.speak("hello".into(), Priority::Normal, None).await),
+            replies::spoke(
+                node.speak(
+                    "hello".into(),
+                    Priority::Normal,
+                    None,
+                    clispeak_core::Until::Spoken,
+                )
+                .await,
+            ),
         );
 
         // Replaying needs something to replay, so it follows the speak above.
