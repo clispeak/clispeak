@@ -797,7 +797,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "clispeak-app"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "anyhow",
  "clispeak-core",
@@ -818,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "clispeak-cli"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "anyhow",
  "blake3",
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "clispeak-core"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "anyhow",
  "blake3",
@@ -864,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "clispeak-daemon"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "anyhow",
  "clispeak-core",
@@ -875,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "clispeak-engine"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "directories",
  "dispatch2",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "clispeak-keystore"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "clispeak-core",
  "directories",
@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "clispeak-proto"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "ciborium",
  "serde",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "clispeak-text"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "thiserror 2.0.20",
  "unicode-segmentation",
@@ -7415,7 +7415,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "anyhow",
  "yaml-rust2",
