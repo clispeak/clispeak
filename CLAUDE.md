@@ -247,9 +247,29 @@ fmt · clippy · portability · test    frontend probes
 the interface in a real headless browser and it had been sitting outside CI
 because `harness.mjs` said the build images carry no Chrome — a reason nobody
 had rechecked, and wrong: `ubuntu-latest` ships Google Chrome *and* Chromium,
-and always has. If this number moves again, move it here in the same change,
-because a merge rule that is one name out of date passes a pull request whose
-newest check never ran.
+and always has.
+
+**If this number moves again, move it in two places.** Here, and `main`'s
+branch protection — `gh api repos/clispeak/clispeak/branches/main/protection`
+lists the contexts it actually requires. `frontend probes` was added to this
+file on 7 September and not to the branch rule, so for two days the written
+rule said six and the mechanical one enforced five, and a pull request with a
+broken interface could be merged with the button (#255).
+
+One place is where it was, and the reason it is worth saying twice: a merge
+rule that is one name out of date passes a pull request whose newest check
+never ran. The other is that the rule which does not depend on anyone
+remembering is exactly the one nobody remembers to update. Add a context
+without replacing the rest:
+
+```bash
+gh api -X POST repos/clispeak/clispeak/branches/main/protection/required_status_checks/contexts \
+  -f 'contexts[]=<the new name>'
+```
+
+`PUT .../protection` replaces the whole object, so a field left out of the
+body is silently dropped. The endpoint above appends and touches nothing
+else.
 
 **Six is a floor, not a count, because a seventh appears conditionally.**
 `kotlin · manifest · resources` builds the Android shell and runs only when
