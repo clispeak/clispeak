@@ -1383,7 +1383,10 @@ $("send-form").onsubmit = async (e) => {
   // that matched nothing.
   const to = $("send-to").value || null;
   const priority = $("send-priority").value;
-  await withButton($("send"), "…", async () => {
+  // "speaking…" rather than "…", because the wait now lasts about as long as
+  // the speech does. A button that sits at three dots for eight seconds reads
+  // as hung; one that says what it is waiting for reads as working.
+  await withButton($("send"), "speaking…", async () => {
     let rows;
     try {
       rows = await invoke("speak", { text, to, priority });

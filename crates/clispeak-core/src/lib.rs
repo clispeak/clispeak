@@ -28,7 +28,7 @@ pub use identity::{
     load_voice_settings, save_voice_settings, set_config_dir, set_device_name,
 };
 pub use identity::{migrate_from, migrate_from_previous_name};
-pub use node::{Node, WindowHook};
+pub use node::{Node, Until, WindowHook};
 pub use policy::{Policies, Policy, QuietHours};
 pub use roster::{Roster, RosterError, verify};
 pub use spaces::{SpaceInfo, Spaces};

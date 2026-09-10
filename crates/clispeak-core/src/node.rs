@@ -386,7 +386,16 @@ impl Node {
     }
 
     /// Speak text here, or on a named peer.
-    pub async fn speak(&self, text: String, priority: Priority, to: Option<String>) -> Response {
+    ///
+    /// `until` is not a tuning knob. It decides whether the report you get
+    /// back describes an outcome or an intake — see [`Until`].
+    pub async fn speak(
+        &self,
+        text: String,
+        priority: Priority,
+        to: Option<String>,
+        until: Until,
+    ) -> Response {
         speak(
             &self.shared,
             &self.transport,
@@ -394,7 +403,7 @@ impl Node {
                 text,
                 priority,
                 to,
-                wait: false,
+                wait: until == Until::Spoken,
                 voice: None,
                 timeout_secs: None,
             },
@@ -1084,6 +1093,39 @@ fn estimated_wait(words: usize, rate: f32) -> std::time::Duration {
     std::time::Duration::from_secs_f32(seconds)
         .saturating_add(STARTUP_ALLOWANCE)
         .clamp(MIN_TIMEOUT, MAX_TIMEOUT)
+}
+
+/// How long a caller waits before being told what happened.
+///
+/// **This used to be a bare `wait: false` inside [`Node::speak`], and it was
+/// the wrong default for anything a person reads.** The app's Speak tab drew
+/// a row per device saying `queued` — accurate at the instant it was
+/// captured, and false by the time it reached a pair of eyes, because the
+/// message had been spoken in the meantime. The tab's whole promise is *what
+/// happened*, and it was answering *what had happened by the time the queue
+/// took it*: the same shape as every other entry in `CLAUDE.md`'s table, a
+/// tool answering honestly about something adjacent to the question asked.
+///
+/// So the choice is named at every call site rather than buried in a default.
+///
+/// The alternative that was rejected: report the intake immediately and
+/// follow it up with the outcome when it lands. That is the better interface
+/// and it needs a delivery receipt the protocol does not have — a peer
+/// answers once and the stream ends, so the sending device has nowhere to
+/// learn that speech finished. Waiting uses machinery that already exists
+/// and is already tested. The receipt is a bigger change than the bug.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Until {
+    /// Return once every target has accepted or refused it.
+    ///
+    /// For an agent that is about to do something else, and for anything
+    /// where the answer is "was it taken" rather than "was it heard".
+    Accepted,
+    /// Return once every target has finished speaking, refused, or run out
+    /// of time.
+    ///
+    /// For a person watching a screen. Costs roughly as long as the speech.
+    Spoken,
 }
 
 /// What a caller asked to have spoken.
@@ -4271,12 +4313,17 @@ mod peer_tests {
                 "the build finished".into(),
                 Priority::Normal,
                 Some("Phone".into()),
+                Until::Accepted,
             )
             .await;
         // `Queued` rather than `Spoken`: the far device answers when it has
         // taken the message, not when it has finished saying it. Asserting
         // `Spoken` here would be asserting on a race, which is what `settle`
         // below is for.
+        //
+        // That is `Until::Accepted` doing exactly what it says, and it is
+        // right for this test. It was wrong for a person reading a screen —
+        // see the test below.
         match &sent {
             Response::Report { targets, .. } => {
                 assert_eq!(targets.len(), 1, "one addressee, one result: {sent:?}");
@@ -4441,7 +4488,12 @@ mod peer_tests {
         // the rename appeared not to propagate until something else happened.
         let _ = laptop
             .node
-            .speak("anything".into(), Priority::Normal, Some("Phone".into()))
+            .speak(
+                "anything".into(),
+                Priority::Normal,
+                Some("Phone".into()),
+                Until::Accepted,
+            )
             .await;
 
         settle(|| !phone.heard().is_empty()).await;
@@ -4493,7 +4545,12 @@ mod peer_tests {
         // `all` is scoped to one space.
         let sent = laptop
             .node
-            .speak("still here".into(), Priority::Normal, Some("all".into()))
+            .speak(
+                "still here".into(),
+                Priority::Normal,
+                Some("all".into()),
+                Until::Accepted,
+            )
             .await;
         assert!(
             matches!(sent, Response::Report { .. }),
@@ -5186,7 +5243,12 @@ mod peer_tests {
 
         laptop
             .node
-            .speak("the roof is on fire".into(), Priority::High, None)
+            .speak(
+                "the roof is on fire".into(),
+                Priority::High,
+                None,
+                Until::Accepted,
+            )
             .await;
         settle(|| !laptop.heard().is_empty()).await;
         assert_eq!(
@@ -5215,7 +5277,12 @@ mod peer_tests {
 
         let response = laptop
             .node
-            .speak("nothing important".into(), Priority::Normal, None)
+            .speak(
+                "nothing important".into(),
+                Priority::Normal,
+                None,
+                Until::Accepted,
+            )
             .await;
         match response {
             Response::Report { targets, .. } => assert_eq!(
@@ -5251,7 +5318,12 @@ mod peer_tests {
         // reason someone would go back to the history and press play.
         let msg_id = match laptop
             .node
-            .speak("read this back to me".into(), Priority::Normal, None)
+            .speak(
+                "read this back to me".into(),
+                Priority::Normal,
+                None,
+                Until::Accepted,
+            )
             .await
         {
             Response::Report { msg_id, .. } => msg_id,
@@ -5277,6 +5349,73 @@ mod peer_tests {
     /// immediately is asserting on a race. A fixed `sleep` would be the other
     /// way to lose: too short is flaky, too long is a suite nobody runs.
     ///
+    /// `Until::Spoken` reports an outcome; `Until::Accepted` reports an intake.
+    ///
+    /// The bug this is here for reached a phone. The app's Speak tab sent to
+    /// four devices, drew a row per device, and two of them read `queued` —
+    /// while the message was audibly coming out of both speakers. Nothing was
+    /// broken: `queued` was true at the moment the queue took it, and the tab
+    /// asks *what happened*. A status captured before the thing happens
+    /// cannot answer that, however honest it is.
+    ///
+    /// So this asserts the difference rather than the fix, because the fix is
+    /// a default and a default is exactly what nobody reads.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn waiting_reports_what_happened_and_not_waiting_reports_what_was_taken() {
+        let board = Switchboard::new();
+        let laptop = device(&board, "Laptop").await;
+        let phone = device(&board, "Phone").await;
+        pair(&laptop, &phone).await;
+
+        let status = |r: &Response| match r {
+            Response::Report { targets, .. } => {
+                assert_eq!(targets.len(), 1, "one addressee, one result: {r:?}");
+                targets[0].status.clone()
+            }
+            other => panic!("sending to a paired device should report on it: {other:?}"),
+        };
+
+        let waited = laptop
+            .node
+            .speak(
+                "this one waits".into(),
+                Priority::Normal,
+                Some("Phone".into()),
+                Until::Spoken,
+            )
+            .await;
+        assert_eq!(
+            status(&waited),
+            Status::Spoken,
+            "Until::Spoken must not come back mid-flight — a row saying \
+             `queued` beside a device that is audibly talking is the bug"
+        );
+        // And the far device really did say it, so the status is not merely
+        // the right word arriving at the right time by luck.
+        assert!(
+            phone.heard().contains(&"this one waits".to_string()),
+            "the receiving device speaks what was sent: {:?}",
+            phone.heard()
+        );
+
+        // The other half. `Accepted` is still allowed to be early, and an
+        // agent that is about to do something else wants exactly that.
+        let taken = laptop
+            .node
+            .speak(
+                "this one does not".into(),
+                Priority::Normal,
+                Some("Phone".into()),
+                Until::Accepted,
+            )
+            .await;
+        assert!(
+            matches!(status(&taken), Status::Queued | Status::Spoken),
+            "Until::Accepted reports intake, which may or may not have \
+             finished by the time it returns: {taken:?}"
+        );
+    }
+
     /// Two seconds is far past anything in-memory needs and is still a bound,
     /// so a genuine hang fails rather than hanging the suite.
     async fn settle(mut done: impl FnMut() -> bool) {
