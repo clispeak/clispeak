@@ -282,7 +282,7 @@ pub fn socket_name() -> String {
 /// `None` on Windows, where a named pipe is a namespaced name and has no
 /// directory to be private in. That platform carries the protection on the
 /// listener instead: see [`PIPE_DACL`] below, which is the same guarantee
-/// spelled in a different language (#128).
+/// spelled in a different language (#128, decision 120).
 ///
 /// This comment said the descriptor "is not written yet" for as long as the
 /// descriptor existed, a hundred and fifty lines below it in this file. A

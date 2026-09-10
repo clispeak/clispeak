@@ -1,6 +1,10 @@
 /**
  * One dialog implementation, because there were four.
  *
+ * Confirmation happens in the page rather than through the webview, because
+ * `window.confirm` is not portable and WKWebView shows nothing — decision 26,
+ * which `cargo xtask portability` enforces.
+ *
  * Every dialog here carried `role="dialog"` and `aria-modal="true"` — a
  * promise to assistive technology that the rest of the page is unreachable —
  * and none of them kept it. Tab walked out of "Remove device?" into the tab
@@ -8,7 +12,8 @@
  * thing the dialog was asking about. Closing dropped focus to `<body>`, so
  * whoever opened it with the keyboard lost their place. Issue #75.
  *
- * `aria-modal` is a claim, not a mechanism. `inert` is the mechanism: it takes
+ * `aria-modal` is a claim, not a mechanism (decision 59). `inert` is the
+ * mechanism: it takes
  * a subtree out of the tab order, out of hit-testing and out of the
  * accessibility tree in one attribute, which is exactly what "modal" means.
  * The trap below is still needed because `inert` cannot apply to an ancestor

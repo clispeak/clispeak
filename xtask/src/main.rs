@@ -245,6 +245,9 @@ fn is_platform_conditional(line: &str) -> bool {
 /// names, and a marker where the reader already is. The marker wins, and it
 /// has to carry a reason — a bare exemption is the thing that gets pasted
 /// without thought.
+/// Decision 49 is why every spelling is checked rather than the two that
+/// were obvious, and decision 94 is why a `#[cfg]` is treated as one
+/// conditional with several spellings rather than several conditionals.
 const EXCEPTION: &str = "portability-exception:";
 
 fn portability() -> anyhow::Result<()> {
