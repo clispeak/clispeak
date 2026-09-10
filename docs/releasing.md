@@ -1,47 +1,63 @@
 # Releasing
 
-**Most of this is built.** `.github/workflows/release.yml` packages four
-platforms on a `v*` tag and leaves the result as a draft. What is left is not
-engineering: licensing (#24), how a private repository serves public downloads
-(#23), a download page (#25), and the two signing credentials (#29, #31).
-The macOS half of that is written down in `docs/signing.md`: what the
-certificate fixes, how to make one, and why the self-signed one belongs on a
-development machine and not in a repository secret.
+**This is the chain that runs.** A `v*` tag builds four platforms, stops twice
+for a person to approve the signing keys, and leaves a draft. A person writes
+the notes and publishes it. Seven releases have gone out this way.
 
-This file was written before any of it existed and said so for months after it
-did, which is how an agent came to start building the release chain a second
-time. It now describes what runs.
+**This file has now been stale twice, and the second time it said it was
+not.** It was written before the release chain existed and went on describing
+a future for months after it arrived — which is how an agent came to start
+building the chain a second time. It was corrected, gained the sentence *"it
+now describes what runs"*, and then drifted again while carrying that
+sentence: it still said the repository was private, that nothing had been
+published, and that a download page was outstanding. All three were false, in
+the document that describes publishing, on the day of the seventh release.
+
+The lesson is not "keep it current". It is that **a document asserting its own
+freshness is the one nobody re-reads**, because the assertion answers the
+question a reader would otherwise ask.
 
 ## What we are aiming at
 
 Free binaries for Linux, Android, macOS and Windows, built automatically, with
-a website offering the latest of each. iOS is excluded: it has never been run,
-and Apple's distribution route is not a download link.
+a website offering the latest of each. All of that exists.
 
-**The source stays closed for now.** That is compatible with free binaries, but
-it is not free of consequences — see below, twice.
+iOS is excluded from releases because Apple's distribution route is not a
+download link — TestFlight or the App Store, both of which need an account and
+a review. It builds and it is tested; it is not shipped (decision 104).
 
-## What 1.0 means
+**The source is public and the licence is MIT OR Apache-2.0** (decision 74).
+This section used to say "the source stays closed for now", and a great deal
+below it was reasoning about how a private repository could serve public
+downloads. That question is gone, not answered.
 
-A thing someone can download and use on Linux, Android, macOS and Windows.
-Not iOS: it has never been run, and Apple's route is not a download link.
+## What a release does
 
-The milestone holds two kinds of thing, and nothing else:
+```
+git tag -a vX.Y.Z -m "X.Y.Z"   and push it
+   -> four platform jobs build
+   -> macos-signing   waits for a named reviewer
+   -> android-signing waits for a named reviewer
+   -> a draft release with four artefacts and SHA256SUMS
+   -> a person writes the notes and publishes
+```
 
-**The release chain** — everything between a tag and a binary in someone's
-hands. Building on tags, publishing from a private repository, the licensing
-that has to be settled first, the download page, and the three signing
-questions: a macOS identity, an Android release key, and Microsoft's
-redistribution terms.
+**Both approvals are the point, not friction.** Each gate stands in front of a
+signing key, and it exists so a person watches the key get used. An agent
+holding the ability to approve is the same as having no gate.
 
-**First run** — what someone hits in the first five minutes. A node that
-blocks silently on a keychain prompt while the CLI blames the wrong thing. A
-Mac with no working Piper being told to install what it already has. Two
-commands the docs promise that do not exist. Adding a device.
+**Verify the artefacts before handing anyone a link.** What a file contains is
+checkable without the platform it runs on: the checksums, the APK signing
+block and its `versionName`, the `.app`'s `Info.plist` version and
+`_CodeSignature`, and the Windows import table. That last one is not
+theoretical — `clispeak.exe` once shipped importing `VCRUNTIME140.dll` and
+died before `main` on a clean machine, and the evidence sat in a downloadable
+artefact for two days while nobody opened it (#201).
 
-Deliberately outside it: iOS, which has no hardware; branch protection, which
-is a repository setting rather than work; and the architecture matrix, which
-has a pull request open already.
+**Publish as a normal release, never a pre-release.** GitHub resolves
+`/releases/latest/download/...` to the newest release that is neither a draft
+nor a pre-release, and those URLs are what clispeak.com links to. A beta
+marked pre-release is a site with four dead buttons and nothing saying why.
 
 ## Builds run on version tags, not on every push
 
@@ -65,9 +81,8 @@ pull requests, not on tags, so a tag packages whatever `main` already proved.
 That is deliberate and worth knowing: it means a tag pushed to a commit CI
 never saw is packaged without ever being checked.
 
-**What it actually costs.** This repository is private, so Actions minutes come
-out of an allowance. From the usage page for 2 September 2026 — one day, during
-which three agents pushed to `main` repeatedly:
+**What it actually costs.** From the usage page for 2 September 2026 — one
+day, during which three agents pushed to `main` repeatedly:
 
 | | Minutes | Rate | Gross |
 |---|---|---|---|
@@ -100,44 +115,50 @@ What should *not* be traded away is the five-target rule itself. It is why the
 Windows break was caught after fifteen commits rather than at some point after
 that.
 
-## Publishing from a closed repository
+## How a public download actually works
 
-**A release on a private repository is not a public download.** Its assets
-need the same authentication the source does, so a website cannot simply link
-to them. Three ways round it, none free of trade-offs:
+The repository is public, so a GitHub release asset is a public URL and the
+site links straight to it:
 
-1. **A separate public repository holding only releases.** No source, no
-   history — just tags and attached binaries, published to by a workflow from
-   the private one. Keeps everything inside GitHub and costs nothing.
-2. **Object storage** — R2, S3 or similar — uploaded by the release workflow.
-   More control, a bill, and one more credential in CI.
-3. **A server we run.** Contradicts the premise of the project, which is that
-   there is no server to run.
+```
+https://github.com/clispeak/clispeak/releases/latest/download/<stable name>
+```
 
-Option 1 is the obvious starting point. It should be a deliberate choice
-rather than a default, because a public releases repository is a public
-statement that this project exists.
+The names are stable on purpose — `clispeak-macos.dmg`, not
+`clispeak_0.9.6_aarch64.dmg` — so the page never has to know a version number.
+It reads the current one from the API to display it, and the buttons work
+regardless.
 
-## Licensing: settled, with two things to change first
+This section used to weigh three ways for a *private* repository to serve
+public downloads: a separate releases-only repository, object storage, or a
+server. None was taken. The repository went public and the question stopped
+existing, which is worth recording because the three options were carefully
+argued and are now noise.
+
+## Licensing: settled
 
 **Settled on 3 September 2026.** The project is **MIT OR Apache-2.0** and goes
 open source; binaries are published from GitHub Releases first, with app
 stores later if at all, and the site is GitHub Pages. Decision 74, with the
 full working in `docs/licensing.md`.
 
-**Two things still have to change before a public download exists**, and both
-are about other people's software rather than ours:
+**Two things had to change before a public download existed**, and both were
+about other people's software rather than ours. Both are now closed:
 
 - ~~The default voice must change.~~ **Done** (decision 81). The default is
   `en_US-ljspeech-medium`, trained on the LJ Speech corpus, which is public
   domain with no restrictions on use and no attribution required.
-- **The speech payload should stop being bundled** and be fetched on first run
-  instead. That removes the GPL-3.0 espeak-ng from the artefact, which is what
-  otherwise closes the iOS App Store, and removes the voice from our
-  distribution as well.
+- ~~The speech payload should stop being bundled.~~ **Moot for four of five
+  platforms** (decisions 96 and 102): each speaks through the system
+  synthesiser and carries nothing. The Flatpak still bundles Piper, and
+  fetching on first run remains the option if an iOS App Store submission ever
+  needs it.
 
-Nothing has been published yet — no releases, no tags, and the voice is not in
-git — so this is a problem to avoid rather than one to unwind.
+**Both are now settled.** The voice changed before the first release, and the
+payload question resolved itself by platform rather than by unbundling: macOS,
+Windows, iOS and Android all speak through their own synthesiser and carry no
+payload at all, so the Flatpak is the only artefact that ships any of it. What
+follows is Linux's alone.
 
 **More pressing: we redistribute other people's software inside our packages.**
 **One package, now: the Flatpak.** macOS and Windows both moved to the
