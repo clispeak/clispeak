@@ -279,45 +279,42 @@ beside it removes the failure rather than reporting it.
 and a `clispeak` a **new** shell can find, with no terminal step and no admin
 prompt at any point.
 
-**Where it stands.** The engine half is done — Piper runs on Windows and is
-audible. The installer does not exist, and the reason it stalled is now
-removed: CI produces an NSIS artefact on every tag, so there is something to
-download and test. That matters more than convenience. Any Windows machine
-able to *build* an installer has the MSVC Build Tools, and those install the
-very runtime whose absence is the bug — so the build machine is by
-construction one where the failure cannot reproduce. Building in CI and
-testing a downloaded artefact on a clean VM is the only honest arrangement.
+**Where it stands: done.** Windows speaks through SAPI 5 rather than Piper, so
+the installer carries no speech payload and no MSVC runtime. It has shipped in
+seven releases and been installed on a clean machine with no admin prompt.
+
+**Build in CI, test a downloaded artefact.** Any Windows machine able to
+*build* an installer has the MSVC Build Tools, and those install the very
+runtime whose absence was the bug — so a build machine is by construction one
+where that failure cannot reproduce. That is how #201 survived: it was found
+by a person on a clean VM, and was visible in the artefact's import table the
+whole time.
 Tracked as #30 and #20, the latter being whether we may redistribute the CRT
 at all.
 
-### M11 — Publishing
+### M11 — Publishing  ✅ DONE
 
-Every platform builds. Nothing can be downloaded. That gap is the whole of
-what is left before anyone but us runs this.
+**Anyone can download it and be spoken to.** Seven releases have gone out, the
+site offers the latest build for four platforms, and both signing credentials
+exist and are held behind an approval a person gives.
 
-The release workflow packages four platforms on a `v*` tag and leaves the
-result as a **draft** on purpose. A private repository's releases are not
-public downloads, and more to the point, we redistribute Piper — which carries
-espeak-ng, ONNX Runtime, a phonemiser and a voice model, in an archive
-containing no licence text at all. That is now understood rather than assumed
-— see `docs/licensing.md` — and the answer is that two things change before
-anything is published: the default voice, whose corpus bars redistribution,
-and the bundling of the speech payload itself.
-
-None of this is engineering. Each item is a call only Patrick can make:
+This section said "Every platform builds. Nothing can be downloaded. That gap
+is the whole of what is left before anyone but us runs this" for as long as it
+took to close every item under it. Each of the seven issues below is closed;
+the paragraph naming them as open outlived all of them.
 
 | | |
 |---|---|
-| ~~#24~~ | **settled**: MIT OR Apache-2.0, open source — decision 74, `docs/licensing.md`. Two changes still needed before publishing: the default voice, and unbundling the speech payload |
-| #23 | how a private repo serves public downloads |
-| #25 | a page offering the latest build per platform |
-| #29 | a macOS signing identity, so a rebuild stops prompting the keychain |
-| #31 | an Android signing key, before an APK is offered to anyone |
-| #20 | whether the MSVC runtime may ship inside the Windows installer |
-| #5  | branch protection, so main cannot go red unnoticed again |
+| ~~#24~~ | settled: MIT OR Apache-2.0, open source — decision 74 |
+| ~~#23~~ | gone rather than answered: the repository is public, so a release asset is a public URL |
+| ~~#25~~ | clispeak.com, published from `site/` by a workflow |
+| ~~#29~~ | a Developer ID certificate; releases are signed and notarised |
+| ~~#31~~ | an Android release key, held in a protected environment |
+| ~~#20~~ | gone with Piper: Windows moved to SAPI 5 and imports no MSVC runtime |
+| ~~#5~~ | branch protection requires the six named checks |
 
-*Exit:* a person who has never seen this repository can install it on their own
-machine, from a link, and be spoken to.
+*Exit, met:* a person who has never seen this repository can install it on
+their own machine, from a link, and be spoken to.
 
 ### M12 — Audit findings
 
@@ -342,8 +339,8 @@ What it says about the process: every high finding sits at a boundary no test
 crosses (#80), and three of the worst are the same fact held in two places
 (#79). The fix for the crate is a seam, not a rewrite.
 
-*Exit:* every `security` issue closed, #80's harness exists, and the release
-APK is the release build.
+*Exit, met:* every `security` issue closed, #80's harness exists — two nodes
+talk inside one process — and the release APK is the release build.
 
 ---
 
@@ -358,13 +355,19 @@ touching a network.
 
 **Manual, and unavoidable** — real devices for CGNAT traversal, doze mode,
 network switching, and audio output. No CI substitute exists for these, which
-is exactly why M0 comes first.
+is exactly why M0 comes first. Every bug found by a person running the app on
+real hardware has been of this kind, and none of them was reachable by any
+gate in this repository.
 
 ## Deferred past phase 1
 
-Full macOS and Windows test coverage (they get smoke tests only) · **all** iOS
-runtime testing, pending hardware · `iroh-blobs` voice sync between devices ·
-cloud/API voices · smart speakers.
+`iroh-blobs` voice sync between devices · cloud/API voices · smart speakers ·
+shipping iOS, which builds and is tested but has no distribution route that is
+a download link (decision 104).
+
+macOS and Windows were on this list as "smoke tests only". They are not: both
+are installed from release artefacts and run by a person, and both produced
+bugs that way — two on Windows in the first hour, three on macOS in a morning.
 
 All of these are additive. None require revisiting a phase 1 decision — which
 was the goal of the compile-for-five rule.
