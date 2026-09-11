@@ -102,29 +102,74 @@ jobs:
       - name: Say how the bundle is signed
         run: |
           app=target/universal-apple-darwin/release/bundle/macos/clispeak.app
+
+          # **The missing app is tested for, not inferred.** This used to be
+          # the job of the catch-all below, whose comment said an unreadable
+          # requirement could only mean the app was not where the step looked
+          # — "not a third state of the signature". There is a third state,
+          # and asserting there was not is what turned it into a failure.
+          # Asking the question directly is both clearer and correct.
+          if [ ! -d "$app" ]; then
+            echo "::error::no app bundle at $app"
+            exit 1
+          fi
+
           codesign -dv --verbose=2 "$app" 2>&1 || true
           requirement=$(codesign -d -r- "$app" 2>&1 | tail -1)
           echo "designated requirement: $requirement"
           case "$requirement" in
-            *cdhash*)
-              echo "Ad-hoc, as this job intends: no certificate is present" \
-                   "here. `macos-sign` signs and notarises what this built."
-              ;;
             *"designated =>"*)
               echo "Signed with a certificate: the requirement names an" \
                    "identifier and an issuer, so later builds satisfy it."
               ;;
+            *cdhash*)
+              echo "Ad-hoc, as this job intends: no certificate is present" \
+                   "here. macos-sign signs and notarises what this built."
+              ;;
+            *"not signed at all"*)
+              # **The third state, and the one a universal build produces.**
+              # A single-architecture build carries the linker's own ad-hoc
+              # signature and reports a cdhash requirement. `lipo` merges two
+              # slices into one file and the bundle comes out with no
+              # `_CodeSignature` directory, so the executable still reads as
+              # `adhoc,linker-signed` while the *bundle* is unsigned:
+              #
+              #   Format=app bundle with Mach-O universal (x86_64 arm64)
+              #   Sealed Resources=none
+              #   Internal requirements=none
+              #
+              # That is the expected output of a build job holding no
+              # certificate, and macos-sign signs every executable and then
+              # the bundle with --force, which creates the sealed resources
+              # this does not have.
+              echo "Unsigned, as a universal build from a job with no" \
+                   "certificate comes out. macos-sign is what signs it."
+              ;;
             *)
-              # Not a third state of the signature — a signature that could
-              # not be read at all, because the app is not where this step
-              # looked. Matching a bare `*)` as "signed" was the first shape
-              # of this step, and a deliberately wrong path made it announce
-              # a signed build for an app that did not exist.
               echo "::error::could not read a designated requirement from" \
                    "$app: $requirement"
               exit 1
               ;;
           esac
+
+          # **What this job is actually responsible for.** The signature is
+          # macos-sign's business; the architectures are this job's, because
+          # this is where they are decided and nothing downstream rebuilds
+          # them. A thin bundle signs and notarises perfectly well and then
+          # will not open on one of the two Macs Apple sells.
+          for bin in $(find "$app/Contents/MacOS" -type f -perm +111); do
+            archs=$(lipo -archs "$bin")
+            echo "  $(basename "$bin"): $archs"
+            case "$archs" in
+              *arm64*) ;;
+              *) echo "::error::$bin is missing arm64 — it carries $archs"; exit 1 ;;
+            esac
+            case "$archs" in
+              *x86_64*) ;;
+              *) echo "::error::$bin is missing x86_64 — it carries $archs." \
+                      "An Intel Mac cannot open this build."; exit 1 ;;
+            esac
+          done
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
