@@ -174,12 +174,19 @@ why.
 
 **macOS.** The bundle carries the command-line tool and no speech payload,
 since macOS speaks through the platform synthesiser, so a drag to
-`/Applications` is the whole install:
+`/Applications` is the whole install. It is a **universal** build — one app
+that runs on Apple silicon and Intel — so both `rustup` targets have to be
+present:
 
 ```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo xtask bundle
-open target/release/bundle/dmg/clispeak_*_aarch64.dmg
+open target/universal-apple-darwin/release/bundle/dmg/clispeak_*.dmg
 ```
+
+`bundle` reads the architectures back out of the binary it produced and fails
+if either is missing. A thin build signs, notarises and installs perfectly
+well, and then will not open on half the Macs it was meant for.
 
 A locally built `.app` is ad-hoc signed, which runs but derives its identity
 from the binary's own hash — so every rebuild looks like a different program to

@@ -24,6 +24,22 @@ const NPX: &str = "npx.cmd";
 #[cfg(not(windows))]
 const NPX: &str = "npx";
 
+/// The two architectures a shipped Mac has to run on.
+///
+/// **Intel is not legacy here.** Apple sold Intel Macs until 2023 and supports
+/// them still; "Apple silicon only" is a choice to exclude a machine somebody
+/// is using today, not a platform that has gone away.
+///
+/// Until this existed, `x86_64-apple-darwin` appeared nowhere in this
+/// repository — not in the release, and not in the compile matrix either. The
+/// five-target rule says `macos` and had always meant one of the two Macs
+/// Apple sells, which is the kind of gap this project is supposed to catch:
+/// the name covered the case and the build never did.
+const MAC_ARCHES: [&str; 2] = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+
+/// What Tauri calls the fat build, and where it puts its output.
+const MAC_UNIVERSAL: &str = "universal-apple-darwin";
+
 /// Build the app, carrying Piper, a voice and the CLI inside it.
 pub fn bundle(root: &Path) -> Result<()> {
     let app = root.join("app");
@@ -101,10 +117,22 @@ pub fn bundle(root: &Path) -> Result<()> {
     // the five-target rule this repo is built around. The name is not one of
     // Tauri's platform suffixes, so it is merged only when asked for here.
     println!("building the app bundle");
-    let status = Command::new(NPX)
+    let mut build = Command::new(NPX);
+    build.args(["tauri", "build"]);
+    // **One download, not a choice to get wrong.** A universal binary runs on
+    // both Macs, so the site keeps one button and nobody has to know which
+    // processor they have — which is the question a person is least able to
+    // answer and most likely to answer wrongly.
+    //
+    // It costs build time on the most expensive runner GitHub sells, and
+    // roughly doubles the executable inside the bundle. Two downloads would
+    // cost neither, and would put the burden on the one person in the
+    // transaction who cannot check.
+    if cfg!(target_os = "macos") {
+        build.args(["--target", MAC_UNIVERSAL]);
+    }
+    let status = build
         .args([
-            "tauri",
-            "build",
             "--config",
             // A platform that stages no payload declares no speech
             // resource. A declared resource that is absent fails Tauri's own
@@ -127,6 +155,54 @@ pub fn bundle(root: &Path) -> Result<()> {
     if !status.success() {
         bail!("the app bundle failed to build");
     }
+
+    // **Checked, because "built universal" and "is universal" are different
+    // claims.** A missing rustup target, a Tauri flag that stopped being
+    // honoured, or a sidecar that was thin all along each produce a bundle
+    // that builds, signs, notarises and installs — and then refuses to open
+    // on half the Macs it was built for. The failure arrives as a person
+    // saying the app does not work, days later.
+    if cfg!(target_os = "macos") {
+        let app_binary = root.join(format!(
+            "target/{MAC_UNIVERSAL}/release/bundle/macos/clispeak.app/Contents/MacOS/clispeak-app"
+        ));
+        require_universal(&app_binary)?;
+    }
+    Ok(())
+}
+
+/// Fail unless this Mach-O carries both architectures.
+///
+/// Reads the file rather than trusting the build that wrote it, for the same
+/// reason the Windows import table is read after a release: what an artefact
+/// contains is checkable, and not checking it is how "build-verified" becomes
+/// "nobody looked" (#201).
+fn require_universal(binary: &Path) -> Result<()> {
+    if !binary.exists() {
+        bail!("{} was not produced", binary.display());
+    }
+    let out = Command::new("lipo")
+        .arg("-archs")
+        .arg(binary)
+        .output()
+        .with_context(|| format!("running lipo -archs on {}", binary.display()))?;
+    let archs = String::from_utf8_lossy(&out.stdout);
+    let archs: Vec<&str> = archs.split_whitespace().collect();
+    // `lipo` spells them as architectures, not triples.
+    for wanted in ["arm64", "x86_64"] {
+        if !archs.contains(&wanted) {
+            bail!(
+                "{} is missing {wanted} — it carries [{}].\n\
+                 A Mac build that runs on one of the two Macs Apple sells is \n\
+                 not a Mac build. Check that both rustup targets are installed:\n\
+                   rustup target add {}",
+                binary.display(),
+                archs.join(", "),
+                MAC_ARCHES.join(" ")
+            );
+        }
+    }
+    println!("universal  {} [{}]", binary.display(), archs.join(", "));
     Ok(())
 }
 
@@ -136,6 +212,13 @@ pub fn bundle(root: &Path) -> Result<()> {
 /// it copies them into the bundle, which is why the staged file is renamed
 /// rather than symlinked.
 fn stage_cli(root: &Path, tauri: &Path) -> Result<()> {
+    // The Mac ships one binary that runs on both, so the tool inside it has
+    // to be fat as well. A universal app carrying a thin sidecar installs
+    // cleanly and then cannot run its own command-line tool on one of the two
+    // architectures — and the app works, so nothing points at the sidecar.
+    if cfg!(target_os = "macos") {
+        return stage_universal_cli(root, tauri);
+    }
     println!("building the command-line tool");
 
     // `.exe` on Windows and nothing anywhere else. From the standard library
@@ -195,6 +278,61 @@ fn stage_cli(root: &Path, tauri: &Path) -> Result<()> {
     let staged = binaries.join(format!("clispeak-{triple}{exe}"));
     std::fs::copy(&built, &staged).with_context(|| format!("staging {}", staged.display()))?;
     println!("staged  {}", staged.display());
+    Ok(())
+}
+
+/// Build the command-line tool for both Macs and lipo them together.
+///
+/// **Three names are staged, deliberately.** Tauri finds a sidecar by
+/// appending a target triple, and which triple it appends for a universal
+/// build is a detail of a version we pin with a caret. Staging the universal
+/// name *and* both per-architecture names means the build works whichever it
+/// asks for, and the alternative is a release that fails at the packaging
+/// step for a reason nobody can see from here.
+///
+/// It costs two copies of a 3MB binary in a build directory.
+fn stage_universal_cli(root: &Path, tauri: &Path) -> Result<()> {
+    let binaries = tauri.join("binaries");
+    std::fs::create_dir_all(&binaries).context("creating the sidecar directory")?;
+
+    let mut thin = Vec::new();
+    for arch in MAC_ARCHES {
+        println!("building the command-line tool for {arch}");
+        let status = Command::new("cargo")
+            .args(["build", "--release", "-p", "clispeak-cli", "--target", arch])
+            .current_dir(root)
+            .status()
+            .context("running cargo")?;
+        if !status.success() {
+            bail!(
+                "the command-line tool failed to build for {arch}.\n\
+                 If the target is missing:  rustup target add {arch}"
+            );
+        }
+        let built = root.join(format!("target/{arch}/release/clispeak"));
+        if !built.exists() {
+            bail!("{} was not produced", built.display());
+        }
+        // Staged under its own triple as well as the fat one, so whichever
+        // name Tauri reaches for is there.
+        let staged = binaries.join(format!("clispeak-{arch}"));
+        std::fs::copy(&built, &staged).with_context(|| format!("staging {}", staged.display()))?;
+        thin.push(built);
+    }
+
+    let fat = binaries.join(format!("clispeak-{MAC_UNIVERSAL}"));
+    let status = Command::new("lipo")
+        .arg("-create")
+        .args(&thin)
+        .arg("-output")
+        .arg(&fat)
+        .status()
+        .context("running lipo -create — it ships with the Xcode command line tools")?;
+    if !status.success() {
+        bail!("lipo could not combine the two builds of the command-line tool");
+    }
+    require_universal(&fat)?;
+    println!("staged  {}", fat.display());
     Ok(())
 }
 
