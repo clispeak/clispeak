@@ -13,6 +13,14 @@ receivers that report a reason rather than swallowing a failure.
 > **If it doesn't compile for all five targets, it doesn't merge.**
 > linux · android · macos · ios · windows
 
+**`macos` means two architectures, and for a long time it meant one.**
+`x86_64-apple-darwin` appeared nowhere in this repository until 11 September
+2026 — not in the matrix, not in the release. Every green run said macOS
+compiled, and Apple silicon is what it had compiled for. The rule names a
+platform; a platform is not a target triple, and the gap between those two
+words was invisible for the whole life of the project because the word
+covering the case is the same word either way.
+
 **Local gates are not that gate.** `cargo test`, `cargo clippy` and
 `cargo fmt` only exercise the machine they run on. Passing them says nothing
 about four of the five targets. Windows was broken for fifteen commits while
@@ -121,7 +129,7 @@ unification and iOS does not.
 |---|---|
 | **compiled on five** | what a green matrix means |
 | **linked on four** | iOS links only a binary with no networking in it |
-| **launched on four** | Linux, Android, macOS and Windows have been started by a person |
+| **launched on four** | Linux, Android, macOS and Windows have been started by a person — on macOS, on Apple silicon only |
 
 Say which one you mean. "It builds on iOS" was true for months and cost three
 bugs that no gate could have caught, because nobody had run the target the
