@@ -15,7 +15,7 @@ members = [
 exclude = ["spike/m0-iroh"]
 
 [workspace.package]
-version = "0.9.6"
+version = "0.9.7"
 edition = "2024"
 rust-version = "1.98"
 publish = false
