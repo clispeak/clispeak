@@ -119,13 +119,16 @@ highlighted, all working.
 
 ## Explicitly out of scope
 
-No analytics. No cookies. No third-party fonts — a system font stack, so
-nothing is fetched from anyone. No email capture, no sign-up, no chat widget.
+No third-party fonts — a system font stack. No email capture, no sign-up, no
+chat widget. No advertising storage of any kind, anywhere.
 
-This is not asceticism. The product's whole claim is that it is peer to peer
-with no server and no account, and a landing page that phones home about the
-people reading that sentence is an argument against the software it is
-selling.
+**Analytics moved out of this list on 14 September 2026** (decision 124). It
+used to open with "No analytics. No cookies.", on the argument that a landing
+page phoning home about its readers undercuts software whose claim is no
+server and no account. That argument was weighed against wanting to know how
+many people download each platform, and Patrick chose the numbers. The site
+now loads Google Analytics, asks first in the EEA, the UK and Switzerland, and
+says in its footer that it counts.
 
 ## Work
 
@@ -151,8 +154,14 @@ Checked on 10 September 2026, by running each one rather than by eye.
       `site/check-links.sh`, not by eye. It also checks the section nav has
       one link per list item, after a nav entry was once added as a bare
       anchor beside an existing one.
-- [x] **Nothing is loaded from a third party.** No `src` or `href` on the page
-      points anywhere but github.com and clispeak.com.
+- [x] **Only one third party, and it is named.** Google Analytics, loaded
+      from `googletagmanager.com`. Everything else on the page points at
+      github.com or clispeak.com. This item said *nothing* was loaded from a
+      third party until decision 124 changed that on purpose.
+- [x] **Nobody in Europe is counted without a yes.** Consent defaults to
+      denied for the EEA, the UK and Switzerland, decided by Google from the
+      visitor's IP; the question itself is shown from the timezone, and
+      Accept and Decline carry identical styling.
 - [ ] **Light and dark both deliberate.** Not re-verified here. The light
       theme went unlooked-at for the whole build of the app, which is what
       this check exists to prevent, and it needs eyes rather than a script.
