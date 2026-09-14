@@ -27,6 +27,50 @@
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:image" content="https://clispeak.com/img/og.png" />
 <link rel="stylesheet" href="styles.css" />
+
+<!-- Analytics, and the consent it waits for (decision 124).
+
+     Order matters: every `consent` call has to reach the data layer before
+     `config`, or the first page view is sent under the wrong state.
+
+     Two defaults. Everywhere, analytics is on and nothing about advertising is
+     ever stored, because this site shows none. In the EEA, the UK and
+     Switzerland, analytics is off until the visitor says yes. Google resolves
+     the region from the visitor's IP on its own side, which is the accurate
+     half; whether to *show* the question is decided in consent.js from the
+     timezone, which is the guessed half, and is arranged so a wrong guess can
+     only lose a count, never take one without asking. -->
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('consent', 'default', {
+    ad_storage: 'denied',
+    ad_user_data: 'denied',
+    ad_personalization: 'denied',
+    analytics_storage: 'granted'
+  });
+  gtag('consent', 'default', {
+    ad_storage: 'denied',
+    ad_user_data: 'denied',
+    ad_personalization: 'denied',
+    analytics_storage: 'denied',
+    region: ['AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU',
+             'IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES',
+             'SE','IS','LI','NO','GB','CH'],
+    wait_for_update: 500
+  });
+  // A choice already made in this browser wins over either default, wherever
+  // the visitor is — someone outside Europe who said no has said no.
+  try {
+    var choice = localStorage.getItem('clispeak-consent');
+    if (choice === 'granted' || choice === 'denied') {
+      gtag('consent', 'update', { analytics_storage: choice });
+    }
+  } catch (e) {}
+  gtag('js', new Date());
+  gtag('config', 'G-X76F1HYGP9');
+</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-X76F1HYGP9"></script>
 </head>
 
 <body class="bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
@@ -632,11 +676,44 @@ Say something when
       &middot;
       MIT or Apache-2.0
     </p>
-    <p class="mt-2">No analytics, no cookies, nothing loaded from anyone else.</p>
+    <!-- This line used to read "No analytics, no cookies, nothing loaded from
+         anyone else." That stopped being true with decision 124, and a
+         footer promising something the head of the page breaks is worse
+         than no footer line at all. -->
+    <p class="mt-2">
+      Visits and download clicks are counted with Google Analytics.
+      <!-- Hidden until consent.js runs: without JavaScript nothing is
+           counted, and a button that does nothing is a lie of its own. -->
+      <button type="button" id="consent-open" hidden
+        class="underline underline-offset-2 hover:text-accent-600 dark:hover:text-accent-400">Cookie settings</button>
+    </p>
   </footer>
 
 </main>
 
+<!-- The question. Accept and Decline carry identical styling on purpose: a
+     bright "Accept" beside a grey "Decline" is the pattern European
+     regulators name when they say consent was not freely given. -->
+<div id="consent" hidden role="region" aria-label="Cookie choice"
+  class="fixed inset-x-0 bottom-0 z-50 border-t border-neutral-200 bg-white/95 p-4
+         backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95">
+  <div class="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-center">
+    <p class="flex-1 text-sm text-neutral-700 dark:text-neutral-300">
+      This site counts visits and download clicks with Google Analytics, which
+      uses cookies. Allow it?
+    </p>
+    <div class="flex gap-2">
+      <button type="button" data-consent="denied"
+        class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
+               hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">Decline</button>
+      <button type="button" data-consent="granted"
+        class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium
+               hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">Accept</button>
+    </div>
+  </div>
+</div>
+
 <script src="guess.js" defer></script>
+<script src="consent.js" defer></script>
 </body>
 </html>

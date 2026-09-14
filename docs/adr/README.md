@@ -191,3 +191,4 @@ it started, the title moves too.
 | 121 | [The working agreement lives in the tool, not in an agent's memory](0121-the-working-agreement-lives-in-the-tool-not-in-an-agents-mem.md) |
 | 122 | [The hook rides in the skill, and the questions ride in the binary](0122-the-hook-rides-in-the-skill-and-the-questions-ride-in-the-bi.md) |
 | 123 | [The hook's frontmatter carries no `args`, and a test says so](0123-the-hooks-frontmatter-carries-no-args-and-a-test-says-so.md) |
+| 124 | [The site counts download clicks, and asks first in Europe](0124-the-site-counts-download-clicks-and-asks-first-in-europe.md) |
