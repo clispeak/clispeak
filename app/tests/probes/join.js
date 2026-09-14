@@ -24,22 +24,27 @@
  */
 const report = [];
 const $ = (id) => document.getElementById(id);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const called = (cmd) => window.__calls.filter((c) => c.cmd === cmd);
+const until = window.__until;
 
 (async () => {
-  await sleep(50);
+  // Not a sleep. This used to wait 50ms and then click, and on a slow runner
+  // the click landed before `main.js` had bound the button (#268).
+  await window.__ready;
 
   const previewed = "clispeak://join/THE-ONE-THAT-WAS-PREVIEWED";
   const edited = "clispeak://join/TYPED-AFTER-THE-PREVIEW";
 
   $("join-open").click();
-  await sleep(30);
-  report.push(["the dialog opens", !$("join-modal").hidden]);
+  const opened = await until(() => !$("join-modal").hidden);
+  report.push(["the dialog opens", opened]);
+  // Everything below is a step inside the dialog. Without it they would all
+  // fail too, and seven failures read as seven bugs rather than one.
+  if (!opened) return finish();
 
   $("join-input").value = previewed;
   $("join-read").click();
-  await sleep(60);
+  const confirming = await until(() => !$("join-step-confirm").hidden);
 
   report.push(["Continue previews the invite", called("preview_invite").length === 1]);
   report.push([
@@ -47,7 +52,7 @@ const called = (cmd) => window.__calls.filter((c) => c.cmd === cmd);
     called("join_space").length === 0,
     "a ticket is single use, so joining here would spend it before anyone agreed",
   ]);
-  report.push(["it moves to the confirm step", !$("join-step-confirm").hidden]);
+  report.push(["it moves to the confirm step", confirming]);
   report.push(["and says which space", $("join-space").textContent === "home", $("join-space").textContent]);
 
   // The field changes after the preview. Everything on screen still describes
@@ -55,7 +60,9 @@ const called = (cmd) => window.__calls.filter((c) => c.cmd === cmd);
   $("join-input").value = edited;
 
   $("join-go").click();
-  await sleep(60);
+  // The dialog closes once the join has come back, so by then every call the
+  // button made has been made, and a second one would already be counted.
+  await until(() => $("join-modal").hidden);
 
   const joins = called("join_space");
   report.push(["Join joins, once", joins.length === 1, `${joins.length} call(s)`]);
@@ -69,10 +76,14 @@ const called = (cmd) => window.__calls.filter((c) => c.cmd === cmd);
     joins.length === 1 && joins[0].args && joins[0].args.ticket !== edited,
   ]);
 
+  finish();
+})();
+
+function finish() {
   const pre = document.createElement("pre");
   pre.id = "report";
   pre.textContent = report
     .map(([what, ok, note]) => `${ok ? "PASS" : "FAIL"}  ${what}${note ? `  (${note})` : ""}`)
     .join("\n");
   document.body.appendChild(pre);
-})();
+}

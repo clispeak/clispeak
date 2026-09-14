@@ -16,7 +16,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const shown = (id) => !$(id).hidden && $(id).offsetParent !== null;
 
 (async () => {
-  await sleep(600);
+  await window.__ready;
 
   report.push(["the panel is there while speaking", shown("now-playing")]);
   report.push(["the button offers Pause", $("np-pause").textContent === "Pause"]);

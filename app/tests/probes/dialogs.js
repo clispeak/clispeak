@@ -13,7 +13,7 @@ const press = (key, shift) =>
   document.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey: !!shift, bubbles: true }));
 
 (async () => {
-  await sleep(600);
+  await window.__ready;
   $("tab-spaces").click();
   await sleep(300);
 

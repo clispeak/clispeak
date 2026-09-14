@@ -23,6 +23,41 @@ setTimeout(() => {
   document.body.appendChild(pre);
 }, 2000);
 
+/**
+ * Resolves once the app has started and finished drawing its first state.
+ *
+ * Probes wait on this rather than on a length of time. A probe is a classic
+ * script placed after `main.js`, and `main.js` is a module, which the browser
+ * defers until the page has been parsed — so a probe runs *before* the app
+ * does, and a fixed sleep is a guess at how long the app takes. The join probe
+ * guessed 50ms and clicked a button with no handler on a slow runner (#268).
+ *
+ * Two steps. `DOMContentLoaded` fires after deferred modules have run, so
+ * every handler `main.js` binds at load is bound. Then one task more, because
+ * the first `refresh()` is still in flight at that moment — but every answer
+ * below is returned without yielding to a task, so one task later it has
+ * finished drawing.
+ */
+window.__ready = new Promise((resolve) =>
+  document.addEventListener("DOMContentLoaded", () => setTimeout(resolve, 0), { once: true }),
+);
+
+/**
+ * Waits until `test()` is true, and says whether it ever was.
+ *
+ * For the step after a click, where a fixed sleep has the same flaw as one at
+ * startup. Resolves `false` at the deadline rather than hanging, so a probe
+ * can report which condition never arrived instead of producing nothing.
+ */
+window.__until = async (test, ms = 3000) => {
+  const deadline = Date.now() + ms;
+  while (!test()) {
+    if (Date.now() > deadline) return false;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return true;
+};
+
 let offset = 0;
 window.__advance = (secs) => {
   offset += secs;

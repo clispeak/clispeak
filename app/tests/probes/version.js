@@ -17,7 +17,7 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  await sleep(400);
+  await window.__ready;
 
   const el = $("app-version");
   report.push(["the About row exists", !!el]);

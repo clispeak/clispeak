@@ -10,7 +10,7 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  await sleep(500);
+  await window.__ready;
   $("tab-spaces").click();
   await sleep(300);
 
