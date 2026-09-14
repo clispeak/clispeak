@@ -12,7 +12,7 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  await sleep(600);
+  await window.__ready;
   $("tab-settings").click();
   await sleep(400);
 

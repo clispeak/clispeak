@@ -16,7 +16,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const lastCall = (cmd) => [...window.__calls].reverse().find((c) => c.cmd === cmd);
 
 (async () => {
-  await sleep(500);
+  await window.__ready;
   $("tab-speak").click();
   await sleep(300);
 

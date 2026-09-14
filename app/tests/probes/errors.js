@@ -17,7 +17,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const bubble = () => $("result-alert").firstElementChild;
 
 (async () => {
-  await sleep(600);
+  await window.__ready;
 
   // Reach the real `say()` the way the app does: a failing command.
   window.__forceError = "the node is not running";
