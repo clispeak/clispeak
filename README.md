@@ -10,8 +10,9 @@ $ cat CHANGELOG.md | clispeak --strip --to laptop
 ```
 
 Built for agents to notify you — on your desk, or on the phone in your pocket
-while you're out. Devices connect **peer to peer**. There is no server to run
-and no account to create.
+while you're out. Devices connect **peer to peer** over
+[iroh](https://github.com/n0-computer/iroh), encrypted end to end. There is no
+server to run and no account to create.
 
 ## Get it
 
@@ -98,6 +99,16 @@ Each install is a **node** — both sender and receiver, one small Tauri app.
 Devices join a **space** by scanning a QR code once, and stay reachable
 afterwards even as they move between networks, because they address each other
 by public key rather than by IP.
+
+**The connection is [iroh](https://github.com/n0-computer/iroh)**, which is
+QUIC underneath — so every connection is TLS 1.3, encrypted and authenticated
+against the device keys themselves rather than against a name someone claimed.
+Two devices hole-punch to a direct path where the networks allow it and fall
+back to a relay where they do not; a relay carries the bytes and cannot read
+them. What it *can* see, and what plain DNS lookups give away about which
+devices are seeking each other, is written down in
+[SECURITY.md](SECURITY.md) — along with the day that claim was measured
+rather than assumed.
 
 **Only text crosses the wire.** The receiving device synthesises it locally, so
 five minutes of speech costs ~50KB instead of tens of megabytes.
