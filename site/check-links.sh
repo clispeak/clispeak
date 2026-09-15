@@ -19,6 +19,19 @@
 # URL "succeeds" with a 302 and the check is a decoration.
 set -uo pipefail
 
+# Read the page beside this script, not beside whoever ran it.
+#
+# The workflow calls `./site/check-links.sh` from the repository root, so
+# every `index.html` below resolved to a file that was not there. `sed`
+# printed "can't read index.html" on stderr and returned an empty string, the
+# nav counts were both zero, zero equalled zero, and the gate reported ok —
+# in CI, every time, for as long as it has existed. It was only ever really
+# run by hand from inside `site/`.
+#
+# It surfaced the day a check was added that treats an empty match as a
+# failure, which is the only reason anybody found out.
+cd "$(dirname "$0")"
+
 # Every nav item is one link in one list item.
 #
 # Written after a nav entry was added by inserting an anchor beside an
