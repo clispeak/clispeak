@@ -105,17 +105,40 @@
       <span>clispeak</span>
     </a>
 
-    <!-- Scrolls rather than wraps on a narrow screen: a nav that becomes two
-         rows pushes the page down for everyone to serve the few who read it. -->
-    <ul class="-mx-1 flex flex-1 items-center gap-1 overflow-x-auto text-sm
-               [scrollbar-width:none] [&amp;::-webkit-scrollbar]:hidden">
-      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#uses">Uses</a></li>
-      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#download">Download</a></li>
-      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#after">After</a></li>
-      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#pair">Pairing</a></li>
-      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#agents">For agents</a></li>
-      <li><a class="whitespace-nowrap rounded-lg px-2.5 py-1.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#agreements">Agreements</a></li>
-    </ul>
+    <!-- One list, shown two ways. On a phone it is a menu behind a button; from
+         `sm` up it is the row it always was.
+
+         It used to be a row at every width that scrolled sideways with its
+         scrollbar hidden. That reads as a complete list when it is not: at
+         400px the last three sections sat off the right edge with nothing
+         on screen to say they existed, and it got worse every time a section
+         was added. Wrapping to two rows was rejected for pushing the page
+         down; a hidden row is the same trade taken silently.
+
+         `<details>` rather than a script, so the menu opens with JavaScript
+         off — the page already treats JS as an enhancement. -->
+    <details class="nav-menu relative flex-1">
+      <summary class="ml-auto flex w-fit cursor-pointer items-center gap-1.5 rounded-lg border
+                      border-neutral-300 px-3 py-1.5 text-sm font-medium transition
+                      hover:bg-neutral-100 sm:hidden
+                      dark:border-neutral-700 dark:hover:bg-neutral-800">
+        Sections
+        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="currentColor" aria-hidden="true"><path d="M4 6l4 4 4-4H4Z"/></svg>
+      </summary>
+      <ul class="nav-list absolute right-0 top-full z-40 mt-2 w-56 rounded-xl border
+                 border-neutral-200 bg-neutral-50 p-1 text-sm shadow-lg
+                 sm:static sm:-mx-1 sm:mt-0 sm:w-auto sm:items-center sm:gap-1
+                 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none
+                 dark:border-neutral-800 dark:bg-neutral-950">
+        <li><a class="block whitespace-nowrap rounded-lg px-3 py-2.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 sm:px-2.5 sm:py-1.5 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#uses">Uses</a></li>
+        <li><a class="block whitespace-nowrap rounded-lg px-3 py-2.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 sm:px-2.5 sm:py-1.5 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#private">Privacy</a></li>
+        <li><a class="block whitespace-nowrap rounded-lg px-3 py-2.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 sm:px-2.5 sm:py-1.5 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#download">Download</a></li>
+        <li><a class="block whitespace-nowrap rounded-lg px-3 py-2.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 sm:px-2.5 sm:py-1.5 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#after">After</a></li>
+        <li><a class="block whitespace-nowrap rounded-lg px-3 py-2.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 sm:px-2.5 sm:py-1.5 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#pair">Pairing</a></li>
+        <li><a class="block whitespace-nowrap rounded-lg px-3 py-2.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 sm:px-2.5 sm:py-1.5 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#agents">For agents</a></li>
+        <li><a class="block whitespace-nowrap rounded-lg px-3 py-2.5 text-neutral-600 transition hover:bg-neutral-200/60 hover:text-neutral-900 sm:px-2.5 sm:py-1.5 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100" href="#agreements">Agreements</a></li>
+      </ul>
+    </details>
 
     <a href="https://github.com/clispeak/clispeak"
        class="hidden shrink-0 items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5
@@ -165,8 +188,8 @@
     </p>
     <p class="mt-4 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
       Install it on your laptop and your phone, pair them once, and either can
-      say something out loud on the other. Nothing passes through anyone
-      else&rsquo;s machine and there is nothing to sign up for.
+      say something out loud on the other. Your devices talk to each other
+      directly, encrypted end to end, and there is nothing to sign up for.
     </p>
     <p class="mt-4 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-400">
       It is built so an <strong class="font-medium text-neutral-900 dark:text-neutral-100">agent</strong>
@@ -257,6 +280,51 @@
         <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
           A monitor, a cron job, a wake-up. Spoken aloud rather than added to a
           pile of notifications, with quiet hours so it respects the time.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 1c. How it connects ------------------------------------------------ -->
+  <!-- Before the download button rather than after it. "What carries this and
+       can anyone read it" is a question people ask while deciding, and an
+       answer placed below the thing it is meant to inform is decoration.
+       The relay paragraph is here because the page used to say nothing passed
+       through anyone else's machine, which is not true when two networks
+       refuse to be introduced — what is true is that the machine in the
+       middle cannot read what it carries. -->
+  <section id="private" class="mt-16 scroll-mt-20">
+    <h2 class="text-2xl font-semibold tracking-tight">How it connects</h2>
+    <div class="mt-6 grid gap-4 sm:grid-cols-3">
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="font-medium">Encrypted end to end</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Devices connect over
+          <a href="https://github.com/n0-computer/iroh" class="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900 dark:hover:decoration-neutral-100">iroh</a>,
+          which is QUIC &mdash; so every connection is TLS 1.3, and it is
+          authenticated against the devices&rsquo; own keys rather than a name
+          somebody claimed.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="font-medium">Direct where it can be</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Two devices find a direct path most of the time. Where a network will
+          not allow one, the traffic falls back to a public relay that passes
+          the bytes along and cannot read them.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 class="font-medium">What is visible anyway</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Finding each other uses ordinary DNS, so a network can tell that two
+          devices are looking for one another &mdash; never what they say.
+          <a href="https://github.com/clispeak/clispeak/blob/main/SECURITY.md" class="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900 dark:hover:decoration-neutral-100">The
+          security notes</a> say so plainly.
         </p>
       </div>
 

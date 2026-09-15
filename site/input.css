@@ -60,4 +60,37 @@
     outline: 2px solid var(--color-accent-500);
     outline-offset: 2px;
   }
+
+  /* The section nav is one list inside a `<details>`, so a phone gets a menu
+     that opens without JavaScript. These three rules are what a utility class
+     cannot say.
+
+     The marker, twice, because the two spellings cover different browsers and
+     a stray triangle beside a styled button looks like a mistake. */
+  nav details.nav-menu > summary {
+    list-style: none;
+  }
+  nav details.nav-menu > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  /* From `sm` up the list is the row it always was, open or closed. The
+     alternative is a second copy of the same seven links for wide screens,
+     and two lists of the same sections drift the moment one is edited.
+
+     **Both rules are required, and the first one alone looks like it works.**
+     A closed `<details>` hides its content twice over: the older way is a
+     `display` rule on the children, and the current one is
+     `content-visibility` on the `::details-content` pseudo-element. Overriding
+     only `display` left the whole row invisible on a desktop screen while the
+     stylesheet read as correct — caught in a screenshot, not in review. Each
+     rule is kept because it answers a different browser. */
+  @media (width >= 40rem) {
+    nav details.nav-menu > ul {
+      display: flex !important;
+    }
+    nav details.nav-menu::details-content {
+      content-visibility: visible !important;
+    }
+  }
 }
