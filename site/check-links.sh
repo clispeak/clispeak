@@ -30,15 +30,39 @@ set -uo pipefail
 # The download section closes with `exit 0`, so a check appended after it can
 # never run — a gate that is always silent, which is the failure it exists to
 # catch. Found by breaking the nav on purpose and seeing nothing happen.
-nav=$(sed -n '/<ul class="-mx-1/,/<\/ul>/p' index.html)
+nav=$(sed -n '/<ul class="nav-list/,/<\/ul>/p' index.html)
 nav_items=$(grep -c '<li>' <<<"$nav")
 nav_links=$(grep -c '<a ' <<<"$nav")
+# **Zero is a failure, not a pass.** This block found the list by its classes,
+# and when the nav became a menu the classes changed — at which point the
+# extraction matched nothing, both counts were zero, they were equal, and the
+# check printed ok while examining an empty string. A gate whose subject has
+# moved says nothing rather than complaining, which is the failure this whole
+# repository keeps meeting.
+if [ "$nav_items" -eq 0 ]; then
+  echo "FAIL  found no section nav — the list this looks for has been renamed"
+  echo "      or removed, so every check below it is examining nothing"
+  exit 1
+fi
 if [ "$nav_items" != "$nav_links" ]; then
   echo "FAIL  the section nav has $nav_links links in $nav_items list items —"
   echo "      one is nested inside another and they will stack in the bar"
   exit 1
 fi
 echo "ok    nav: $nav_items items, one link each"
+
+# Every nav link points at a section that exists. An anchor to a missing id
+# scrolls nowhere and reports nothing, on the one control a visitor uses to
+# find their way around the page.
+missing=0
+for target in $(grep -o 'href="#[^"]*"' <<<"$nav" | sed 's/href="#//;s/"//'); do
+  if ! grep -q "id=\"$target\"" index.html; then
+    echo "FAIL  nav links to #$target and no section has that id"
+    missing=1
+  fi
+done
+[ "$missing" -eq 0 ] || exit 1
+echo "ok    nav: every link points at a section that exists"
 
 # `gh` needs no token beyond the default read permission. If it cannot answer
 # at all — no `gh`, no network — that is treated as "no release", because

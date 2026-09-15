@@ -74,3 +74,27 @@
     // Offline, blocked, or rate limited. The page is still the page.
   }
 })();
+
+/**
+ * Close the sections menu once a section has been chosen.
+ *
+ * The menu is a `<details>`, so it opens and closes with no script at all —
+ * which is the point, and this only makes it tidier. Without it the panel
+ * stays open over the top of the section it just scrolled to, and on a phone
+ * that is most of the screen.
+ *
+ * A click anywhere else closes it too, which is what every menu does and what
+ * people try first when they change their mind.
+ */
+(() => {
+  const menu = document.querySelector("nav details.nav-menu");
+  if (!menu) return;
+  const shut = () => menu.removeAttribute("open");
+  menu.querySelectorAll("a").forEach((a) => a.addEventListener("click", shut));
+  document.addEventListener("click", (e) => {
+    if (menu.open && !menu.contains(e.target)) shut();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && menu.open) shut();
+  });
+})();
