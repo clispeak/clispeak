@@ -49,6 +49,15 @@ welcome but will be closed as known:
   inviter would stop nothing and would orphan devices.
 - **iOS stops answering when backgrounded**, between five and ten minutes.
   That is the platform. Issue #137.
+- **Who you speak to is visible, even though what you say is not.** Devices
+  find each other by publishing and resolving their public key in DNS, so a
+  query for `_iroh.<the other device's key>.dns.iroh.link` leaves the machine
+  in the clear. Whoever runs the resolver — the network, the provider — can
+  see that two particular keys looked each other up, and when. A relay sees
+  the same shape of thing from the other side: that two keys exchanged data,
+  when, and roughly how much. Neither sees the text. The node also multicasts
+  a UPnP `M-SEARCH` on the local network to ask for a port mapping, which
+  tells anything on that network that a node is here.
 
 ## Scope
 
@@ -63,5 +72,16 @@ one. Transport is QUIC with TLS, through `iroh`. Membership records are signed
 with the inviter's key over a payload with a fixed domain separator, and that
 separator is pinned by a test precisely because changing it silently voids
 every signature in existence — decision 83 records the day that cost.
+
+**The transport claim has been measured, once.** On 15 September 2026 two
+nodes were paired and every byte each one handed to the kernel was logged —
+earlier than a wire capture, so anything unencrypted would have been caught
+before the network saw it. A uniquely marked message appeared in none of the
+600 datagrams that went to the peer or the relay, in any encoding, while the
+same log showed that method working: the local socket between the CLI and the
+node carried readable device names, the invite ticket and the roster, as it
+is meant to, and the cleartext DNS lookups above were plainly there. That was
+Linux to Linux on one machine, on a build of 4 September; it says nothing
+about the other four platforms.
 
 None of this has been audited.
